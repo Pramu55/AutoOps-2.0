@@ -2,6 +2,7 @@ import { createLogger } from "@autoops/shared";
 import { prisma } from "@autoops/database";
 import { createWorkers } from "@/workers/index.js";
 import { redisConnection } from "@/workers/connection.js";
+import { startHealthServer } from "@/server.js";
 import { config } from "@/config/index.js";
 
 const logger = createLogger("Worker");
@@ -16,6 +17,10 @@ async function main() {
   logger.info("Redis connection established");
 
   const workers = createWorkers();
+
+  // HTTP health server — allows Kubernetes probes, uptime monitors, and the
+  // API's aggregated health check to reach the worker without a Redis round-trip
+  startHealthServer();
 
   logger.info("AutoOps Worker started successfully");
 

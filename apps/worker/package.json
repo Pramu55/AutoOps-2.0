@@ -17,10 +17,12 @@
     "@prisma/client": "^6.2.1",
     "bullmq": "^5.34.10",
     "dotenv": "^16.4.7",
+    "express": "^4.22.1",
     "ioredis": "^5.4.2"
   },
   "devDependencies": {
     "@autoops/config": "workspace:*",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.10.7",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",

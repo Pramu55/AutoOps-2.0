@@ -134,6 +134,26 @@ model HealthCheck {
   @@map("health_checks")
 }
 
+model Deployment {
+  id          String           @id @default(cuid())
+  name        String
+  environment String           @default("production")
+  serviceId   String?
+  status      DeploymentStatus @default(PENDING)
+  version     String?
+  commitSha   String?
+  triggeredBy String?
+  userId      String?
+  metadata    Json?
+  startedAt   DateTime?
+  completedAt DateTime?
+  error       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@map("deployments")
+}
+
 enum Role {
   USER
   OPERATOR
@@ -180,4 +200,15 @@ enum HealthCheckStatus {
   UNHEALTHY
   DEGRADED
   UNKNOWN
+}
+
+// Deployment pipeline status — SUCCESS is distinct from COMPLETED so you can
+// differentiate "ran to completion" (COMPLETED) from "ran and passed all checks" (SUCCESS).
+enum DeploymentStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  CANCELLED
+  ROLLED_BACK
 }

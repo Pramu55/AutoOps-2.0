@@ -178,6 +178,9 @@ importers:
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
+      express:
+        specifier: ^4.22.1
+        version: 4.22.1
       ioredis:
         specifier: ^5.4.2
         version: 5.10.1
@@ -185,6 +188,9 @@ importers:
       '@autoops/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@types/express':
+        specifier: ^5.0.6
+        version: 5.0.6
       '@types/node':
         specifier: ^22.10.7
         version: 22.19.18

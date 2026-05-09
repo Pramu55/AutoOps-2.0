@@ -13,6 +13,14 @@ export type WorkflowStatus =
   | "FAILED"
   | "CANCELLED";
 
+export type DeploymentStatus =
+  | "PENDING"
+  | "RUNNING"
+  | "SUCCESS"
+  | "FAILED"
+  | "CANCELLED"
+  | "ROLLED_BACK";
+
 export type AlertStatus = "ACTIVE" | "ACKNOWLEDGED" | "RESOLVED";
 
 export interface ApiResponse<T = unknown> {
