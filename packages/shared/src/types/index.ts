@@ -21,6 +21,17 @@ export type DeploymentStatus =
   | "CANCELLED"
   | "ROLLED_BACK";
 
+// Object enum — lets code use DeploymentStatus.SUCCESS instead of the string literal.
+// This mirrors Prisma's generated enum so both import paths produce the same value.
+export const DeploymentStatus = {
+  PENDING:     "PENDING",
+  RUNNING:     "RUNNING",
+  SUCCESS:     "SUCCESS",
+  FAILED:      "FAILED",
+  CANCELLED:   "CANCELLED",
+  ROLLED_BACK: "ROLLED_BACK",
+} as const satisfies Record<DeploymentStatus, DeploymentStatus>;
+
 export type AlertStatus = "ACTIVE" | "ACKNOWLEDGED" | "RESOLVED";
 
 export interface ApiResponse<T = unknown> {
