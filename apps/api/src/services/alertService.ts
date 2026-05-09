@@ -1,5 +1,5 @@
 import { prisma } from "@autoops/database";
-import { Prisma } from "@prisma/client";
+import { Prisma, type AlertStatus, type Severity } from "@prisma/client";
 import type { CreateAlertDto } from "@autoops/shared";
 import { NotFoundError } from "@autoops/shared";
 
@@ -14,8 +14,8 @@ export async function getAlerts(options: {
   const skip = (page - 1) * pageSize;
 
   const where = {
-    ...(status && { status: status as never }),
-    ...(severity && { severity: severity as never }),
+    ...(status && { status: status as AlertStatus }),
+    ...(severity && { severity: severity as Severity }),
     ...(source && { source }),
   };
 
@@ -55,7 +55,7 @@ export async function createAlert(data: CreateAlertDto) {
     data: {
       title: data.title,
       message: data.message,
-      severity: data.severity as never,
+      severity: data.severity as Severity,
       source: data.source,
       metadata: data.metadata as Prisma.InputJsonValue | undefined,
       status: "ACTIVE",

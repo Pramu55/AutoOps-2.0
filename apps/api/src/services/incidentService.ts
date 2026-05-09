@@ -1,9 +1,10 @@
 import { prisma } from "@autoops/database";
+import { type IncidentStatus, type Severity } from "@prisma/client";
 import type {
   CreateIncidentDto,
   UpdateIncidentDto,
 } from "@autoops/shared";
-import { NotFoundError, ConflictError } from "@autoops/shared";
+import { NotFoundError } from "@autoops/shared";
 
 export async function getIncidents(options: {
   page: number;
@@ -16,8 +17,8 @@ export async function getIncidents(options: {
   const skip = (page - 1) * pageSize;
 
   const where = {
-    ...(status && { status: status as never }),
-    ...(severity && { severity: severity as never }),
+    ...(status && { status: status as IncidentStatus }),
+    ...(severity && { severity: severity as Severity }),
     ...(serviceId && { serviceId }),
   };
 
@@ -76,7 +77,7 @@ export async function createIncident(data: CreateIncidentDto) {
     data: {
       title: data.title,
       description: data.description,
-      severity: data.severity as never,
+      severity: data.severity as Severity,
       serviceId: data.serviceId,
       assigneeId: data.assigneeId,
     },

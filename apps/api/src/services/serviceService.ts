@@ -1,4 +1,5 @@
 import { prisma } from "@autoops/database";
+import { type ServiceStatus } from "@prisma/client";
 import type { CreateServiceDto, UpdateServiceDto } from "@autoops/shared";
 import { NotFoundError, ConflictError } from "@autoops/shared";
 
@@ -10,7 +11,7 @@ export async function getServices(options: {
   const { page, pageSize, status } = options;
   const skip = (page - 1) * pageSize;
 
-  const where = { ...(status && { status: status as never }) };
+  const where = { ...(status && { status: status as ServiceStatus }) };
 
   const [services, total] = await Promise.all([
     prisma.service.findMany({
@@ -69,7 +70,7 @@ export async function createService(data: CreateServiceDto) {
     data: {
       name: data.name,
       description: data.description,
-      status: (data.status as never) ?? "OPERATIONAL",
+      status: (data.status as ServiceStatus) ?? "OPERATIONAL",
     },
   });
 }

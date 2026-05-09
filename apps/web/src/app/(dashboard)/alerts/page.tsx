@@ -20,7 +20,7 @@ export default function AlertsPage() {
 
   const { data, isLoading } = useAlerts({ page, status: statusFilter || undefined, severity: severityFilter || undefined });
   const alerts = data?.data ?? [];
-  const pagination = (data as { pagination?: { page: number; pageSize: number; total: number; totalPages: number } })?.pagination;
+  const pagination = data?.pagination;
 
   async function action(id: string, type: "acknowledge" | "resolve") {
     try {

@@ -70,6 +70,9 @@ export interface IncidentDto {
   createdAt: string;
   updatedAt: string;
   resolvedAt: string | null;
+  // Populated by Prisma include in list/detail queries
+  service?: { id: string; name: string; status: ServiceStatus };
+  assignee?: { id: string; name: string | null; email: string } | null;
 }
 
 export interface ServiceDto {
@@ -77,8 +80,11 @@ export interface ServiceDto {
   name: string;
   description: string | null;
   status: ServiceStatus;
+  url?: string | null;
   createdAt: string;
   updatedAt: string;
+  // Populated by Prisma _count
+  _count?: { incidents: number };
 }
 
 export interface WorkflowDto {
@@ -87,8 +93,11 @@ export interface WorkflowDto {
   description: string | null;
   definition: Record<string, unknown>;
   isActive: boolean;
+  version?: number;
   createdAt: string;
   updatedAt: string;
+  // Populated by Prisma _count
+  _count?: { runs: number };
 }
 
 export interface WorkflowRunDto {

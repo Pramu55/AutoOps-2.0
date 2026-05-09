@@ -28,6 +28,7 @@ export default function ServicesPage() {
   const { data, isLoading } = useServices({ status: statusFilter || undefined });
   const services = data?.data ?? [];
 
+
   async function handleDelete(s: ServiceDto) {
     if (!confirm(`Delete "${s.name}"?`)) return;
     try {
@@ -73,47 +74,30 @@ export default function ServicesPage() {
         <EmptyState title="No services found" description="Add a service to start monitoring" />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {services.map((s) => {
-            const extended = s as ServiceDto & { url?: string; _count?: { incidents: number } };
-            return (
-              <div key={s.id} className="bg-[#1a1d27] border border-[#2a2d3a] rounded-xl p-6 hover:border-[#3a3d4a] transition-colors">
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`w-2.5 h-2.5 rounded-full ${STATUS_DOT[s.status] ?? "bg-gray-500"}`} />
-                    <h3 className="font-semibold text-white">{s.name}</h3>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge status={s.status} />
-                  </div>
+          {services.map((s) => (
+            <div key={s.id} className="bg-[#1a1d27] border border-[#2a2d3a] rounded-xl p-6 hover:border-[#3a3d4a] transition-colors">
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className={`w-2.5 h-2.5 rounded-full ${STATUS_DOT[s.status] ?? "bg-gray-500"}`} />
+                  <h3 className="font-semibold text-white">{s.name}</h3>
                 </div>
-                <p className="text-sm text-gray-400 mb-4 min-h-[1.25rem]">
-                  {s.description ?? <span className="text-gray-600 italic">No description</span>}
-                </p>
-                {extended.url && (
-                  <p className="text-xs text-blue-400 mb-3 truncate">{extended.url}</p>
-                )}
-                <div className="flex items-center justify-between pt-3 border-t border-[#2a2d3a]">
-                  <span className="text-xs text-gray-500">
-                    {extended._count?.incidents ?? 0} active incidents
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => { setEditTarget(s); setModalOpen(true); }}
-                      className="text-xs text-gray-400 hover:text-white transition-colors"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(s)}
-                      className="text-xs text-red-400 hover:text-red-300 transition-colors"
-                    >
-                      Delete
-                    </button>
-                  </div>
+                <StatusBadge status={s.status} />
+              </div>
+              <p className="text-sm text-gray-400 mb-4 min-h-[1.25rem]">
+                {s.description ?? <span className="text-gray-600 italic">No description</span>}
+              </p>
+              {s.url && <p className="text-xs text-blue-400 mb-3 truncate">{s.url}</p>}
+              <div className="flex items-center justify-between pt-3 border-t border-[#2a2d3a]">
+                <span className="text-xs text-gray-500">
+                  {s._count?.incidents ?? 0} active incidents
+                </span>
+                <div className="flex items-center gap-3">
+                  <button onClick={() => { setEditTarget(s); setModalOpen(true); }} className="text-xs text-gray-400 hover:text-white transition-colors">Edit</button>
+                  <button onClick={() => handleDelete(s)} className="text-xs text-red-400 hover:text-red-300 transition-colors">Delete</button>
                 </div>
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       )}
 

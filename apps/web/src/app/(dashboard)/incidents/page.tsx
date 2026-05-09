@@ -26,7 +26,7 @@ export default function IncidentsPage() {
   const { data: servicesData } = useServices();
 
   const incidents = data?.data ?? [];
-  const pagination = (data as { pagination?: { page: number; pageSize: number; total: number; totalPages: number } })?.pagination;
+  const pagination = data?.pagination;
   const services = servicesData?.data ?? [];
 
   async function handleDelete(id: string) {
@@ -111,7 +111,7 @@ export default function IncidentsPage() {
                   <td className="px-6 py-4"><SeverityBadge severity={i.severity} /></td>
                   <td className="px-6 py-4"><StatusBadge status={i.status} /></td>
                   <td className="px-6 py-4 text-sm text-gray-400">
-                    {(i as IncidentDto & { service?: { name: string } }).service?.name ?? "—"}
+                    {i.service?.name ?? "—"}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-500">
                     {new Date(i.createdAt).toLocaleDateString()}

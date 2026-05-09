@@ -44,7 +44,6 @@ export default function WorkflowsPage() {
       ) : (
         <div className="space-y-4">
           {workflows.map((w) => {
-            const ext = w as WorkflowDto & { _count?: { runs: number } };
             return (
               <div key={w.id} className="bg-[#1a1d27] border border-[#2a2d3a] rounded-xl p-6">
                 <div className="flex items-start justify-between">
@@ -70,7 +69,7 @@ export default function WorkflowsPage() {
                 <div className="flex items-center gap-6 mt-4 pt-4 border-t border-[#2a2d3a]">
                   <div>
                     <p className="text-xs text-gray-500">Total Runs</p>
-                    <p className="text-sm font-medium text-white">{ext._count?.runs ?? 0}</p>
+                    <p className="text-sm font-medium text-white">{w._count?.runs ?? 0}</p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-500">Version</p>

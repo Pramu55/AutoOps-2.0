@@ -24,7 +24,7 @@ export function ServiceModal({ open, onClose, service }: Props) {
 
   useEffect(() => {
     setForm(service
-      ? { name: service.name, description: service.description ?? "", status: service.status, url: (service as ServiceDto & { url?: string }).url ?? "" }
+      ? { name: service.name, description: service.description ?? "", status: service.status, url: service.url ?? "" }
       : { name: "", description: "", status: "OPERATIONAL", url: "" }
     );
   }, [service, open]);
