@@ -1,54 +1,50 @@
 import { prisma } from "./client.js";
+import bcrypt from "bcryptjs";
+
+const DEMO_PASSWORD = "AutoOpsAdmin1!";
+const BCRYPT_ROUNDS = 10;
 
 async function seed() {
   console.log("Seeding database...");
 
+  const passwordHash = await bcrypt.hash(DEMO_PASSWORD, BCRYPT_ROUNDS);
+
   const adminUser = await prisma.user.upsert({
-    where: { email: "admin@autoops.dev" },
-    update: {},
+    where: { email: "admin@autoops.local" },
+    update: { passwordHash, name: "Admin User", role: "ADMIN" },
     create: {
-      email: "admin@autoops.dev",
+      email: "admin@autoops.local",
       name: "Admin User",
       role: "ADMIN",
+      passwordHash,
     },
   });
 
-  console.log(`Created admin user: ${adminUser.email}`);
+  console.log(`Upserted admin: ${adminUser.email}`);
 
-  const services = await Promise.all([
-    prisma.service.upsert({
-      where: { name: "API Gateway" },
-      update: {},
-      create: {
-        name: "API Gateway",
-        description: "Main API gateway service",
-        status: "OPERATIONAL",
-        url: "https://api.autoops.dev",
-      },
-    }),
-    prisma.service.upsert({
-      where: { name: "Authentication Service" },
-      update: {},
-      create: {
-        name: "Authentication Service",
-        description: "User authentication and authorization",
-        status: "OPERATIONAL",
-      },
-    }),
-    prisma.service.upsert({
-      where: { name: "Worker Service" },
-      update: {},
-      create: {
-        name: "Worker Service",
-        description: "Background job processing",
-        status: "OPERATIONAL",
-      },
-    }),
-  ]);
+  await prisma.user.upsert({
+    where: { email: "admin@autoops.dev" },
+    update: { passwordHash },
+    create: {
+      email: "admin@autoops.dev",
+      name: "Admin (dev)",
+      role: "ADMIN",
+      passwordHash,
+    },
+  });
 
-  console.log(`Created ${services.length} services`);
+  const serviceNames = ["API Gateway", "Authentication Service", "Worker Service"];
+  for (const name of serviceNames) {
+    await prisma.service.upsert({
+      where: { name },
+      update: {},
+      create: { name, description: `${name} — monitored by AutoOps`, status: "OPERATIONAL" },
+    });
+  }
 
-  const workflow = await prisma.workflow.upsert({
+  console.log(`Upserted ${serviceNames.length} services`);
+
+  await prisma.workflow.upsert({
     where: { name: "Incident Response" },
     update: {},
     create: {
@@ -65,15 +61,9 @@ async function seed() {
     },
   });
 
-  console.log(`Created workflow: ${workflow.name}`);
   console.log("Database seeded successfully");
 }
 
 seed()
-  .catch((error) => {
-    console.error("Seed failed:", error);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+  .catch((err) => { console.error("Seed failed:", err); process.exit(1); })
+  .finally(() => prisma.$disconnect());

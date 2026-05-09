@@ -1,9 +1,11 @@
 import type { Request, Response, NextFunction } from "express";
 import { UnauthorizedError } from "@autoops/shared";
+import { verifyToken } from "@/services/authService.js";
 
 export interface AuthRequest extends Request {
   userId?: string;
   userRole?: string;
+  userEmail?: string;
 }
 
 export function authMiddleware(
@@ -11,33 +13,23 @@ export function authMiddleware(
   _res: Response,
   next: NextFunction
 ): void {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader?.startsWith("Bearer ")) {
-    next(new UnauthorizedError("Missing or invalid authorization header"));
-    return;
-  }
-
-  const token = authHeader.slice(7);
+  const cookieToken = (req.cookies as Record<string, string | undefined>)?.["autoops_token"];
+  const headerToken = req.headers.authorization?.replace(/^Bearer\s+/i, "");
+  const token = cookieToken ?? headerToken;
 
   if (!token) {
-    next(new UnauthorizedError("Missing token"));
+    next(new UnauthorizedError("Authentication required"));
     return;
   }
 
-  // In a real implementation, verify the JWT token here
-  // For now, we'll decode a simple payload
   try {
-    // Placeholder: assume token is a base64-encoded JSON for dev
-    const payload = JSON.parse(Buffer.from(token, "base64").toString("utf-8")) as {
-      userId: string;
-      role: string;
-    };
+    const payload = verifyToken(token);
     req.userId = payload.userId;
     req.userRole = payload.role;
+    req.userEmail = payload.email;
     next();
-  } catch {
-    next(new UnauthorizedError("Invalid token"));
+  } catch (err) {
+    next(err);
   }
 }
 

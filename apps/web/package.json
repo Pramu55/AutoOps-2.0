@@ -13,14 +13,16 @@
   },
   "dependencies": {
     "@autoops/shared": "workspace:*",
+    "clsx": "^2.1.1",
+    "js-cookie": "^3.0.5",
     "next": "^15.1.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "clsx": "^2.1.1",
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
     "@autoops/config": "workspace:*",
+    "@types/js-cookie": "^3.0.6",
     "@types/node": "^22.10.7",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
