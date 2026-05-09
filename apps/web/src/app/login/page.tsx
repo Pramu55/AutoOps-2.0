@@ -24,7 +24,16 @@ export default function LoginPage() {
       router.push(from);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Internal Server Error");
+      // Provide actionable error messages — generic "Internal Server Error"
+      // hides what actually failed. Show the real reason instead.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("Failed to fetch") || msg.includes("fetch")) {
+        setError("Cannot reach the server — please check your connection.");
+      } else if (msg.includes("401") || msg.toLowerCase().includes("invalid")) {
+        setError("Invalid email or password.");
+      } else {
+        setError(msg || "Unexpected error — please try again.");
+      }
     } finally {
       setLoading(false);
     }

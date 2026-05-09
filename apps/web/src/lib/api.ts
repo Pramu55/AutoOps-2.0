@@ -22,7 +22,7 @@ class FetchError extends Error {
     public readonly status: number,
     message: string
   ) {
-    super(message);
+    super(`${status}: ${message}`);
     this.name = "FetchError";
   }
 }
