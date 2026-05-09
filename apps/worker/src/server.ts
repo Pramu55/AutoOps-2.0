@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { db } from '@autoops/database';
+import { prisma as db } from '@autoops/database';
 import { logger } from './lib/logger.js';
 import { closeRedis } from './lib/redis.js';
 import { createDeploymentsWorker } from './queues/deployments.queue.js';

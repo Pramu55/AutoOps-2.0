@@ -1,14 +1,14 @@
 import { Queue, Worker, type Job } from 'bullmq';
-import { db } from '@autoops/database';
+import { prisma as db } from '@autoops/database';
 import { DeploymentStatus } from '@autoops/types';
-import { createBullConnection } from '@/lib/redis.js';
-import { logger } from '@/lib/logger.js';
-import { env } from '@/config/env.js';
+import { createBullConnection } from '../lib/redis.js';
+import { logger } from '../lib/logger.js';
+import { env } from '../config/env.js';
 import {
   jobsProcessedTotal,
   jobDurationSeconds,
   deploymentsTotal,
-} from '@/lib/metrics.js';
+} from '../lib/metrics.js';
 
 // ── Job payload ───────────────────────────────────────────────────────────────
 
@@ -69,7 +69,7 @@ async function processDeployment(job: Job<DeploymentJobData>): Promise<void> {
     // Mark as SUCCESS
     await db.deployment.update({
       where: { id: deploymentId },
-      data: { status: DeploymentStatus.SUCCESS, finishedAt: new Date() },
+      data: { status: DeploymentStatus.SUCCEEDED, finishedAt: new Date() },
     });
 
     deploymentsTotal.inc({ status: 'success', environment: environmentId });

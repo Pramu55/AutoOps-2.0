@@ -1,9 +1,9 @@
 import http from 'node:http';
-import { db } from '@autoops/database';
-import { getRedis } from '@/lib/redis.js';
-import { registry } from '@/lib/metrics.js';
-import { logger } from '@/lib/logger.js';
-import { env } from '@/config/env.js';
+import { prisma as db } from '@autoops/database';
+import { getRedis } from '../lib/redis.js';
+import { registry } from '../lib/metrics.js';
+import { logger } from '../lib/logger.js';
+import { env } from '../config/env.js';
 
 function send(res: http.ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);

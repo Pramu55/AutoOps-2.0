@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { prisma } from '@autoops/database';
-import { redis } from '../lib/redis.js';
-import { registry } from '../lib/metrics.js';
+import { redis } from '../../lib/redis.js';
+import { registry } from '../../lib/metrics.js';
 
 export const healthRouter: Router = Router();
 

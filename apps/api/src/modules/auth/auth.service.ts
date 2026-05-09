@@ -15,9 +15,9 @@ import type {
   AuthTokens,
   JwtPayload,
 } from '@autoops/types';
-import { hashPassword, verifyPassword } from '../lib/password.js';
-import { signToken, verifyToken } from '../lib/jwt.js';
-import { env } from '../config/env.js';
+import { hashPassword, verifyPassword } from '../../lib/password.js';
+import { signToken, verifyToken } from '../../lib/jwt.js';
+import { env } from '../../config/env.js';
 import ms from 'ms';
 
 const ACCESS_TTL_SEC = Math.floor(ms(env.JWT_ACCESS_TTL) / 1000);

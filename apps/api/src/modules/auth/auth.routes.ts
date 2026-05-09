@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { registerSchema, loginSchema, refreshSchema } from '@autoops/types';
-import { validate } from './middleware/validate.js';
-import { requireAuth } from './middleware/auth.js';
-import { authRateLimiter } from './middleware/rate-limit.js';
+import { validate } from '../../middleware/validate.js';
+import { requireAuth } from '../../middleware/auth.js';
+import { authRateLimiter } from '../../middleware/rate-limit.js';
 import { authController } from './auth.controller.js';
 
 export const authRouter: Router = Router();
