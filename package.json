@@ -1,0 +1,28 @@
+{
+  "name": "@autoops/root",
+  "version": "0.0.1",
+  "private": true,
+  "description": "AutoOps 2.0 - Operations Automation Platform",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "db:generate": "pnpm --filter @autoops/database db:generate",
+    "db:migrate": "pnpm --filter @autoops/database db:migrate",
+    "db:push": "pnpm --filter @autoops/database db:push",
+    "db:studio": "pnpm --filter @autoops/database db:studio"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3",
+    "@types/node": "^22.10.7",
+    "prettier": "^3.4.2"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@10.33.3"
+}

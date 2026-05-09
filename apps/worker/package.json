@@ -1,0 +1,29 @@
+{
+  "name": "@autoops/worker",
+  "version": "0.0.1",
+  "private": true,
+  "description": "AutoOps background job worker",
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx watch --tsconfig tsconfig.json src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@autoops/database": "workspace:*",
+    "@autoops/shared": "workspace:*",
+    "@prisma/client": "^6.2.1",
+    "bullmq": "^5.34.10",
+    "dotenv": "^16.4.7",
+    "ioredis": "^5.4.2"
+  },
+  "devDependencies": {
+    "@autoops/config": "workspace:*",
+    "@types/node": "^22.10.7",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

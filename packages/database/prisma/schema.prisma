@@ -1,0 +1,181 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = []
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  incidents    Incident[]
+  workflowRuns WorkflowRun[]
+
+  @@map("users")
+}
+
+model Service {
+  id          String        @id @default(cuid())
+  name        String        @unique
+  description String?
+  status      ServiceStatus @default(OPERATIONAL)
+  url         String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  incidents Incident[]
+
+  @@map("services")
+}
+
+model Incident {
+  id          String         @id @default(cuid())
+  title       String
+  description String?
+  severity    Severity       @default(LOW)
+  status      IncidentStatus @default(OPEN)
+  assigneeId  String?
+  serviceId   String
+  resolvedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  assignee User?    @relation(fields: [assigneeId], references: [id])
+  service  Service  @relation(fields: [serviceId], references: [id])
+  timeline IncidentTimeline[]
+
+  @@map("incidents")
+}
+
+model IncidentTimeline {
+  id         String   @id @default(cuid())
+  incidentId String
+  message    String
+  authorId   String?
+  createdAt  DateTime @default(now())
+
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@map("incident_timeline")
+}
+
+model Workflow {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  description String?
+  definition  Json
+  isActive    Boolean @default(true)
+  version     Int     @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  runs WorkflowRun[]
+
+  @@map("workflows")
+}
+
+model WorkflowRun {
+  id          String         @id @default(cuid())
+  workflowId  String
+  triggeredBy String?
+  userId      String?
+  status      WorkflowStatus @default(PENDING)
+  input       Json?
+  output      Json?
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  workflow Workflow @relation(fields: [workflowId], references: [id])
+  user     User?    @relation(fields: [userId], references: [id])
+
+  @@map("workflow_runs")
+}
+
+model Alert {
+  id        String      @id @default(cuid())
+  title     String
+  message   String
+  severity  Severity    @default(LOW)
+  source    String
+  status    AlertStatus @default(ACTIVE)
+  metadata  Json?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@map("alerts")
+}
+
+model HealthCheck {
+  id          String            @id @default(cuid())
+  serviceId   String
+  serviceName String
+  status      HealthCheckStatus @default(UNKNOWN)
+  latencyMs   Int?
+  error       String?
+  checkedAt   DateTime          @default(now())
+
+  @@map("health_checks")
+}
+
+enum Role {
+  USER
+  OPERATOR
+  ADMIN
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  CLOSED
+}
+
+enum ServiceStatus {
+  OPERATIONAL
+  DEGRADED
+  OUTAGE
+  MAINTENANCE
+}
+
+enum WorkflowStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum AlertStatus {
+  ACTIVE
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum HealthCheckStatus {
+  HEALTHY
+  UNHEALTHY
+  DEGRADED
+  UNKNOWN
+}
