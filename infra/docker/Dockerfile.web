@@ -1,0 +1,59 @@
+# ─── Stage 1: deps ────────────────────────────────────────────────────────────
+FROM node:20-alpine AS deps
+WORKDIR /repo
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* ./
+COPY packages/config-typescript/package.json  packages/config-typescript/
+COPY packages/config-eslint/package.json      packages/config-eslint/
+COPY packages/types/package.json              packages/types/
+COPY packages/utils/package.json              packages/utils/
+COPY apps/web/package.json                    apps/web/
+
+RUN pnpm install --frozen-lockfile --prod=false
+
+# ─── Stage 2: build ───────────────────────────────────────────────────────────
+FROM deps AS builder
+WORKDIR /repo
+
+COPY packages/config-typescript/ packages/config-typescript/
+COPY packages/config-eslint/     packages/config-eslint/
+COPY packages/types/             packages/types/
+COPY packages/utils/             packages/utils/
+COPY apps/web/                   apps/web/
+COPY tsconfig.base.json ./
+
+# Build shared packages then the web app
+RUN pnpm --filter @autoops/types build \
+ && pnpm --filter @autoops/utils build
+
+WORKDIR /repo/apps/web
+ARG NEXT_PUBLIC_API_URL=http://api:4000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN pnpm build
+
+# ─── Stage 3: production image ────────────────────────────────────────────────
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+RUN addgroup -S autoops && adduser -S autoops -G autoops
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Next.js standalone output
+COPY --from=builder /repo/apps/web/.next/standalone ./
+COPY --from=builder /repo/apps/web/.next/static     ./.next/static
+COPY --from=builder /repo/apps/web/public           ./public
+
+USER autoops
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+CMD ["node", "server.js"]

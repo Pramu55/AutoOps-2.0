@@ -1,0 +1,32 @@
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  scrape_timeout:      10s
+  external_labels:
+    environment: local
+
+rule_files: []
+
+scrape_configs:
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: autoops-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['api:4000']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: api
+
+  - job_name: autoops-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['worker:4001']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: worker

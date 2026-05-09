@@ -1,0 +1,462 @@
+# ==========================================
+# AUTOOPS 2.0 — CURSOR AI GOVERNANCE RULES
+# ==========================================
+
+You are working on AutoOps 2.0, a production-grade DevOps and observability platform.
+
+The platform is intended to evolve into:
+- a scalable SaaS platform
+- a DevOps automation system
+- a monitoring and observability platform
+- an infrastructure management platform
+- a CI/CD orchestration platform
+
+All code, architecture, and infrastructure decisions must prioritize:
+- scalability
+- reliability
+- maintainability
+- observability
+- security
+- modularity
+- production readiness
+
+Follow ALL rules strictly.
+
+# ==========================================
+# CRITICAL SAFETY RULES
+# ==========================================
+
+NEVER:
+- delete files without explicit approval
+- overwrite working logic blindly
+- remove infrastructure configs
+- break backward compatibility intentionally
+- rewrite architecture without approval
+- generate fake/mock production implementations
+- hardcode secrets or credentials
+- expose tokens, passwords, or API keys
+- disable authentication or authorization
+- bypass security checks
+- disable validation
+- remove error handling
+- use dangerous shell commands
+- run destructive database operations automatically
+- remove Docker/Kubernetes/Terraform files
+- auto-upgrade dependencies blindly
+- generate extremely large monolithic files
+- mix frontend/backend responsibilities
+- create circular dependencies
+- use deprecated or abandoned libraries
+- ignore TypeScript errors
+- suppress linting without reason
+- commit .env files
+- leak sensitive information in logs
+- create insecure API endpoints
+- use eval or dangerous dynamic execution
+- expose internal infrastructure publicly
+- generate unnecessary complexity
+- create tightly coupled architecture
+
+Always prioritize safety and maintainability.
+
+# ==========================================
+# PROJECT ARCHITECTURE RULES
+# ==========================================
+
+Project structure must remain modular.
+
+Allowed architecture:
+
+/apps
+/packages
+/infra
+/docs
+/scripts
+
+Applications:
+
+/apps/dashboard
+/apps/api
+/apps/worker
+
+Shared packages:
+
+/packages/ui
+/packages/types
+/packages/config
+/packages/logger
+/packages/database
+/packages/utils
+
+Infrastructure:
+
+/infra/docker
+/infra/kubernetes
+/infra/terraform
+/infra/helm
+/infra/nginx
+/infra/prometheus
+/infra/grafana
+
+Rules:
+- frontend code only inside dashboard
+- backend APIs only inside api
+- workers only inside worker
+- shared logic only inside packages
+- infrastructure only inside infra
+- docs only inside docs
+
+Never violate separation of concerns.
+
+# ==========================================
+# TECH STACK RULES
+# ==========================================
+
+Frontend:
+- Next.js
+- React
+- TypeScript
+- TailwindCSS
+- shadcn/ui
+
+Backend:
+- Node.js
+- Express
+- TypeScript
+
+Database:
+- PostgreSQL
+- Prisma ORM
+
+Caching:
+- Redis
+
+Monitoring:
+- Prometheus
+- Grafana
+
+Containers:
+- Docker
+- Docker Compose
+
+Infrastructure:
+- Kubernetes
+- Terraform
+- Helm
+
+CI/CD:
+- GitHub Actions
+- Jenkins
+- ArgoCD
+
+Package manager:
+- pnpm ONLY
+
+Never use npm or yarn.
+
+# ==========================================
+# TYPESCRIPT RULES
+# ==========================================
+
+- Always use strict TypeScript.
+- Never use any unless unavoidable.
+- Prefer interfaces for object contracts.
+- Define explicit return types.
+- Avoid unsafe type assertions.
+- Use zod for runtime validation.
+- Use reusable DTOs and schemas.
+- Never ignore TypeScript compiler warnings.
+- Avoid deeply nested types.
+- Use shared types from packages/types.
+
+# ==========================================
+# BACKEND RULES
+# ==========================================
+
+Backend architecture must follow layered architecture.
+
+Required structure:
+
+src/
+  controllers/
+  services/
+  repositories/
+  routes/
+  middleware/
+  validators/
+  config/
+  utils/
+  types/
+  jobs/
+
+Rules:
+- controllers remain thin
+- business logic only in services
+- database access only in repositories
+- validate all request payloads
+- sanitize all inputs
+- use centralized error handling
+- use async/await consistently
+- use structured logging
+- use RBAC authorization
+- secure JWT implementation
+- implement rate limiting
+- implement request validation
+- implement API versioning
+- use dependency injection patterns where appropriate
+
+Never place business logic inside controllers.
+
+# ==========================================
+# DATABASE RULES
+# ==========================================
+
+- Use PostgreSQL.
+- Use Prisma ORM.
+- Use UUIDs for identifiers.
+- Never run destructive migrations automatically.
+- Ask before schema changes.
+- Use indexes appropriately.
+- Use transactions where needed.
+- Prefer soft deletes for important entities.
+- Never expose raw SQL publicly.
+- Optimize queries.
+- Avoid N+1 queries.
+- Use connection pooling.
+- Validate DB changes carefully.
+
+# ==========================================
+# FRONTEND RULES
+# ==========================================
+
+- Use responsive design.
+- Use reusable components.
+- Keep components small and modular.
+- Separate UI and business logic.
+- Use server state management correctly.
+- Use loading states.
+- Use error boundaries.
+- Use skeleton loaders where useful.
+- Optimize rendering performance.
+- Avoid prop drilling.
+- Never hardcode API URLs.
+- Use environment variables properly.
+
+# ==========================================
+# UI/UX RULES
+# ==========================================
+
+Design style:
+- modern SaaS dashboard
+- DevOps-focused UI
+- clean layouts
+- glassmorphism where appropriate
+- accessible color contrast
+- smooth animations
+- professional spacing
+- dark-mode friendly
+- responsive on all devices
+
+Dashboard modules:
+- metrics
+- logs
+- deployments
+- infrastructure health
+- alerts
+- Kubernetes status
+- CI/CD pipelines
+- system monitoring
+
+# ==========================================
+# DEVOPS RULES
+# ==========================================
+
+- Every service must be Dockerized.
+- Use multi-stage Docker builds.
+- Minimize image sizes.
+- Use health checks.
+- Use restart policies.
+- Never run containers as root.
+- Use environment variables correctly.
+- Use .env.example files.
+- Use volume persistence where appropriate.
+- Add observability support.
+- Add logging support.
+- Add monitoring support.
+
+# ==========================================
+# KUBERNETES RULES
+# ==========================================
+
+- Use namespaces.
+- Use ConfigMaps.
+- Use Secrets properly.
+- Use readiness probes.
+- Use liveness probes.
+- Define resource limits.
+- Avoid hardcoded values.
+- Use scalable deployments.
+- Use Helm-compatible structure.
+- Follow GitOps-friendly practices.
+
+# ==========================================
+# SECURITY RULES
+# ==========================================
+
+- Validate all inputs.
+- Escape dangerous outputs.
+- Prevent XSS.
+- Prevent SQL injection.
+- Prevent SSRF.
+- Prevent CSRF.
+- Use secure cookies.
+- Use secure headers.
+- Use HTTPS-ready configs.
+- Implement RBAC.
+- Implement audit logging.
+- Never expose secrets.
+- Never log credentials.
+- Use secret rotation support.
+- Use least-privilege principles.
+
+# ==========================================
+# PERFORMANCE RULES
+# ==========================================
+
+- Optimize database queries.
+- Use pagination.
+- Use caching intelligently.
+- Optimize bundle sizes.
+- Lazy load heavy components.
+- Avoid memory leaks.
+- Avoid blocking operations.
+- Use efficient polling intervals.
+- Optimize Docker layers.
+
+# ==========================================
+# LOGGING RULES
+# ==========================================
+
+- Use structured logging.
+- Include timestamps.
+- Include request IDs.
+- Include service names.
+- Never log secrets.
+- Separate info/warn/error logs.
+- Make logs observability-friendly.
+
+# ==========================================
+# TESTING RULES
+# ==========================================
+
+- Add unit tests for services.
+- Add integration tests for APIs.
+- Add validation tests.
+- Add authentication tests.
+- Add error handling tests.
+- Never ship critical logic untested.
+- Prefer deterministic tests.
+- Avoid flaky tests.
+
+# ==========================================
+# DOCUMENTATION RULES
+# ==========================================
+
+Always update documentation for:
+- architecture changes
+- environment variables
+- deployment flows
+- infrastructure changes
+- API changes
+- monitoring setup
+- Docker changes
+
+Maintain:
+- README
+- architecture docs
+- API docs
+- deployment docs
+
+# ==========================================
+# GIT RULES
+# ==========================================
+
+Commit conventions:
+
+feat:
+fix:
+refactor:
+docs:
+test:
+chore:
+infra:
+security:
+
+Rules:
+- keep commits modular
+- avoid huge commits
+- avoid unrelated changes
+- explain major infrastructure changes
+- never commit secrets
+
+# ==========================================
+# AI BEHAVIOR RULES
+# ==========================================
+
+Before generating code:
+- analyze existing architecture first
+- reuse existing utilities
+- avoid duplicate logic
+- maintain consistency
+- explain major risks
+
+Before modifying files:
+- explain affected areas
+- explain dependencies
+- explain migration impact
+
+When uncertain:
+- ask instead of guessing
+
+Prefer:
+- maintainability
+- readability
+- modularity
+- scalability
+over shortcuts.
+
+# ==========================================
+# AUTOOPS PLATFORM GOALS
+# ==========================================
+
+Primary goals:
+- production-grade reliability
+- scalability
+- observability
+- infrastructure automation
+- security
+- maintainability
+- excellent developer experience
+- enterprise-ready architecture
+
+# ==========================================
+# ABSOLUTE RESTRICTIONS
+# ==========================================
+
+ABSOLUTELY NEVER:
+- destroy existing infrastructure
+- remove auth/security
+- expose secrets
+- break production configs
+- disable validation
+- remove observability
+- rewrite architecture blindly
+- generate fake implementations
+- introduce massive technical debt
+- create unmaintainable code
+- create insecure defaults
+- generate unstable infrastructure
+- perform destructive operations automatically
+- create unnecessary abstractions
+- overengineer simple modules
+- underengineer critical systems

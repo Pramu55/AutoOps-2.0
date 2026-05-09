@@ -1,0 +1,188 @@
+name: autoops
+
+# ─── Network ──────────────────────────────────────────────────────────────────
+networks:
+  autoops:
+    driver: bridge
+
+# ─── Volumes ──────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+# ─── Services ─────────────────────────────────────────────────────────────────
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: autoops-postgres
+    restart: unless-stopped
+    networks: [autoops]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER:     autoops
+      POSTGRES_PASSWORD: autoops_dev
+      POSTGRES_DB:       autoops
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autoops -d autoops"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: autoops-redis
+    restart: unless-stopped
+    networks: [autoops]
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── API ──────────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.api
+    container_name: autoops-api
+    restart: unless-stopped
+    networks: [autoops]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    env_file: .env
+    environment:
+      NODE_ENV:       production
+      API_PORT:       "4000"
+      DATABASE_URL:   postgresql://autoops:autoops_dev@postgres:5432/autoops
+      REDIS_URL:      redis://redis:6379
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/healthz | grep ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Worker ───────────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.worker
+    container_name: autoops-worker
+    restart: unless-stopped
+    networks: [autoops]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    env_file: .env
+    environment:
+      NODE_ENV:    production
+      WORKER_PORT: "4001"
+      DATABASE_URL: postgresql://autoops:autoops_dev@postgres:5432/autoops
+      REDIS_URL:    redis://redis:6379
+    ports:
+      - "4001:4001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4001/healthz | grep ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Web ──────────────────────────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost/api
+    container_name: autoops-web
+    restart: unless-stopped
+    networks: [autoops]
+    depends_on:
+      api: { condition: service_healthy }
+    environment:
+      NODE_ENV:            production
+      NEXT_PUBLIC_API_URL: http://localhost/api
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ | grep -q AutoOps || exit 0"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Nginx ────────────────────────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: autoops-nginx
+    restart: unless-stopped
+    networks: [autoops]
+    depends_on:
+      - web
+      - api
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+
+  # ── Prometheus ───────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: autoops-prometheus
+    restart: unless-stopped
+    networks: [autoops]
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9090:9090"
+
+  # ── Grafana ──────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: autoops-grafana
+    restart: unless-stopped
+    networks: [autoops]
+    depends_on: [prometheus]
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      GF_SECURITY_ADMIN_USER:     admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SERVER_ROOT_URL:         http://localhost/grafana
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_AUTH_ANONYMOUS_ENABLED:  "false"
+      GF_LOG_LEVEL:               warn
+    ports:
+      - "3001:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health | grep ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

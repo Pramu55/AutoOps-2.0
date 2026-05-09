@@ -1,0 +1,51 @@
+{
+  "name": "@autoops/database",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    }
+  },
+  "files": ["dist", "prisma"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "clean": "rimraf dist .turbo",
+    "generate": "prisma generate",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "studio": "prisma studio",
+    "reset": "prisma migrate reset --force",
+    "seed": "tsx prisma/seed.ts",
+    "format": "prisma format"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.20.0"
+  },
+  "devDependencies": {
+    "@autoops/config-eslint": "workspace:*",
+    "@autoops/config-typescript": "workspace:*",
+    "@autoops/utils": "workspace:*",
+    "@types/node": "^20.14.10",
+    "argon2": "^0.41.1",
+    "prisma": "^5.20.0",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "name": "autoops",
+  "version": "3.0.0",
+  "private": true,
+  "description": "AutoOps 3.0 — AI-native DevOps Control Plane",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.11.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+    "clean": "turbo run clean && rimraf node_modules",
+    "db:generate": "pnpm --filter @autoops/database run generate",
+    "db:migrate": "pnpm --filter @autoops/database run migrate:dev",
+    "db:reset": "pnpm --filter @autoops/database run reset",
+    "db:seed": "pnpm --filter @autoops/database run seed",
+    "docker:dev": "docker compose up --build",
+    "docker:dev:detached": "docker compose up --build -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "prepare": "husky || true"
+  },
+  "devDependencies": {
+    "@prisma/client": "^5.20.0",
+    "@types/node": "^20.14.10",
+    "husky": "^9.1.6",
+    "lint-staged": "^15.2.10",
+    "prettier": "^3.3.3",
+    "prisma": "^5.20.0",
+    "rimraf": "^6.0.1",
+    "tsconfig-paths": "^4.2.0",
+    "turbo": "^2.1.3",
+    "typescript": "^5.6.2"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+  "prettier": {
+    "semi": true,
+    "singleQuote": true,
+    "trailingComma": "all",
+    "printWidth": 100,
+    "tabWidth": 2,
+    "arrowParens": "always",
+    "endOfLine": "lf"
+  }
+}

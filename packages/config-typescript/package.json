@@ -1,0 +1,7 @@
+{
+  "name": "@autoops/config-typescript",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "files": ["base.json", "node.json", "nextjs.json", "react-lib.json"]
+}

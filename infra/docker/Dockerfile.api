@@ -1,0 +1,64 @@
+# ─── Stage 1: deps ────────────────────────────────────────────────────────────
+FROM node:20-alpine AS deps
+WORKDIR /repo
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* ./
+COPY packages/config-typescript/package.json  packages/config-typescript/
+COPY packages/config-eslint/package.json      packages/config-eslint/
+COPY packages/types/package.json              packages/types/
+COPY packages/logger/package.json             packages/logger/
+COPY packages/utils/package.json              packages/utils/
+COPY packages/database/package.json           packages/database/
+COPY apps/api/package.json                    apps/api/
+
+RUN pnpm install --frozen-lockfile --prod=false
+
+# ─── Stage 2: build ───────────────────────────────────────────────────────────
+FROM deps AS builder
+WORKDIR /repo
+
+# Copy source
+COPY packages/ packages/
+COPY apps/api/ apps/api/
+COPY tsconfig.base.json ./
+
+# Generate Prisma client
+RUN pnpm --filter @autoops/database exec prisma generate
+
+# Build all workspace packages needed by api, then the api itself
+RUN pnpm --filter @autoops/types build \
+ && pnpm --filter @autoops/logger build \
+ && pnpm --filter @autoops/utils build \
+ && pnpm --filter @autoops/database build \
+ && pnpm --filter @autoops/api build
+
+# ─── Stage 3: production image ────────────────────────────────────────────────
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+RUN corepack enable && corepack prepare pnpm@latest --activate \
+ && addgroup -S autoops && adduser -S autoops -G autoops
+
+ENV NODE_ENV=production
+
+# Copy production deps
+COPY --from=builder /repo/node_modules                  ./node_modules
+COPY --from=builder /repo/packages/types/dist           ./packages/types/dist
+COPY --from=builder /repo/packages/types/package.json   ./packages/types/package.json
+COPY --from=builder /repo/packages/logger/dist          ./packages/logger/dist
+COPY --from=builder /repo/packages/logger/package.json  ./packages/logger/package.json
+COPY --from=builder /repo/packages/utils/dist           ./packages/utils/dist
+COPY --from=builder /repo/packages/utils/package.json   ./packages/utils/package.json
+COPY --from=builder /repo/packages/database/dist        ./packages/database/dist
+COPY --from=builder /repo/packages/database/package.json ./packages/database/package.json
+COPY --from=builder /repo/packages/database/prisma      ./packages/database/prisma
+COPY --from=builder /repo/apps/api/dist                 ./apps/api/dist
+COPY --from=builder /repo/apps/api/package.json         ./apps/api/package.json
+
+USER autoops
+
+EXPOSE 4000
+
+CMD ["node", "apps/api/dist/server.js"]

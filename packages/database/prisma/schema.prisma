@@ -1,0 +1,538 @@
+// =============================================================================
+// AutoOps 3.0 — Prisma schema
+// Postgres only. Uses UUID primary keys, timestamptz, and cascading deletes.
+// =============================================================================
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----- Enums ------------------------------------------------------------------
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum TeamRole {
+  LEAD
+  CONTRIBUTOR
+  VIEWER
+}
+
+enum ProjectVisibility {
+  PRIVATE
+  ORG
+  PUBLIC
+}
+
+enum EnvironmentKind {
+  PRODUCTION
+  STAGING
+  PREVIEW
+  DEVELOPMENT
+}
+
+enum DeploymentStatus {
+  QUEUED
+  BUILDING
+  DEPLOYING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  ROLLED_BACK
+}
+
+enum DeploymentTrigger {
+  MANUAL
+  GIT_PUSH
+  SCHEDULE
+  API
+}
+
+enum PipelineTrigger {
+  PUSH
+  PR
+  MANUAL
+  SCHEDULE
+}
+
+enum PipelineRunStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum PipelineStepKind {
+  CHECKOUT
+  INSTALL
+  TEST
+  BUILD
+  DOCKER_BUILD
+  DOCKER_PUSH
+  DEPLOY
+  CUSTOM
+}
+
+enum IncidentSeverity {
+  SEV1
+  SEV2
+  SEV3
+  SEV4
+}
+
+enum IncidentStatus {
+  TRIGGERED
+  ACKNOWLEDGED
+  MITIGATED
+  RESOLVED
+}
+
+enum AlertChannelKind {
+  EMAIL
+  SLACK
+  WEBHOOK
+}
+
+enum AlertComparator {
+  GT
+  LT
+  GTE
+  LTE
+  EQ
+  NEQ
+}
+
+enum AIProvider {
+  OPENAI
+  ANTHROPIC
+  OLLAMA
+}
+
+enum AIMessageRole {
+  SYSTEM
+  USER
+  ASSISTANT
+  TOOL
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  GRANT
+  REVOKE
+  DEPLOY
+  ROLLBACK
+}
+
+enum LogLevel {
+  TRACE
+  DEBUG
+  INFO
+  WARN
+  ERROR
+  FATAL
+}
+
+// ----- Identity ---------------------------------------------------------------
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String    @unique
+  emailVerified DateTime? @db.Timestamptz(3)
+  name          String
+  passwordHash  String
+  avatarUrl     String?
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime? @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt     DateTime? @db.Timestamptz(3)
+
+  memberships     OrgMembership[]
+  refreshTokens   RefreshToken[]
+  triggeredDeploy Deployment[]    @relation("triggeredDeployments")
+  triggeredRuns   PipelineRun[]   @relation("triggeredRuns")
+  authoredAudits  AuditLog[]      @relation("authoredAudits")
+  aiMessages      AIMessage[]
+
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model RefreshToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  userAgent   String?
+  ipAddress   String?
+  expiresAt   DateTime  @db.Timestamptz(3)
+  revokedAt   DateTime? @db.Timestamptz(3)
+  replacedBy  String?   @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// ----- Tenancy ----------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  memberships    OrgMembership[]
+  teams          Team[]
+  projects       Project[]
+  auditLogs      AuditLog[]
+  aiConversations AIConversation[]
+
+  @@map("organizations")
+}
+
+model OrgMembership {
+  id             String       @id @default(uuid()) @db.Uuid
+  userId         String       @db.Uuid
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           OrgRole      @default(MEMBER)
+  joinedAt       DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("org_memberships")
+}
+
+model Team {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  slug           String
+  description    String?
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+
+  members  TeamMembership[]
+
+  @@unique([organizationId, slug])
+  @@map("teams")
+}
+
+model TeamMembership {
+  id       String   @id @default(uuid()) @db.Uuid
+  teamId   String   @db.Uuid
+  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId   String   @db.Uuid
+  role     TeamRole @default(CONTRIBUTOR)
+  joinedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([teamId, userId])
+  @@map("team_memberships")
+}
+
+// ----- Projects ---------------------------------------------------------------
+
+model Project {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @db.Uuid
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  slug           String
+  description    String?
+  visibility     ProjectVisibility @default(ORG)
+  repositoryUrl  String?
+  defaultBranch  String            @default("main")
+  archivedAt     DateTime?         @db.Timestamptz(3)
+  createdAt      DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(3)
+
+  environments    Environment[]
+  deployments     Deployment[]
+  pipelines       Pipeline[]
+  incidents       Incident[]
+  alerts          Alert[]
+  aiConversations AIConversation[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, archivedAt])
+  @@map("projects")
+}
+
+model Environment {
+  id        String          @id @default(uuid()) @db.Uuid
+  projectId String          @db.Uuid
+  project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  kind      EnvironmentKind
+  variables Json            @default("{}")
+  createdAt DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime        @updatedAt @db.Timestamptz(3)
+
+  deployments Deployment[]
+
+  @@unique([projectId, name])
+  @@map("environments")
+}
+
+// ----- Deployments ------------------------------------------------------------
+
+model Deployment {
+  id             String            @id @default(uuid()) @db.Uuid
+  projectId      String            @db.Uuid
+  project        Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  environmentId  String            @db.Uuid
+  environment    Environment       @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  status         DeploymentStatus  @default(QUEUED)
+  trigger        DeploymentTrigger @default(MANUAL)
+  commitSha      String?
+  branch         String?
+  imageTag       String?
+  errorMessage   String?
+  triggeredById  String?           @db.Uuid
+  triggeredBy    User?             @relation("triggeredDeployments", fields: [triggeredById], references: [id], onDelete: SetNull)
+  startedAt      DateTime?         @db.Timestamptz(3)
+  completedAt    DateTime?         @db.Timestamptz(3)
+  durationMs     Int?
+  metadata       Json              @default("{}")
+  createdAt      DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(3)
+
+  events    DeploymentEvent[]
+  buildLogs BuildLog[]
+
+  @@index([projectId, createdAt(sort: Desc)])
+  @@index([environmentId, createdAt(sort: Desc)])
+  @@index([status])
+  @@map("deployments")
+}
+
+model DeploymentEvent {
+  id           String     @id @default(uuid()) @db.Uuid
+  deploymentId String     @db.Uuid
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  type         String
+  message      String
+  level        LogLevel   @default(INFO)
+  metadata     Json       @default("{}")
+  occurredAt   DateTime   @default(now()) @db.Timestamptz(3)
+
+  @@index([deploymentId, occurredAt])
+  @@map("deployment_events")
+}
+
+model BuildLog {
+  id           String     @id @default(uuid()) @db.Uuid
+  deploymentId String     @db.Uuid
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  stream       String     // stdout | stderr
+  line         String     @db.Text
+  occurredAt   DateTime   @default(now()) @db.Timestamptz(3)
+
+  @@index([deploymentId, occurredAt])
+  @@map("build_logs")
+}
+
+// ----- Pipelines --------------------------------------------------------------
+
+model Pipeline {
+  id        String          @id @default(uuid()) @db.Uuid
+  projectId String          @db.Uuid
+  project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  trigger   PipelineTrigger
+  config    Json            // serialized step definitions
+  isEnabled Boolean         @default(true)
+  createdAt DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime        @updatedAt @db.Timestamptz(3)
+
+  runs PipelineRun[]
+
+  @@index([projectId])
+  @@map("pipelines")
+}
+
+model PipelineRun {
+  id            String            @id @default(uuid()) @db.Uuid
+  pipelineId    String            @db.Uuid
+  pipeline      Pipeline          @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  status        PipelineRunStatus @default(PENDING)
+  triggeredById String?           @db.Uuid
+  triggeredBy   User?             @relation("triggeredRuns", fields: [triggeredById], references: [id], onDelete: SetNull)
+  startedAt     DateTime?         @db.Timestamptz(3)
+  completedAt   DateTime?         @db.Timestamptz(3)
+  durationMs    Int?
+  createdAt     DateTime          @default(now()) @db.Timestamptz(3)
+
+  steps PipelineStep[]
+
+  @@index([pipelineId, createdAt(sort: Desc)])
+  @@index([status])
+  @@map("pipeline_runs")
+}
+
+model PipelineStep {
+  id          String            @id @default(uuid()) @db.Uuid
+  runId       String            @db.Uuid
+  run         PipelineRun       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  ordinal     Int
+  kind        PipelineStepKind
+  name        String
+  status      PipelineRunStatus @default(PENDING)
+  command     String?
+  exitCode    Int?
+  startedAt   DateTime?         @db.Timestamptz(3)
+  completedAt DateTime?         @db.Timestamptz(3)
+  durationMs  Int?
+  output      String?           @db.Text
+
+  @@unique([runId, ordinal])
+  @@index([runId])
+  @@map("pipeline_steps")
+}
+
+// ----- Observability ----------------------------------------------------------
+
+model Incident {
+  id             String           @id @default(uuid()) @db.Uuid
+  projectId      String           @db.Uuid
+  project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title          String
+  description    String?
+  severity       IncidentSeverity @default(SEV3)
+  status         IncidentStatus   @default(TRIGGERED)
+  detectedAt     DateTime         @default(now()) @db.Timestamptz(3)
+  acknowledgedAt DateTime?        @db.Timestamptz(3)
+  resolvedAt     DateTime?        @db.Timestamptz(3)
+  rootCause      String?
+
+  events IncidentEvent[]
+
+  @@index([projectId, status, detectedAt(sort: Desc)])
+  @@index([severity])
+  @@map("incidents")
+}
+
+model IncidentEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  incidentId String   @db.Uuid
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  type       String
+  message    String
+  metadata   Json     @default("{}")
+  occurredAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([incidentId, occurredAt])
+  @@map("incident_events")
+}
+
+model Alert {
+  id              String             @id @default(uuid()) @db.Uuid
+  projectId       String             @db.Uuid
+  project         Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name            String
+  query           String             @db.Text
+  threshold       Float
+  comparator      AlertComparator
+  durationSeconds Int
+  channels        AlertChannelKind[]
+  isEnabled       Boolean            @default(true)
+  lastFiredAt     DateTime?          @db.Timestamptz(3)
+  createdAt       DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime           @updatedAt @db.Timestamptz(3)
+
+  @@index([projectId, isEnabled])
+  @@map("alerts")
+}
+
+model MetricSample {
+  id        BigInt   @id @default(autoincrement())
+  projectId String   @db.Uuid
+  metric    String
+  value     Float
+  labels    Json     @default("{}")
+  recordedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([projectId, metric, recordedAt(sort: Desc)])
+  @@map("metric_samples")
+}
+
+// ----- AI ---------------------------------------------------------------------
+
+model AIConversation {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId      String?      @db.Uuid
+  project        Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  title          String
+  provider       AIProvider
+  model          String
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+
+  messages AIMessage[]
+
+  @@index([organizationId, updatedAt(sort: Desc)])
+  @@map("ai_conversations")
+}
+
+model AIMessage {
+  id             String         @id @default(uuid()) @db.Uuid
+  conversationId String         @db.Uuid
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           AIMessageRole
+  content        String         @db.Text
+  authorId       String?        @db.Uuid
+  author         User?          @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  tokensIn       Int?
+  tokensOut      Int?
+  provider       AIProvider?
+  model          String?
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+// ----- Audit ------------------------------------------------------------------
+
+model AuditLog {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String?       @db.Uuid
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  actorId        String?       @db.Uuid
+  actor          User?         @relation("authoredAudits", fields: [actorId], references: [id], onDelete: SetNull)
+  action         AuditAction
+  resourceType   String
+  resourceId     String?
+  ipAddress      String?
+  userAgent      String?
+  metadata       Json          @default("{}")
+  occurredAt     DateTime      @default(now()) @db.Timestamptz(3)
+
+  @@index([organizationId, occurredAt(sort: Desc)])
+  @@index([actorId, occurredAt(sort: Desc)])
+  @@index([resourceType, resourceId])
+  @@map("audit_logs")
+}

@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Dark glassmorphism — base palette */
+    --background:   224 14% 8%;
+    --foreground:   210 20% 92%;
+
+    --card:         224 14% 11%;
+    --card-foreground: 210 20% 92%;
+
+    --popover:      224 14% 10%;
+    --popover-foreground: 210 20% 92%;
+
+    --primary:      217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary:    224 14% 16%;
+    --secondary-foreground: 210 20% 80%;
+
+    --muted:        224 14% 14%;
+    --muted-foreground: 215 15% 55%;
+
+    --accent:       224 14% 18%;
+    --accent-foreground: 210 20% 92%;
+
+    --destructive:  0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border:       224 14% 18%;
+    --input:        224 14% 16%;
+    --ring:         217 91% 60%;
+
+    --radius: 0.625rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply antialiased;
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar       { @apply w-1.5 h-1.5; }
+  ::-webkit-scrollbar-track { @apply bg-transparent; }
+  ::-webkit-scrollbar-thumb { @apply rounded-full bg-border hover:bg-muted-foreground/40; }
+
+  /* Selection */
+  ::selection { @apply bg-primary/30 text-foreground; }
+}
+
+@layer utilities {
+  /* Glass card surface */
+  .glass {
+    @apply bg-glass backdrop-blur-md border border-white/5;
+  }
+
+  /* Grid dot background */
+  .bg-grid {
+    background-image:
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  /* Glow ring on focus-visible */
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+}
