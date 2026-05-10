@@ -1,4 +1,4 @@
-# AutoOps 3.0
+# AutoOps 2.0
 
 > **AI-native DevOps control plane.** Deploy, observe, and understand your infrastructure — with an AI copilot that reads your logs, writes your Dockerfiles, and explains every incident.
 
