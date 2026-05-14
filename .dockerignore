@@ -1,0 +1,14 @@
+node_modules
+.pnpm-store
+.next
+dist
+build
+coverage
+.turbo
+.git
+.gitignore
+Dockerfile*
+docker-compose*
+.env
+.env.*
+!.env.example

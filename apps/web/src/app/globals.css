@@ -62,7 +62,7 @@
 @layer utilities {
   /* Glass card surface */
   .glass {
-    @apply bg-glass backdrop-blur-md border border-white/5;
+    @apply bg-glass backdrop-blur-md border border-white/10 shadow-xl shadow-black/10;
   }
 
   /* Grid dot background */

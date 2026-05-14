@@ -1,16 +1,16 @@
 import type { NextConfig } from 'next';
 
-const nextConfig: NextConfig = {
-  reactStrictMode: true,
-  // Transpile workspace packages that ship TS source
-  transpilePackages: ['@autoops/types', '@autoops/utils'],
+const rawInternalApiUrl = process.env.API_INTERNAL_URL ?? 'http://localhost:4000';
+const internalApiUrl = rawInternalApiUrl.replace(/\/+$/, '');
 
-  // API proxy — so the web app calls /api/* on itself and Next proxies to the API container
+const nextConfig: NextConfig = {
+  poweredByHeader: false,
+
   async rewrites() {
     return [
       {
         source: '/api/:path*',
-        destination: `${process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:4000'}/api/:path*`,
+        destination: `${internalApiUrl}/api/:path*`,
       },
     ];
   },

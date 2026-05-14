@@ -1,13 +1,13 @@
 import { Redis } from 'ioredis';
-import { env } from '@/config/env.js';
-import { logger } from '@/lib/logger.js';
+import { env } from '../config/env.js';
+import { logger } from './logger.js';
 
 let _redis: Redis | null = null;
 
 export function getRedis(): Redis {
   if (!_redis) {
     _redis = new Redis(env.REDIS_URL, {
-      maxRetriesPerRequest: null, // required by BullMQ
+      maxRetriesPerRequest: null,
       enableReadyCheck: false,
       lazyConnect: false,
     });
@@ -16,6 +16,7 @@ export function getRedis(): Redis {
     _redis.on('error', (err: Error) => logger.error({ err }, 'Redis error'));
     _redis.on('close', () => logger.warn('Redis connection closed'));
   }
+
   return _redis;
 }
 
@@ -26,7 +27,7 @@ export async function closeRedis(): Promise<void> {
   }
 }
 
-/** Dedicated connection for BullMQ (must have maxRetriesPerRequest: null) */
+/** Dedicated connection for BullMQ. Must have maxRetriesPerRequest: null. */
 export function createBullConnection(): Redis {
   return new Redis(env.REDIS_URL, {
     maxRetriesPerRequest: null,

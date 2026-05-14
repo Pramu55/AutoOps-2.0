@@ -3,6 +3,16 @@ import RedisStore, { type RedisReply } from 'rate-limit-redis';
 import { redis } from '../lib/redis.js';
 import { env } from '../config/env.js';
 
+function sendRedisCommand(...args: string[]): Promise<RedisReply> {
+  const [command, ...rest] = args;
+
+  if (!command) {
+    throw new Error('Redis rate-limit command is empty');
+  }
+
+  return redis.call(command, ...rest) as Promise<RedisReply>;
+}
+
 function buildLimiter(name: string, overrides: Partial<Options> = {}): ReturnType<typeof rateLimit> {
   return rateLimit({
     windowMs: env.RATE_LIMIT_WINDOW_MS,
@@ -11,7 +21,7 @@ function buildLimiter(name: string, overrides: Partial<Options> = {}): ReturnTyp
     legacyHeaders: false,
     keyGenerator: (req) => `${name}:${req.ip ?? 'unknown'}`,
     store: new RedisStore({
-      sendCommand: (...args: string[]) => redis.call(...args) as Promise<RedisReply>,
+      sendCommand: sendRedisCommand,
       prefix: `rl:${name}:`,
     }),
     ...overrides,

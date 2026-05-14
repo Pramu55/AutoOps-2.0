@@ -20,11 +20,11 @@ export function getSocket(): Socket {
     });
 
     socket.on('connect', () => {
-      console.debug('[socket] connected', socket?.id);
+      console.info('[socket] connected', socket?.id);
     });
 
     socket.on('disconnect', (reason) => {
-      console.debug('[socket] disconnected', reason);
+      console.info('[socket] disconnected', reason);
     });
 
     socket.on('connect_error', (err) => {

@@ -17,5 +17,8 @@ export {
   AIProvider,
   AIMessageRole,
   AuditAction,
+  OperationProvider,
+  OperationStatus,
+  OperationType,
   LogLevel,
 } from '@prisma/client';

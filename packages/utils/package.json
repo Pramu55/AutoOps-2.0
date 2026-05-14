@@ -12,13 +12,15 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "pnpm exec tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
-    "clean": "rimraf dist .turbo"
+    "lint": "pnpm exec eslint .",
+    "clean": "pnpm exec rimraf dist .turbo"
   },
   "dependencies": {
     "zod": "^3.23.8"
@@ -28,6 +30,6 @@
     "@autoops/config-typescript": "workspace:*",
     "@types/node": "^20.14.10",
     "rimraf": "^6.0.1",
-    "typescript": "^5.6.2"
+    "typescript": "^5.9.3"
   }
 }

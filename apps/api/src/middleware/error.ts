@@ -3,6 +3,31 @@ import { ZodError } from 'zod';
 import { AppError, isAppError, ValidationError } from '@autoops/utils';
 import { isProd } from '../config/env.js';
 
+type OperationalErrorShape = {
+  code: string;
+  statusCode: number;
+  message: string;
+  details?: unknown;
+  isOperational: true;
+};
+
+function isOperationalErrorShape(err: unknown): err is OperationalErrorShape {
+  if (!err || typeof err !== 'object') return false;
+
+  const candidate = err as Record<string, unknown>;
+  return (
+    candidate.isOperational === true &&
+    typeof candidate.statusCode === 'number' &&
+    Number.isInteger(candidate.statusCode) &&
+    candidate.statusCode >= 400 &&
+    candidate.statusCode < 600 &&
+    typeof candidate.code === 'string' &&
+    candidate.code.length > 0 &&
+    typeof candidate.message === 'string' &&
+    candidate.message.length > 0
+  );
+}
+
 export function notFoundHandler(_req: Request, res: Response): void {
   res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found' } });
 }
@@ -20,6 +45,16 @@ export const errorHandler: ErrorRequestHandler = (
     normalized = new ValidationError('Request validation failed', err.flatten());
   } else if (isAppError(err)) {
     normalized = err;
+  } else if (isOperationalErrorShape(err)) {
+    req.log?.warn({ code: err.code, status: err.statusCode }, err.message);
+    res.status(err.statusCode).json({
+      error: {
+        code: err.code,
+        message: err.message,
+        ...(err.details ? { details: err.details } : {}),
+      },
+    });
+    return;
   } else {
     normalized = new AppError({
       code: 'INTERNAL',
@@ -31,9 +66,9 @@ export const errorHandler: ErrorRequestHandler = (
 
   const isServerError = normalized.statusCode >= 500;
   if (isServerError) {
-    req.log.error({ err: normalized, cause: normalized.cause }, normalized.message);
+    req.log?.error({ err: normalized, cause: normalized.cause }, normalized.message);
   } else {
-    req.log.warn({ code: normalized.code, status: normalized.statusCode }, normalized.message);
+    req.log?.warn({ code: normalized.code, status: normalized.statusCode }, normalized.message);
   }
 
   res.status(normalized.statusCode).json({

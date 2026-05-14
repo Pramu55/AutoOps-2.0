@@ -16,6 +16,18 @@ out
 .env.*.local
 !.env.example
 
+# secrets and local credentials
+*.pem
+*.key
+id_rsa
+id_ed25519
+kubeconfig
+credentials
+*.credentials
+*token*
+*secret*
+!.env.example
+
 # prisma
 **/prisma/migrations/dev.db*
 **/prisma/.env
@@ -42,9 +54,16 @@ coverage
 
 # docker
 .docker-data
+docker-data
+postgres-data
+redis-data
+volumes
 
 # misc
 .cache
 *.pid
 *.seed
 *.pid.lock
+structure.txt
+full-structure.txt
+personal-portfolio/

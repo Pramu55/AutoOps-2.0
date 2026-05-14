@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ProjectVisibility, EnvironmentKind } from './enums.js';
+import { ProjectVisibility } from './enums.js';
 import { slugSchema } from './organization.js';
 
 export const createProjectSchema = z.object({
@@ -10,14 +10,23 @@ export const createProjectSchema = z.object({
   repositoryUrl: z.string().url().optional(),
   defaultBranch: z.string().max(120).default('main'),
 });
+
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 
-export const createEnvironmentSchema = z.object({
-  name: z.string().trim().min(1).max(60),
-  kind: z.nativeEnum(EnvironmentKind),
-  variables: z.record(z.string(), z.string()).default({}),
-});
-export type CreateEnvironmentInput = z.infer<typeof createEnvironmentSchema>;
+export const updateProjectSchema = z
+  .object({
+    name: z.string().trim().min(2).max(120).optional(),
+    slug: slugSchema.optional(),
+    description: z.string().max(2000).optional(),
+    visibility: z.nativeEnum(ProjectVisibility).optional(),
+    repositoryUrl: z.string().url().optional(),
+    defaultBranch: z.string().max(120).optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: 'At least one field must be provided',
+  });
+
+export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
 
 export interface Project {
   id: string;
@@ -30,12 +39,4 @@ export interface Project {
   defaultBranch: string;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface Environment {
-  id: string;
-  projectId: string;
-  name: string;
-  kind: EnvironmentKind;
-  createdAt: string;
 }

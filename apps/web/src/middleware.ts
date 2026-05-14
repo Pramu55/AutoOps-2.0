@@ -7,6 +7,7 @@ export function middleware(request: NextRequest) {
 
   // Pass through public paths and Next internals
   if (
+    pathname === '/' ||
     PUBLIC_PATHS.has(pathname) ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||

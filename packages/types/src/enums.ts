@@ -30,6 +30,7 @@ export const EnvironmentKind = {
   STAGING: 'STAGING',
   PREVIEW: 'PREVIEW',
   DEVELOPMENT: 'DEVELOPMENT',
+  CUSTOM: 'CUSTOM',
 } as const;
 export type EnvironmentKind = (typeof EnvironmentKind)[keyof typeof EnvironmentKind];
 
@@ -44,6 +45,24 @@ export const DeploymentStatus = {
   ROLLED_BACK: 'ROLLED_BACK',
 } as const;
 export type DeploymentStatus = (typeof DeploymentStatus)[keyof typeof DeploymentStatus];
+
+export const DeploymentTrigger = {
+  MANUAL: 'MANUAL',
+  GIT_PUSH: 'GIT_PUSH',
+  SCHEDULE: 'SCHEDULE',
+  API: 'API',
+} as const;
+export type DeploymentTrigger = (typeof DeploymentTrigger)[keyof typeof DeploymentTrigger];
+
+export const LogLevel = {
+  TRACE: 'TRACE',
+  DEBUG: 'DEBUG',
+  INFO: 'INFO',
+  WARN: 'WARN',
+  ERROR: 'ERROR',
+  FATAL: 'FATAL',
+} as const;
+export type LogLevel = (typeof LogLevel)[keyof typeof LogLevel];
 
 export const PipelineRunStatus = {
   PENDING: 'PENDING',

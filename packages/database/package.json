@@ -16,14 +16,17 @@
       "default": "./dist/client.js"
     }
   },
-  "files": ["dist", "prisma"],
+  "files": [
+    "dist",
+    "prisma"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "prisma generate --schema=prisma/schema.prisma && tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "clean": "rimraf dist .turbo",
-    "generate": "prisma generate",
+    "generate": "prisma generate --schema=prisma/schema.prisma",
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
     "studio": "prisma studio",
@@ -43,7 +46,7 @@
     "prisma": "^5.20.0",
     "rimraf": "^6.0.1",
     "tsx": "^4.19.1",
-    "typescript": "^5.6.2"
+    "typescript": "^5.9.3"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

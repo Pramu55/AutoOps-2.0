@@ -1,0 +1,21 @@
+services:
+  api:
+    environment:
+      KUBECONFIG: /app/.kube/config
+      KUBERNETES_API_SERVER_OVERRIDE: ${KUBERNETES_API_SERVER_OVERRIDE:-}
+      KUBERNETES_TLS_SERVER_NAME_OVERRIDE: ${KUBERNETES_TLS_SERVER_NAME_OVERRIDE:-}
+    volumes:
+      - type: bind
+        source: ${KUBECONFIG_HOST_PATH:?Set KUBECONFIG_HOST_PATH to your host kubeconfig file}
+        target: /app/.kube/config
+        read_only: true
+  worker:
+    environment:
+      KUBECONFIG: /app/.kube/config
+      KUBERNETES_API_SERVER_OVERRIDE: ${KUBERNETES_API_SERVER_OVERRIDE:-}
+      KUBERNETES_TLS_SERVER_NAME_OVERRIDE: ${KUBERNETES_TLS_SERVER_NAME_OVERRIDE:-}
+    volumes:
+      - type: bind
+        source: ${KUBECONFIG_HOST_PATH:?Set KUBECONFIG_HOST_PATH to your host kubeconfig file}
+        target: /app/.kube/config
+        read_only: true

@@ -1,23 +1,32 @@
 import { z } from 'zod';
-import { DeploymentStatus } from './enums.js';
+import { DeploymentStatus, DeploymentTrigger, LogLevel } from './enums.js';
+import { idSchema } from './common.js';
 
 export const triggerDeploymentSchema = z.object({
-  projectId: z.string().uuid(),
-  environmentId: z.string().uuid(),
   commitSha: z
     .string()
     .regex(/^[a-f0-9]{7,40}$/i, 'Must be a git SHA')
     .optional(),
   branch: z.string().max(255).optional(),
-  trigger: z.enum(['MANUAL', 'GIT_PUSH', 'SCHEDULE', 'API']).default('MANUAL'),
+  trigger: z.nativeEnum(DeploymentTrigger).default(DeploymentTrigger.MANUAL),
 });
 export type TriggerDeploymentInput = z.infer<typeof triggerDeploymentSchema>;
+
+export const deploymentParamsSchema = z.object({
+  deploymentId: idSchema,
+});
+
+export const environmentDeploymentParamsSchema = z.object({
+  projectId: idSchema,
+  environmentId: idSchema,
+});
 
 export interface Deployment {
   id: string;
   projectId: string;
   environmentId: string;
   status: DeploymentStatus;
+  trigger: DeploymentTrigger;
   commitSha: string | null;
   branch: string | null;
   triggeredById: string | null;
@@ -26,7 +35,9 @@ export interface Deployment {
   durationMs: number | null;
   imageTag: string | null;
   errorMessage: string | null;
+  metadata: Record<string, unknown>;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface DeploymentEvent {
@@ -34,6 +45,7 @@ export interface DeploymentEvent {
   deploymentId: string;
   type: string;
   message: string;
-  timestamp: string;
-  metadata?: Record<string, unknown>;
+  level: LogLevel;
+  metadata: Record<string, unknown>;
+  occurredAt: string;
 }

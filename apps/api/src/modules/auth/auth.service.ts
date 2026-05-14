@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { prisma, OrgRole } from '@autoops/database';
+import { OrgRole, prisma, type Prisma } from '@autoops/database';
 import {
   ConflictError,
   UnauthenticatedError,
@@ -15,10 +15,13 @@ import type {
   AuthTokens,
   JwtPayload,
 } from '@autoops/types';
-import { hashPassword, verifyPassword } from '../lib/password.js';
-import { signToken, verifyToken } from '../lib/jwt.js';
-import { env } from '../config/env.js';
+import { hashPassword, verifyPassword } from '../../lib/password.js';
+import { signToken, verifyToken } from '../../lib/jwt.js';
+import { env } from '../../config/env.js';
 import ms from 'ms';
+
+type DbClient = typeof prisma | Prisma.TransactionClient;
+type RequestContext = { userAgent?: string; ip?: string };
 
 const ACCESS_TTL_SEC = Math.floor(ms(env.JWT_ACCESS_TTL) / 1000);
 const REFRESH_TTL_MS = ms(env.JWT_REFRESH_TTL);
@@ -47,31 +50,56 @@ export class AuthService {
       const baseSlug = slugify(orgName) || `org-${newId().slice(0, 8)}`;
       let slug = baseSlug;
       let suffix = 0;
-      // Ensure uniqueness — slug column is @unique.
+
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const exists = await tx.organization.findUnique({ where: { slug } });
         if (!exists) break;
+
         suffix += 1;
         slug = `${baseSlug}-${suffix}`;
       }
 
-      const org = await tx.organization.create({ data: { name: orgName, slug } });
-      await tx.orgMembership.create({
-        data: { userId: user.id, organizationId: org.id, role: OrgRole.OWNER },
+      const org = await tx.organization.create({
+        data: {
+          name: orgName,
+          slug,
+        },
       });
 
-      const tokens = await this._issueTokens(user.id, user.email, org.id, OrgRole.OWNER);
+      await tx.orgMembership.create({
+        data: {
+          userId: user.id,
+          organizationId: org.id,
+          role: OrgRole.OWNER,
+        },
+      });
+
+      const tokens = await this._issueTokens(
+        user.id,
+        user.email,
+        org.id,
+        OrgRole.OWNER,
+        undefined,
+        tx,
+      );
 
       return {
         user: this._toPublic(user),
         tokens,
-        organizations: [{ id: org.id, name: org.name, slug: org.slug, role: OrgRole.OWNER }],
+        organizations: [
+          {
+            id: org.id,
+            name: org.name,
+            slug: org.slug,
+            role: OrgRole.OWNER,
+          },
+        ],
       };
     });
   }
 
-  async login(input: LoginInput, ctx?: { userAgent?: string; ip?: string }): Promise<AuthSession> {
+  async login(input: LoginInput, ctx?: RequestContext): Promise<AuthSession> {
     const user = await prisma.user.findUnique({
       where: { email: input.email },
       include: {
@@ -79,11 +107,17 @@ export class AuthService {
       },
     });
 
-    if (!user || !user.isActive) throw new UnauthenticatedError('Invalid credentials');
+    if (!user || !user.isActive) {
+      throw new UnauthenticatedError('Invalid credentials');
+    }
+
     const ok = await verifyPassword(user.passwordHash, input.password);
-    if (!ok) throw new UnauthenticatedError('Invalid credentials');
+    if (!ok) {
+      throw new UnauthenticatedError('Invalid credentials');
+    }
 
     const primaryMembership = user.memberships[0];
+
     const tokens = await this._issueTokens(
       user.id,
       user.email,
@@ -92,7 +126,10 @@ export class AuthService {
       ctx,
     );
 
-    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
 
     return {
       user: this._toPublic(user),
@@ -106,8 +143,9 @@ export class AuthService {
     };
   }
 
-  async refresh(refreshToken: string, ctx?: { userAgent?: string; ip?: string }): Promise<AuthTokens> {
+  async refresh(refreshToken: string, ctx?: RequestContext): Promise<AuthTokens> {
     let payload: JwtPayload;
+
     try {
       payload = verifyToken('refresh', refreshToken);
     } catch {
@@ -116,23 +154,35 @@ export class AuthService {
 
     const tokenHash = sha256(refreshToken);
     const stored = await prisma.refreshToken.findUnique({ where: { tokenHash } });
+
     if (!stored || stored.revokedAt || stored.expiresAt < new Date() || stored.userId !== payload.sub) {
       throw new UnauthenticatedError('Refresh token revoked or expired');
     }
 
     const tokens = await this._issueTokens(payload.sub, payload.email, payload.orgId, payload.role, ctx);
+
     await prisma.refreshToken.update({
       where: { id: stored.id },
-      data: { revokedAt: new Date(), replacedBy: sha256(tokens.refreshToken) },
+      data: {
+        revokedAt: new Date(),
+        replacedBy: sha256(tokens.refreshToken),
+      },
     });
+
     return tokens;
   }
 
   async logout(refreshToken: string): Promise<void> {
     const tokenHash = sha256(refreshToken);
+
     await prisma.refreshToken.updateMany({
-      where: { tokenHash, revokedAt: null },
-      data: { revokedAt: new Date() },
+      where: {
+        tokenHash,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: new Date(),
+      },
     });
   }
 
@@ -141,14 +191,19 @@ export class AuthService {
     email: string,
     orgId?: string,
     role?: string,
-    ctx?: { userAgent?: string; ip?: string },
+    ctx?: RequestContext,
+    db: DbClient = prisma,
   ): Promise<AuthTokens> {
     const payload: JwtPayload = { sub: userId, email, orgId, role };
+
     const accessToken = signToken('access', payload);
     const refreshTokenRaw = newToken(48);
-    const refreshToken = signToken('refresh', { ...payload, jti: refreshTokenRaw } as JwtPayload & { jti: string });
+    const refreshToken = signToken('refresh', {
+      ...payload,
+      jti: refreshTokenRaw,
+    } as JwtPayload & { jti: string });
 
-    await prisma.refreshToken.create({
+    await db.refreshToken.create({
       data: {
         userId,
         tokenHash: sha256(refreshToken),
@@ -158,10 +213,20 @@ export class AuthService {
       },
     });
 
-    return { accessToken, refreshToken, expiresIn: ACCESS_TTL_SEC };
+    return {
+      accessToken,
+      refreshToken,
+      expiresIn: ACCESS_TTL_SEC,
+    };
   }
 
-  private _toPublic(user: { id: string; email: string; name: string; avatarUrl: string | null; createdAt: Date }): PublicUser {
+  private _toPublic(user: {
+    id: string;
+    email: string;
+    name: string;
+    avatarUrl: string | null;
+    createdAt: Date;
+  }): PublicUser {
     return {
       id: user.id,
       email: user.email,

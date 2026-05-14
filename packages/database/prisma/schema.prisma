@@ -39,6 +39,7 @@ enum EnvironmentKind {
   STAGING
   PREVIEW
   DEVELOPMENT
+  CUSTOM
 }
 
 enum DeploymentStatus {
@@ -137,6 +138,13 @@ enum AuditAction {
   REVOKE
   DEPLOY
   ROLLBACK
+  KUBERNETES_DEPLOYMENT_RESTART_REQUESTED
+  KUBERNETES_MANIFEST_DRY_RUN_REQUESTED
+  KUBERNETES_MANIFEST_APPLY_REQUESTED
+  JENKINS_BUILD_TRIGGER_REQUESTED
+  GITHUB_WORKFLOW_DISPATCH_REQUESTED
+  AWS_DEPLOYMENT_REQUESTED
+  DEPLOYMENT_ROLLBACK_REQUESTED
 }
 
 enum LogLevel {
@@ -146,6 +154,34 @@ enum LogLevel {
   WARN
   ERROR
   FATAL
+}
+
+enum OperationProvider {
+  KUBERNETES
+  AWS
+  JENKINS
+  GITHUB
+  DOCKER
+}
+
+enum OperationType {
+  KUBERNETES_DEPLOYMENT_RESTART
+  KUBERNETES_MANIFEST_DRY_RUN
+  KUBERNETES_MANIFEST_APPLY
+  JENKINS_BUILD_TRIGGER
+  GITHUB_WORKFLOW_DISPATCH
+  AWS_DEPLOYMENT
+  DEPLOYMENT_ROLLBACK
+}
+
+enum OperationStatus {
+  PENDING_APPROVAL
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  REJECTED
+  CANCELLED
 }
 
 // ----- Identity ---------------------------------------------------------------
@@ -168,6 +204,9 @@ model User {
   triggeredDeploy Deployment[]    @relation("triggeredDeployments")
   triggeredRuns   PipelineRun[]   @relation("triggeredRuns")
   authoredAudits  AuditLog[]      @relation("authoredAudits")
+  requestedOps    Operation[]     @relation("requestedOperations")
+  approvedOps     Operation[]     @relation("approvedOperations")
+  rejectedOps     Operation[]     @relation("rejectedOperations")
   aiMessages      AIMessage[]
 
   @@index([deletedAt])
@@ -175,16 +214,16 @@ model User {
 }
 
 model RefreshToken {
-  id          String    @id @default(uuid()) @db.Uuid
-  userId      String    @db.Uuid
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash   String    @unique
-  userAgent   String?
-  ipAddress   String?
-  expiresAt   DateTime  @db.Timestamptz(3)
-  revokedAt   DateTime? @db.Timestamptz(3)
-  replacedBy  String?   @db.Uuid
-  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  userAgent  String?
+  ipAddress  String?
+  expiresAt  DateTime  @db.Timestamptz(3)
+  revokedAt  DateTime? @db.Timestamptz(3)
+  replacedBy String?   @db.Uuid
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
 
   @@index([userId])
   @@index([expiresAt])
@@ -200,10 +239,11 @@ model Organization {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
-  memberships    OrgMembership[]
-  teams          Team[]
-  projects       Project[]
-  auditLogs      AuditLog[]
+  memberships     OrgMembership[]
+  teams           Team[]
+  projects        Project[]
+  auditLogs       AuditLog[]
+  operations      Operation[]
   aiConversations AIConversation[]
 
   @@map("organizations")
@@ -233,7 +273,7 @@ model Team {
   createdAt      DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
 
-  members  TeamMembership[]
+  members TeamMembership[]
 
   @@unique([organizationId, slug])
   @@map("teams")
@@ -269,6 +309,7 @@ model Project {
 
   environments    Environment[]
   deployments     Deployment[]
+  operations      Operation[]
   pipelines       Pipeline[]
   incidents       Incident[]
   alerts          Alert[]
@@ -280,43 +321,50 @@ model Project {
 }
 
 model Environment {
-  id        String          @id @default(uuid()) @db.Uuid
-  projectId String          @db.Uuid
-  project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name      String
-  kind      EnvironmentKind
-  variables Json            @default("{}")
-  createdAt DateTime        @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime        @updatedAt @db.Timestamptz(3)
+  id          String          @id @default(uuid()) @db.Uuid
+  projectId   String          @db.Uuid
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  slug        String
+  kind        EnvironmentKind
+  description String?
+  url         String?
+  variables   Json            @default("{}")
+  archivedAt  DateTime?       @db.Timestamptz(3)
+  createdAt   DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime        @updatedAt @db.Timestamptz(3)
 
   deployments Deployment[]
+  operations  Operation[]
 
   @@unique([projectId, name])
+  @@unique([projectId, slug])
+  @@index([projectId, archivedAt])
   @@map("environments")
 }
 
 // ----- Deployments ------------------------------------------------------------
 
 model Deployment {
-  id             String            @id @default(uuid()) @db.Uuid
-  projectId      String            @db.Uuid
-  project        Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  environmentId  String            @db.Uuid
-  environment    Environment       @relation(fields: [environmentId], references: [id], onDelete: Cascade)
-  status         DeploymentStatus  @default(QUEUED)
-  trigger        DeploymentTrigger @default(MANUAL)
-  commitSha      String?
-  branch         String?
-  imageTag       String?
-  errorMessage   String?
-  triggeredById  String?           @db.Uuid
-  triggeredBy    User?             @relation("triggeredDeployments", fields: [triggeredById], references: [id], onDelete: SetNull)
-  startedAt      DateTime?         @db.Timestamptz(3)
-  completedAt    DateTime?         @db.Timestamptz(3)
-  durationMs     Int?
-  metadata       Json              @default("{}")
-  createdAt      DateTime          @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime          @updatedAt @db.Timestamptz(3)
+  id            String            @id @default(uuid()) @db.Uuid
+  projectId     String            @db.Uuid
+  project       Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  environmentId String            @db.Uuid
+  environment   Environment       @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  status        DeploymentStatus  @default(QUEUED)
+  trigger       DeploymentTrigger @default(MANUAL)
+  commitSha     String?
+  branch        String?
+  imageTag      String?
+  errorMessage  String?
+  triggeredById String?           @db.Uuid
+  triggeredBy   User?             @relation("triggeredDeployments", fields: [triggeredById], references: [id], onDelete: SetNull)
+  startedAt     DateTime?         @db.Timestamptz(3)
+  completedAt   DateTime?         @db.Timestamptz(3)
+  durationMs    Int?
+  metadata      Json              @default("{}")
+  createdAt     DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime          @updatedAt @db.Timestamptz(3)
 
   events    DeploymentEvent[]
   buildLogs BuildLog[]
@@ -345,7 +393,7 @@ model BuildLog {
   id           String     @id @default(uuid()) @db.Uuid
   deploymentId String     @db.Uuid
   deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
-  stream       String     // stdout | stderr
+  stream       String // stdout | stderr
   line         String     @db.Text
   occurredAt   DateTime   @default(now()) @db.Timestamptz(3)
 
@@ -361,7 +409,7 @@ model Pipeline {
   project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name      String
   trigger   PipelineTrigger
-  config    Json            // serialized step definitions
+  config    Json // serialized step definitions
   isEnabled Boolean         @default(true)
   createdAt DateTime        @default(now()) @db.Timestamptz(3)
   updatedAt DateTime        @updatedAt @db.Timestamptz(3)
@@ -466,11 +514,11 @@ model Alert {
 }
 
 model MetricSample {
-  id        BigInt   @id @default(autoincrement())
-  projectId String   @db.Uuid
-  metric    String
-  value     Float
-  labels    Json     @default("{}")
+  id         BigInt   @id @default(autoincrement())
+  projectId  String   @db.Uuid
+  metric     String
+  value      Float
+  labels     Json     @default("{}")
   recordedAt DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([projectId, metric, recordedAt(sort: Desc)])
@@ -524,6 +572,11 @@ model AuditLog {
   actorId        String?       @db.Uuid
   actor          User?         @relation("authoredAudits", fields: [actorId], references: [id], onDelete: SetNull)
   action         AuditAction
+  provider       String?
+  projectId      String?       @db.Uuid
+  environmentId  String?       @db.Uuid
+  operationId    String?       @db.Uuid
+  operation      Operation?    @relation(fields: [operationId], references: [id], onDelete: SetNull)
   resourceType   String
   resourceId     String?
   ipAddress      String?
@@ -533,6 +586,43 @@ model AuditLog {
 
   @@index([organizationId, occurredAt(sort: Desc)])
   @@index([actorId, occurredAt(sort: Desc)])
+  @@index([operationId])
   @@index([resourceType, resourceId])
   @@map("audit_logs")
+}
+
+model Operation {
+  id                String            @id @default(uuid()) @db.Uuid
+  organizationId    String            @db.Uuid
+  organization      Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId         String?           @db.Uuid
+  project           Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  environmentId     String?           @db.Uuid
+  environment       Environment?      @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  provider          OperationProvider
+  operationType     OperationType
+  status            OperationStatus   @default(QUEUED)
+  requestedByUserId String?           @db.Uuid
+  requestedBy       User?             @relation("requestedOperations", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  approvedByUserId  String?           @db.Uuid
+  approvedBy        User?             @relation("approvedOperations", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  approvedAt        DateTime?         @db.Timestamptz(3)
+  rejectedByUserId  String?           @db.Uuid
+  rejectedBy        User?             @relation("rejectedOperations", fields: [rejectedByUserId], references: [id], onDelete: SetNull)
+  rejectedAt        DateTime?         @db.Timestamptz(3)
+  idempotencyKey    String?
+  input             Json              @default("{}")
+  result            Json?
+  error             Json?
+  createdAt         DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(3)
+
+  auditLogs AuditLog[]
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, status, createdAt(sort: Desc)])
+  @@index([provider, operationType])
+  @@index([projectId])
+  @@index([environmentId])
+  @@map("operations")
 }

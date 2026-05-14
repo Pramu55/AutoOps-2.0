@@ -1,11 +1,13 @@
 import 'dotenv/config';
-import { db } from '@autoops/database';
+import { prisma as db } from '@autoops/database';
 import { logger } from './lib/logger.js';
 import { closeRedis } from './lib/redis.js';
 import { createDeploymentsWorker } from './queues/deployments.queue.js';
 import { createHealthServer } from './http/health.js';
 import type { Worker } from 'bullmq';
 import type http from 'node:http';
+import { createOperationsWorker } from './queues/operations.queue.js';
+import { createSystemWorker } from './queues/system.queue.js';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
@@ -18,10 +20,12 @@ async function main(): Promise<void> {
 
   // Start BullMQ workers
   const workers: Worker[] = [
-    createDeploymentsWorker(),
-    // Phase 2: createBuildsWorker()
-    // Phase 4: createAIWorker()
-  ];
+  createSystemWorker(),
+  createDeploymentsWorker(),
+  createOperationsWorker(),
+  // Phase 2: createBuildsWorker()
+  // Phase 4: createAIWorker()
+];
   logger.info(`Started ${workers.length} queue worker(s)`);
 
   // Start health/metrics HTTP server

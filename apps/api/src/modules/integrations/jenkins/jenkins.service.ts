@@ -1,0 +1,332 @@
+import { type Prisma } from '@autoops/database';
+import {
+  JenkinsBuild,
+  JenkinsJob,
+  JenkinsListResponse,
+  JenkinsStatusResponse,
+  JenkinsSummaryResponse,
+  JenkinsTriggerBuildInput,
+  JenkinsTriggerBuildResponse,
+  OperationProvider,
+  OperationType,
+  ProviderConnectionStatus,
+} from '@autoops/types';
+import { BadRequestError } from '@autoops/utils';
+import { operationService } from '../../operations/operation.service.js';
+import {
+  JenkinsClient,
+  classifyJenkinsError,
+  getJenkinsConfiguration,
+  safeJenkinsMessage,
+} from './jenkins.client.js';
+
+type AuditContext = { ipAddress?: string; userAgent?: string };
+
+type JenkinsRoot = {
+  mode?: string;
+  nodeDescription?: string;
+  nodeName?: string;
+  numExecutors?: number;
+  useCrumbs?: boolean;
+  jobs?: JenkinsApiJob[];
+  views?: unknown[];
+  overallLoad?: { busyExecutors?: number; totalExecutors?: number };
+  queue?: { items?: unknown[] };
+};
+
+type JenkinsApiBuild = {
+  number?: number;
+  url?: string;
+  result?: string | null;
+  building?: boolean;
+  timestamp?: number;
+  duration?: number;
+  estimatedDuration?: number;
+  displayName?: string;
+  fullDisplayName?: string;
+};
+
+type JenkinsApiJob = {
+  name?: string;
+  fullName?: string;
+  url?: string;
+  color?: string;
+  buildable?: boolean;
+  disabled?: boolean;
+  inQueue?: boolean;
+  lastBuild?: JenkinsApiBuild | null;
+  lastSuccessfulBuild?: JenkinsApiBuild | null;
+  lastFailedBuild?: JenkinsApiBuild | null;
+  builds?: JenkinsApiBuild[];
+  healthReport?: Array<Record<string, unknown>>;
+};
+
+export class JenkinsService {
+  async getStatus(): Promise<JenkinsStatusResponse> {
+    const checkedAt = new Date().toISOString();
+    const config = getJenkinsConfiguration();
+    if (!config.configured) {
+      return {
+        status: ProviderConnectionStatus.NOT_CONFIGURED,
+        configured: false,
+        baseUrl: config.baseUrl,
+        username: config.username,
+        allowedJobs: config.allowedJobs,
+        triggerEnabled: false,
+        message: config.message,
+        checkedAt,
+      };
+    }
+
+    try {
+      const client = new JenkinsClient(config);
+      const response = await client.getJson<JenkinsRoot>(
+        '/api/json?tree=mode,nodeDescription,nodeName,numExecutors,useCrumbs,jobs[name]',
+      );
+      return {
+        status: ProviderConnectionStatus.CONNECTED,
+        configured: true,
+        baseUrl: config.baseUrl,
+        username: config.username,
+        allowedJobs: config.allowedJobs,
+        triggerEnabled: config.allowedJobs.length > 0,
+        version: response.headers.get('x-jenkins') ?? undefined,
+        mode: response.data.mode,
+        nodeDescription: response.data.nodeDescription,
+        nodeName: response.data.nodeName,
+        numExecutors: response.data.numExecutors,
+        useCrumbs: response.data.useCrumbs,
+        message: 'Connected to Jenkins.',
+        checkedAt,
+      };
+    } catch (error) {
+      return {
+        status: classifyJenkinsError(error),
+        configured: true,
+        baseUrl: config.baseUrl,
+        username: config.username,
+        allowedJobs: config.allowedJobs,
+        triggerEnabled: false,
+        message: safeJenkinsMessage(error),
+        checkedAt,
+      };
+    }
+  }
+
+  async getSummary(): Promise<JenkinsSummaryResponse> {
+    const checkedAt = new Date().toISOString();
+    const status = await this.getStatus();
+    if (status.status !== ProviderConnectionStatus.CONNECTED) {
+      return {
+        status: status.status,
+        configured: status.configured,
+        allowedJobs: status.allowedJobs,
+        triggerEnabled: false,
+        jobCount: 0,
+        buildableJobCount: 0,
+        disabledJobCount: 0,
+        queueCount: 0,
+        viewCount: 0,
+        recentBuilds: [],
+        checkedAt,
+        partialFailures: [],
+      };
+    }
+
+    const client = new JenkinsClient();
+    const partialFailures: Array<{ scope: string; message: string }> = [];
+    try {
+      const root = await client.getJson<JenkinsRoot>(
+        '/api/json?tree=jobs[name,fullName,url,color,buildable,disabled,inQueue,lastBuild[number,url,result,building,timestamp,duration,estimatedDuration,displayName,fullDisplayName]],views[name],queue[items[id]],overallLoad[busyExecutors,totalExecutors]',
+      );
+      const jobs = (root.data.jobs ?? []).map((job) => this._toJob(job));
+      const recentBuilds = jobs.flatMap((job) => [job.lastBuild].filter(Boolean) as JenkinsBuild[]);
+      return {
+        status: ProviderConnectionStatus.CONNECTED,
+        configured: true,
+        allowedJobs: status.allowedJobs,
+        triggerEnabled: status.allowedJobs.length > 0,
+        jobCount: jobs.length,
+        buildableJobCount: jobs.filter((job) => job.buildable === true && job.disabled !== true).length,
+        disabledJobCount: jobs.filter((job) => job.disabled === true).length,
+        queueCount: root.data.queue?.items?.length ?? 0,
+        viewCount: root.data.views?.length ?? 0,
+        busyExecutors: root.data.overallLoad?.busyExecutors,
+        totalExecutors: root.data.overallLoad?.totalExecutors,
+        recentBuilds: recentBuilds.slice(0, 20),
+        checkedAt,
+        partialFailures,
+      };
+    } catch (error) {
+      partialFailures.push({ scope: 'summary', message: safeJenkinsMessage(error) });
+      return {
+        status: classifyJenkinsError(error),
+        configured: true,
+        allowedJobs: status.allowedJobs,
+        triggerEnabled: false,
+        jobCount: 0,
+        buildableJobCount: 0,
+        disabledJobCount: 0,
+        queueCount: 0,
+        viewCount: 0,
+        recentBuilds: [],
+        checkedAt,
+        partialFailures,
+      };
+    }
+  }
+
+  async listJobs(): Promise<JenkinsListResponse<JenkinsJob>> {
+    return this._listResponse(async (client) => {
+      const response = await client.getJson<JenkinsRoot>(
+        '/api/json?tree=jobs[name,fullName,url,color,buildable,disabled,inQueue,lastBuild[number,url,result,building,timestamp,duration,estimatedDuration,displayName,fullDisplayName],lastSuccessfulBuild[number,url,result,building,timestamp,duration,estimatedDuration,displayName,fullDisplayName],lastFailedBuild[number,url,result,building,timestamp,duration,estimatedDuration,displayName,fullDisplayName],healthReport[score,description]]',
+      );
+      return (response.data.jobs ?? []).map((job) => this._toJob(job));
+    });
+  }
+
+  async listBuilds(): Promise<JenkinsListResponse<JenkinsBuild>> {
+    return this._listResponse(async (client) => {
+      const response = await client.getJson<JenkinsRoot>(
+        '/api/json?tree=jobs[name,fullName,builds[number,url,result,building,timestamp,duration,estimatedDuration,displayName,fullDisplayName]]',
+      );
+      return (response.data.jobs ?? [])
+        .flatMap((job) => (job.builds ?? []).map((build) => this._toBuild(job.fullName ?? job.name ?? 'unknown', build)))
+        .sort((a, b) => new Date(b.timestamp ?? 0).getTime() - new Date(a.timestamp ?? 0).getTime())
+        .slice(0, 100);
+    });
+  }
+
+  async triggerBuild(
+    jobName: string,
+    organizationId: string,
+    userId: string,
+    role: string | undefined,
+    input: JenkinsTriggerBuildInput,
+    auditContext: AuditContext,
+  ): Promise<JenkinsTriggerBuildResponse> {
+    if (!jobName.trim()) throw new BadRequestError('Jenkins job name is required');
+    if (input.confirmationToken !== 'BUILD') throw new BadRequestError('confirmationToken must be BUILD');
+    const status = await this.getStatus();
+    if (status.status !== ProviderConnectionStatus.CONNECTED) {
+      throw new BadRequestError(status.message || 'Jenkins must be connected before triggering builds');
+    }
+    if (!status.allowedJobs.length) {
+      throw new BadRequestError('Jenkins build triggering is disabled because JENKINS_ALLOWED_JOBS is empty');
+    }
+    if (!status.allowedJobs.includes(jobName)) {
+      throw new BadRequestError('Jenkins job is not allowlisted for AutoOps triggering');
+    }
+
+    const operation = await operationService.createQueuedOperation(
+      {
+        organizationId,
+        userId,
+        role,
+        provider: OperationProvider.JENKINS,
+        operationType: OperationType.JENKINS_BUILD_TRIGGER,
+        projectId: input.projectId,
+        environmentId: input.environmentId,
+        confirmationToken: input.confirmationToken,
+        idempotencyKey: `jenkins-build-${jobName}-${Date.now()}`,
+        input: {
+          jobName,
+          parameters: input.parameters ?? {},
+          reason: input.reason,
+        } as Prisma.InputJsonObject,
+      },
+      auditContext,
+    );
+
+    return {
+      operationId: operation.id,
+      status: operation.status,
+      approvalRequired: operation.status === 'PENDING_APPROVAL',
+      message:
+        operation.status === 'PENDING_APPROVAL'
+          ? 'Jenkins build trigger is pending approval.'
+          : 'Jenkins build trigger operation queued.',
+    };
+  }
+
+  private async _listResponse<T>(
+    loader: (client: JenkinsClient) => Promise<T[]>,
+  ): Promise<JenkinsListResponse<T>> {
+    const status = await this.getStatus();
+    if (status.status !== ProviderConnectionStatus.CONNECTED) {
+      return {
+        status: status.status,
+        configured: status.configured,
+        checkedAt: status.checkedAt,
+        message: status.message,
+        items: [],
+      };
+    }
+
+    try {
+      return {
+        status: status.status,
+        configured: status.configured,
+        checkedAt: new Date().toISOString(),
+        message: status.message,
+        items: await loader(new JenkinsClient()),
+      };
+    } catch (error) {
+      return {
+        status: classifyJenkinsError(error),
+        configured: true,
+        checkedAt: new Date().toISOString(),
+        message: safeJenkinsMessage(error),
+        items: [],
+      };
+    }
+  }
+
+  private _toJob(job: JenkinsApiJob): JenkinsJob {
+    return {
+      name: job.name ?? 'unknown',
+      fullName: job.fullName,
+      url: job.url ?? '',
+      color: job.color ?? null,
+      status: this._jobStatus(job),
+      buildable: job.buildable,
+      disabled: job.disabled,
+      inQueue: job.inQueue,
+      lastBuild: job.lastBuild ? this._toBuild(job.fullName ?? job.name ?? 'unknown', job.lastBuild) : null,
+      lastSuccessfulBuild: job.lastSuccessfulBuild
+        ? this._toBuild(job.fullName ?? job.name ?? 'unknown', job.lastSuccessfulBuild)
+        : null,
+      lastFailedBuild: job.lastFailedBuild
+        ? this._toBuild(job.fullName ?? job.name ?? 'unknown', job.lastFailedBuild)
+        : null,
+      healthReport: job.healthReport,
+    };
+  }
+
+  private _toBuild(jobName: string, build: JenkinsApiBuild): JenkinsBuild {
+    return {
+      jobName,
+      buildNumber: build.number ?? 0,
+      url: build.url ?? '',
+      result: build.result ?? null,
+      building: build.building ?? false,
+      timestamp: build.timestamp ? new Date(build.timestamp).toISOString() : null,
+      duration: build.duration ?? null,
+      estimatedDuration: build.estimatedDuration ?? null,
+      displayName: build.displayName ?? null,
+      fullDisplayName: build.fullDisplayName ?? null,
+    };
+  }
+
+  private _jobStatus(job: JenkinsApiJob): string {
+    if (job.disabled) return 'DISABLED';
+    if (job.inQueue) return 'QUEUED';
+    if (job.color?.includes('anime')) return 'BUILDING';
+    if (job.color?.startsWith('blue')) return 'SUCCESS';
+    if (job.color?.startsWith('red')) return 'FAILED';
+    if (job.color?.startsWith('yellow')) return 'UNSTABLE';
+    return 'UNKNOWN';
+  }
+}
+
+export const jenkinsService = new JenkinsService();

@@ -1,0 +1,340 @@
+import { prisma, AuditAction, EnvironmentKind, type Prisma } from '@autoops/database';
+import {
+  OperationProvider,
+  OperationStatus,
+  OperationType,
+  type Operation,
+} from '@autoops/types';
+import { BadRequestError, ConflictError, NotFoundError, UnauthorizedError } from '@autoops/utils';
+import { enqueueOperationJob } from './operation.queue.js';
+
+type CreateOperationInput = {
+  organizationId: string;
+  userId: string;
+  role?: string;
+  provider: OperationProvider;
+  operationType: OperationType;
+  input: Record<string, unknown>;
+  projectId?: string;
+  environmentId?: string;
+  idempotencyKey?: string;
+  confirmationToken?: string;
+};
+
+type AuditRequestContext = {
+  ipAddress?: string;
+  userAgent?: string;
+};
+
+const MUTATION_ROLES = new Set(['OWNER', 'ADMIN']);
+
+export class OperationService {
+  async listOperations(organizationId: string): Promise<Operation[]> {
+    const operations = await prisma.operation.findMany({
+      where: { organizationId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    return operations.map((operation) => this._toOperation(operation));
+  }
+
+  async getOperation(operationId: string, organizationId: string): Promise<Operation> {
+    const operation = await prisma.operation.findFirst({
+      where: { id: operationId, organizationId },
+    });
+    if (!operation) throw new NotFoundError('Operation');
+    return this._toOperation(operation);
+  }
+
+  async createQueuedOperation(
+    input: CreateOperationInput,
+    auditContext: AuditRequestContext = {},
+  ): Promise<Operation> {
+    this._requireMutationRole(input.role);
+
+    if (!input.confirmationToken) {
+      throw new BadRequestError('A confirmation token is required for real operations');
+    }
+
+    if (input.idempotencyKey) {
+      const existing = await prisma.operation.findUnique({
+        where: {
+          organizationId_idempotencyKey: {
+            organizationId: input.organizationId,
+            idempotencyKey: input.idempotencyKey,
+          },
+        },
+      });
+      if (existing) return this._toOperation(existing);
+    }
+
+    const requiresApproval = await this._requiresApproval(
+      input.organizationId,
+      input.environmentId,
+    );
+
+    const created = await prisma.$transaction(async (tx) => {
+      const operation = await tx.operation.create({
+        data: {
+          organizationId: input.organizationId,
+          projectId: input.projectId ?? null,
+          environmentId: input.environmentId ?? null,
+          provider: input.provider,
+          operationType: input.operationType,
+          status: requiresApproval ? OperationStatus.PENDING_APPROVAL : OperationStatus.QUEUED,
+          requestedByUserId: input.userId,
+          idempotencyKey: input.idempotencyKey ?? null,
+          input: input.input as Prisma.InputJsonObject,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId: input.organizationId,
+          actorId: input.userId,
+          action: this._auditAction(input.operationType),
+          provider: input.provider,
+          projectId: input.projectId ?? null,
+          environmentId: input.environmentId ?? null,
+          operationId: operation.id,
+          resourceType: 'operation',
+          resourceId: operation.id,
+          ipAddress: auditContext.ipAddress,
+          userAgent: auditContext.userAgent,
+          metadata: {
+            operationType: input.operationType,
+            status: operation.status,
+            requiresApproval,
+          },
+        },
+      });
+
+      return operation;
+    });
+
+    if (!requiresApproval) {
+      await enqueueOperationJob({
+        operationId: created.id,
+        organizationId: input.organizationId,
+        requestedByUserId: input.userId,
+      });
+    }
+
+    return this._toOperation(created);
+  }
+
+  async approveOperation(
+    operationId: string,
+    organizationId: string,
+    userId: string,
+    role?: string,
+    reason?: string,
+    auditContext: AuditRequestContext = {},
+  ): Promise<Operation> {
+    this._requireMutationRole(role);
+
+    const operation = await prisma.operation.findFirst({
+      where: { id: operationId, organizationId },
+    });
+    if (!operation) throw new NotFoundError('Operation');
+    if (operation.status !== OperationStatus.PENDING_APPROVAL) {
+      throw new ConflictError('Only pending approval operations can be approved');
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const approved = await tx.operation.update({
+        where: { id: operation.id },
+        data: {
+          status: OperationStatus.QUEUED,
+          approvedByUserId: userId,
+          approvedAt: new Date(),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId,
+          actorId: userId,
+          action: AuditAction.UPDATE,
+          provider: operation.provider,
+          projectId: operation.projectId,
+          environmentId: operation.environmentId,
+          operationId: operation.id,
+          resourceType: 'operation',
+          resourceId: operation.id,
+          ipAddress: auditContext.ipAddress,
+          userAgent: auditContext.userAgent,
+          metadata: { decision: 'approved', reason },
+        },
+      });
+
+      return approved;
+    });
+
+    await enqueueOperationJob({
+      operationId: updated.id,
+      organizationId,
+      requestedByUserId: operation.requestedByUserId ?? userId,
+    });
+
+    return this._toOperation(updated);
+  }
+
+  async rejectOperation(
+    operationId: string,
+    organizationId: string,
+    userId: string,
+    role?: string,
+    reason?: string,
+    auditContext: AuditRequestContext = {},
+  ): Promise<Operation> {
+    this._requireMutationRole(role);
+
+    const operation = await prisma.operation.findFirst({
+      where: { id: operationId, organizationId },
+    });
+    if (!operation) throw new NotFoundError('Operation');
+    if (operation.status !== OperationStatus.PENDING_APPROVAL) {
+      throw new ConflictError('Only pending approval operations can be rejected');
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const rejected = await tx.operation.update({
+        where: { id: operation.id },
+        data: {
+          status: OperationStatus.REJECTED,
+          rejectedByUserId: userId,
+          rejectedAt: new Date(),
+          error: { reason: reason ?? 'Rejected by approver' },
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId,
+          actorId: userId,
+          action: AuditAction.UPDATE,
+          provider: operation.provider,
+          projectId: operation.projectId,
+          environmentId: operation.environmentId,
+          operationId: operation.id,
+          resourceType: 'operation',
+          resourceId: operation.id,
+          ipAddress: auditContext.ipAddress,
+          userAgent: auditContext.userAgent,
+          metadata: { decision: 'rejected', reason },
+        },
+      });
+
+      return rejected;
+    });
+
+    return this._toOperation(updated);
+  }
+
+  private _requireMutationRole(role?: string): void {
+    if (!role || !MUTATION_ROLES.has(role)) {
+      throw new UnauthorizedError('Requires organization OWNER or ADMIN role');
+    }
+  }
+
+  private async _requiresApproval(
+    organizationId: string,
+    environmentId?: string,
+  ): Promise<boolean> {
+    if (!environmentId) return false;
+
+    const environment = await prisma.environment.findFirst({
+      where: {
+        id: environmentId,
+        archivedAt: null,
+        project: {
+          organizationId,
+          archivedAt: null,
+        },
+      },
+      select: {
+        kind: true,
+        name: true,
+        slug: true,
+      },
+    });
+
+    if (!environment) {
+      throw new NotFoundError('Environment');
+    }
+
+    return (
+      environment.kind === EnvironmentKind.PRODUCTION ||
+      environment.name.toLowerCase().includes('prod') ||
+      environment.slug.toLowerCase().includes('prod')
+    );
+  }
+
+  private _auditAction(operationType: OperationType): AuditAction {
+    if (operationType === OperationType.KUBERNETES_DEPLOYMENT_RESTART) {
+      return AuditAction.KUBERNETES_DEPLOYMENT_RESTART_REQUESTED;
+    }
+    if (operationType === OperationType.KUBERNETES_MANIFEST_APPLY) {
+      return AuditAction.KUBERNETES_MANIFEST_APPLY_REQUESTED;
+    }
+    if (operationType === OperationType.JENKINS_BUILD_TRIGGER) {
+      return AuditAction.JENKINS_BUILD_TRIGGER_REQUESTED;
+    }
+    if (operationType === OperationType.KUBERNETES_MANIFEST_DRY_RUN) {
+      return AuditAction.KUBERNETES_MANIFEST_DRY_RUN_REQUESTED;
+    }
+    return AuditAction.UPDATE;
+  }
+
+  private _toOperation(operation: {
+    id: string;
+    organizationId: string;
+    projectId: string | null;
+    environmentId: string | null;
+    provider: Operation['provider'];
+    operationType: Operation['operationType'];
+    status: Operation['status'];
+    requestedByUserId: string | null;
+    approvedByUserId: string | null;
+    approvedAt: Date | null;
+    rejectedByUserId: string | null;
+    rejectedAt: Date | null;
+    idempotencyKey: string | null;
+    input: unknown;
+    result: unknown;
+    error: unknown;
+    createdAt: Date;
+    updatedAt: Date;
+  }): Operation {
+    return {
+      id: operation.id,
+      organizationId: operation.organizationId,
+      projectId: operation.projectId,
+      environmentId: operation.environmentId,
+      provider: operation.provider,
+      operationType: operation.operationType,
+      status: operation.status,
+      requestedByUserId: operation.requestedByUserId,
+      approvedByUserId: operation.approvedByUserId,
+      approvedAt: operation.approvedAt?.toISOString() ?? null,
+      rejectedByUserId: operation.rejectedByUserId,
+      rejectedAt: operation.rejectedAt?.toISOString() ?? null,
+      idempotencyKey: operation.idempotencyKey,
+      input: this._toRecord(operation.input),
+      result: operation.result ? this._toRecord(operation.result) : null,
+      error: operation.error ? this._toRecord(operation.error) : null,
+      createdAt: operation.createdAt.toISOString(),
+      updatedAt: operation.updatedAt.toISOString(),
+    };
+  }
+
+  private _toRecord(value: unknown): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+    return {};
+  }
+}
+
+export const operationService = new OperationService();
