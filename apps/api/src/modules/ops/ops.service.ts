@@ -4,10 +4,16 @@ import {
   IntegrationCategory,
   IntegrationStatus,
   KubernetesConnectionStatus,
+  OperationActivitySource,
+  OperationProvider,
   OperationStatus,
+  OperationType,
   ProviderConnectionStatus,
   RuntimeStatus,
   type Deployment,
+  type OperationActivityItem,
+  type OperationActivityResponse,
+  type OpsActivityQuery,
   type OpsIntegrationReadiness,
   type OpsSummary,
 } from '@autoops/types';
@@ -23,6 +29,23 @@ const ACTIVE_DEPLOYMENT_STATUSES = [
   DeploymentStatus.DEPLOYING,
   DeploymentStatus.RUNNING,
 ] as const;
+
+type OperationActivityRecord = {
+  id: string;
+  provider: OperationProvider;
+  operationType: OperationType;
+  status: OperationStatus;
+  input: unknown;
+  result: unknown;
+  error: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+  requestedBy: {
+    id: string;
+    name: string | null;
+    email: string | null;
+  } | null;
+};
 
 const BASE_INTEGRATIONS: OpsIntegrationReadiness[] = [
   {
@@ -91,6 +114,51 @@ const BASE_INTEGRATIONS: OpsIntegrationReadiness[] = [
 ];
 
 export class OpsService {
+  async listActivity(
+    organizationId: string,
+    query: OpsActivityQuery,
+  ): Promise<OperationActivityResponse> {
+    const provider = query.source ? this._providerForSource(query.source) : null;
+    if (query.source && !provider) {
+      return { items: [] };
+    }
+
+    const operations = await prisma.operation.findMany({
+      where: {
+        organizationId,
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.type ? { operationType: query.type } : {}),
+        ...(provider ? { provider } : {}),
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      take: query.limit,
+      select: {
+        id: true,
+        provider: true,
+        operationType: true,
+        status: true,
+        input: true,
+        result: true,
+        error: true,
+        createdAt: true,
+        updatedAt: true,
+        requestedBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return {
+      items: operations.map((operation) => this._toActivityItem(operation)),
+    };
+  }
+
   async getSummary(organizationId: string): Promise<OpsSummary> {
     const [
       databaseStatus,
@@ -394,6 +462,122 @@ export class OpsService {
     }
 
     return {};
+  }
+
+  private _toActivityItem(operation: OperationActivityRecord): OperationActivityItem {
+    const input = this._toRecord(operation.input);
+    const result = this._toRecord(operation.result);
+    const error = this._toRecord(operation.error);
+    const source = this._sourceForProvider(operation.provider);
+    const terminal = this._isTerminalStatus(operation.status);
+    const started = this._isStartedStatus(operation.status);
+    const durationMs = terminal
+      ? Math.max(0, operation.updatedAt.getTime() - operation.createdAt.getTime())
+      : null;
+
+    return {
+      id: operation.id,
+      type: operation.operationType,
+      source,
+      status: operation.status,
+      title: this._titleForType(operation.operationType),
+      targetLabel: this._targetLabel(operation.operationType, input, result),
+      result: this._resultLabel(operation.operationType, result),
+      externalUrl: this._externalUrl(operation.operationType, result),
+      createdAt: operation.createdAt.toISOString(),
+      startedAt: started ? operation.updatedAt.toISOString() : null,
+      completedAt: terminal ? operation.updatedAt.toISOString() : null,
+      durationMs,
+      actor: operation.requestedBy
+        ? {
+            id: operation.requestedBy.id,
+            name: operation.requestedBy.name,
+            email: operation.requestedBy.email,
+          }
+        : null,
+      errorMessage: this._stringField(error, 'message'),
+    };
+  }
+
+  private _sourceForProvider(provider: OperationProvider): OperationActivitySource {
+    if (provider === OperationProvider.JENKINS) return OperationActivitySource.JENKINS;
+    if (provider === OperationProvider.KUBERNETES) return OperationActivitySource.KUBERNETES;
+    if (provider === OperationProvider.DOCKER) return OperationActivitySource.DOCKER;
+    if (provider === OperationProvider.GITHUB) return OperationActivitySource.GITHUB;
+    if (provider === OperationProvider.AWS) return OperationActivitySource.AWS;
+    return OperationActivitySource.SYSTEM;
+  }
+
+  private _providerForSource(source: OperationActivitySource): OperationProvider | null {
+    if (source === OperationActivitySource.JENKINS) return OperationProvider.JENKINS;
+    if (source === OperationActivitySource.KUBERNETES) return OperationProvider.KUBERNETES;
+    if (source === OperationActivitySource.DOCKER) return OperationProvider.DOCKER;
+    if (source === OperationActivitySource.GITHUB) return OperationProvider.GITHUB;
+    if (source === OperationActivitySource.AWS) return OperationProvider.AWS;
+    return null;
+  }
+
+  private _titleForType(type: OperationType): string {
+    if (type === OperationType.JENKINS_BUILD_TRIGGER) return 'Jenkins build triggered';
+    if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) return 'Kubernetes deployment restart';
+    if (type === OperationType.KUBERNETES_MANIFEST_DRY_RUN) return 'Kubernetes manifest dry run';
+    if (type === OperationType.KUBERNETES_MANIFEST_APPLY) return 'Kubernetes manifest apply';
+    if (type === OperationType.GITHUB_WORKFLOW_DISPATCH) return 'GitHub workflow dispatched';
+    if (type === OperationType.AWS_DEPLOYMENT) return 'AWS deployment requested';
+    if (type === OperationType.DEPLOYMENT_ROLLBACK) return 'Deployment rollback requested';
+    return String(type).replace(/_/g, ' ').toLowerCase();
+  }
+
+  private _targetLabel(
+    type: OperationType,
+    input: Record<string, unknown>,
+    result: Record<string, unknown>,
+  ): string | null {
+    if (type === OperationType.JENKINS_BUILD_TRIGGER) {
+      return this._stringField(result, 'jobName') ?? this._stringField(input, 'jobName');
+    }
+
+    return (
+      this._stringField(input, 'target') ??
+      this._stringField(input, 'resourceName') ??
+      this._stringField(input, 'name') ??
+      this._stringField(result, 'target') ??
+      null
+    );
+  }
+
+  private _resultLabel(type: OperationType, result: Record<string, unknown>): string | null {
+    if (type === OperationType.JENKINS_BUILD_TRIGGER) {
+      return this._stringField(result, 'result');
+    }
+
+    return this._stringField(result, 'status') ?? this._stringField(result, 'result');
+  }
+
+  private _externalUrl(type: OperationType, result: Record<string, unknown>): string | null {
+    if (type === OperationType.JENKINS_BUILD_TRIGGER) {
+      return this._stringField(result, 'buildUrl');
+    }
+
+    return null;
+  }
+
+  private _stringField(record: Record<string, unknown>, key: string): string | null {
+    const value = record[key];
+    return typeof value === 'string' && value.trim().length > 0 ? value : null;
+  }
+
+  private _isStartedStatus(status: OperationStatus): boolean {
+    return status !== OperationStatus.QUEUED && status !== OperationStatus.PENDING_APPROVAL;
+  }
+
+  private _isTerminalStatus(status: OperationStatus): boolean {
+    return (
+      status === OperationStatus.SUCCEEDED ||
+      status === OperationStatus.FAILED ||
+      status === OperationStatus.REJECTED ||
+      status === OperationStatus.CANCELLED
+    );
   }
 }
 

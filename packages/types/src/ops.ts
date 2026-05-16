@@ -1,4 +1,6 @@
+import { z } from 'zod';
 import type { Deployment } from './deployment.js';
+import { OperationStatus, OperationType, type OperationStatus as OperationStatusValue, type OperationType as OperationTypeValue } from './operation.js';
 
 export const RuntimeStatus = {
   READY: 'READY',
@@ -88,4 +90,51 @@ export interface OpsSummary {
     running: number;
     failed: number;
   };
+}
+
+export const OperationActivitySource = {
+  JENKINS: 'jenkins',
+  KUBERNETES: 'kubernetes',
+  DOCKER: 'docker',
+  GITHUB: 'github',
+  AWS: 'aws',
+  DEPLOYMENT: 'deployment',
+  SYSTEM: 'system',
+} as const;
+export type OperationActivitySource =
+  (typeof OperationActivitySource)[keyof typeof OperationActivitySource];
+
+export const opsActivityQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  status: z.nativeEnum(OperationStatus).optional(),
+  type: z.nativeEnum(OperationType).optional(),
+  source: z.nativeEnum(OperationActivitySource).optional(),
+});
+export type OpsActivityQuery = z.infer<typeof opsActivityQuerySchema>;
+
+export interface OperationActivityActor {
+  id: string;
+  name: string | null;
+  email: string | null;
+}
+
+export interface OperationActivityItem {
+  id: string;
+  type: OperationTypeValue;
+  source: OperationActivitySource;
+  status: OperationStatusValue;
+  title: string;
+  targetLabel: string | null;
+  result: string | null;
+  externalUrl: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  actor: OperationActivityActor | null;
+  errorMessage: string | null;
+}
+
+export interface OperationActivityResponse {
+  items: OperationActivityItem[];
 }

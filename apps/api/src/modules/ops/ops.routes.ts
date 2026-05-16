@@ -1,5 +1,7 @@
 import { Router, type RequestHandler } from 'express';
+import { opsActivityQuerySchema } from '@autoops/types';
 import { requireAuth } from '../../middleware/auth.js';
+import { validate } from '../../middleware/validate.js';
 import { opsController } from './ops.controller.js';
 
 function asyncHandler(handler: RequestHandler): RequestHandler {
@@ -9,6 +11,13 @@ function asyncHandler(handler: RequestHandler): RequestHandler {
 }
 
 export const opsRouter: Router = Router();
+
+opsRouter.get(
+  '/activity',
+  requireAuth,
+  validate({ query: opsActivityQuerySchema }),
+  asyncHandler(opsController.activity as unknown as RequestHandler),
+);
 
 opsRouter.get(
   '/summary',

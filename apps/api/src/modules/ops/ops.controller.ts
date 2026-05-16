@@ -1,9 +1,18 @@
 import type { Request, Response } from 'express';
-import type { OpsSummary } from '@autoops/types';
+import type { OperationActivityResponse, OpsActivityQuery, OpsSummary } from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { opsService } from './ops.service.js';
 
 export class OpsController {
+  activity = async (req: Request, res: Response<{ data: OperationActivityResponse }>): Promise<void> => {
+    const organizationId = this._requireOrganizationId(req);
+    const activity = await opsService.listActivity(
+      organizationId,
+      req.query as unknown as OpsActivityQuery,
+    );
+    res.json({ data: activity });
+  };
+
   summary = async (req: Request, res: Response<{ data: OpsSummary }>): Promise<void> => {
     const organizationId = this._requireOrganizationId(req);
     const summary = await opsService.getSummary(organizationId);

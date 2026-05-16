@@ -6,6 +6,8 @@ import type {
   AuditLog,
   IntegrationProvider,
   Operation,
+  OperationActivityItem,
+  OperationActivityResponse,
   OpsIntegrationReadiness,
   OpsQueueSummary,
   OpsSummary,
@@ -19,6 +21,7 @@ import {
   Code2,
   Container,
   Database,
+  ExternalLink,
   GitBranch,
   GitCommit,
   GitMerge,
@@ -32,6 +35,7 @@ import {
   ShieldCheck,
   TerminalSquare,
   Timer,
+  UserCircle,
   Workflow,
   Wrench,
 } from 'lucide-react';
@@ -41,9 +45,11 @@ import { Button } from '@/components/ui/button';
 type OpsSummaryResponse = { data: OpsSummary };
 type ProvidersResponse = { data: IntegrationProvider[] };
 type OperationsResponse = { data: Operation[] };
+type OperationActivityApiResponse = { data: OperationActivityResponse };
 type AuditLogsResponse = { data: AuditLog[] };
 
 const POLL_INTERVAL_MS = 15_000;
+const MISSING_VALUE = '—';
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.code === 'SESSION_EXPIRED') {
@@ -79,6 +85,18 @@ function formatDuration(value: number | null): string {
   return `${(value / 1_000).toFixed(2)} s`;
 }
 
+function formatTimelineDate(value: string | null): string {
+  return value ? formatDate(value) : MISSING_VALUE;
+}
+
+function formatTimelineDuration(value: number | null): string {
+  return value === null ? MISSING_VALUE : formatDuration(value);
+}
+
+function shortOperationId(value: string): string {
+  return value.length > 12 ? value.slice(0, 8) : value;
+}
+
 function shortSha(value: string | null): string {
   return value ? value.slice(0, 12) : 'No SHA';
 }
@@ -93,6 +111,25 @@ function statusTone(status: string): string {
   if (status === 'FAILED') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
   if (status === 'NOT_CONNECTED') return 'border-slate-500/25 bg-slate-500/10 text-slate-300';
   return 'border-cyan-300/25 bg-cyan-300/10 text-cyan-200';
+}
+
+function sourceLabel(source: string): string {
+  const labels: Record<string, string> = {
+    jenkins: 'Jenkins',
+    kubernetes: 'Kubernetes',
+    docker: 'Docker',
+    github: 'GitHub',
+    aws: 'AWS',
+    deployment: 'Deployment',
+    system: 'System',
+  };
+
+  return labels[source] ?? source;
+}
+
+function actorLabel(actor: OperationActivityItem['actor']): string {
+  if (!actor) return MISSING_VALUE;
+  return actor.name ?? actor.email ?? actor.id;
 }
 
 function integrationIcon(key: string) {
@@ -254,10 +291,12 @@ export function OperationsClient() {
   const [summary, setSummary] = useState<OpsSummary | null>(null);
   const [providers, setProviders] = useState<IntegrationProvider[]>([]);
   const [operations, setOperations] = useState<Operation[]>([]);
+  const [activityItems, setActivityItems] = useState<OperationActivityItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activityError, setActivityError] = useState<string | null>(null);
 
   const loadSummary = useCallback(async (mode: 'initial' | 'refresh' = 'refresh') => {
     if (mode === 'initial') {
@@ -266,6 +305,7 @@ export function OperationsClient() {
       setIsRefreshing(true);
     }
     setError(null);
+    setActivityError(null);
 
     try {
       const [summaryResponse, providersResponse, operationsResponse, auditResponse] = await Promise.all([
@@ -278,6 +318,13 @@ export function OperationsClient() {
       setProviders(providersResponse.data);
       setOperations(operationsResponse.data);
       setAuditLogs(auditResponse.data);
+
+      try {
+        const activityResponse = await api.get<OperationActivityApiResponse>('/v1/ops/activity');
+        setActivityItems(activityResponse.data.items);
+      } catch (activityLoadError) {
+        setActivityError(getErrorMessage(activityLoadError));
+      }
     } catch (loadError) {
       setError(getErrorMessage(loadError));
     } finally {
@@ -305,7 +352,6 @@ export function OperationsClient() {
     () => operations.filter((operation) => operation.status === 'PENDING_APPROVAL'),
     [operations],
   );
-  const recentOperations = useMemo(() => operations.slice(0, 6), [operations]);
 
   const decideOperation = async (operationId: string, decision: 'approve' | 'reject') => {
     try {
@@ -449,25 +495,118 @@ export function OperationsClient() {
         </section>
 
         <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
-          <h2 className="text-base font-semibold text-white">Recent Operations</h2>
-          <p className="mt-1 text-sm text-slate-400">Real queued provider operations and their latest states.</p>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-base font-semibold text-white">Operations Activity Timeline</h2>
+              <p className="mt-1 text-sm text-slate-400">Real operation activity from worker-backed AutoOps records.</p>
+            </div>
+            <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-200">
+              {activityItems.length} shown
+            </span>
+          </div>
           <div className="mt-5 space-y-3">
-            {recentOperations.length === 0 ? (
+            {isLoading ? (
               <div className="rounded-2xl border border-dashed border-white/15 bg-slate-950/35 p-6 text-center text-sm text-slate-400">
-                No operation records yet.
+                Loading operation activity...
+              </div>
+            ) : activityError ? (
+              <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-5">
+                <p className="text-sm font-medium text-rose-200">Unable to load operation activity.</p>
+                <p className="mt-2 text-sm text-slate-400">{activityError}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-4 rounded-full border-white/10 bg-white/[0.04]"
+                  onClick={() => void loadSummary()}
+                  disabled={isRefreshing}
+                >
+                  <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+                  Retry
+                </Button>
+              </div>
+            ) : activityItems.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-white/15 bg-slate-950/35 p-6 text-center text-sm text-slate-400">
+                <p className="font-medium text-white">No operations have been recorded yet.</p>
+                <p className="mt-2 text-slate-500">Trigger a Jenkins job or deployment to see activity here.</p>
               </div>
             ) : (
-              recentOperations.map((operation) => (
-                <div key={operation.id} className="grid gap-3 rounded-2xl border border-white/10 bg-slate-950/35 p-4 md:grid-cols-[1fr_0.45fr_0.45fr]">
-                  <div>
-                    <p className="text-sm font-semibold text-white">{operation.operationType}</p>
-                    <p className="mt-1 text-xs text-slate-500">{operation.provider} | {formatDate(operation.createdAt)}</p>
+              activityItems.map((item, index) => (
+                <article
+                  key={item.id}
+                  className="relative rounded-2xl border border-white/10 bg-slate-950/35 p-4 pl-11 transition hover:border-cyan-300/30 hover:bg-white/[0.04]"
+                >
+                  <div className="absolute left-4 top-5 flex h-5 w-5 items-center justify-center rounded-full border border-cyan-300/30 bg-cyan-300/15">
+                    <span className="h-2 w-2 rounded-full bg-cyan-300" />
                   </div>
-                  <span className={`w-fit rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(operation.status)}`}>
-                    {operation.status}
-                  </span>
-                  <p className="truncate text-xs text-slate-500">{operation.id}</p>
-                </div>
+                  {index < activityItems.length - 1 ? (
+                    <span className="absolute bottom-[-0.85rem] left-[1.62rem] top-10 w-px bg-white/10" />
+                  ) : null}
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-white/10 bg-white/[0.045] px-2.5 py-1 text-[11px] font-semibold text-slate-300">
+                          {sourceLabel(item.source)}
+                        </span>
+                        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(item.status)}`}>
+                          {item.status}
+                        </span>
+                        {item.result ? (
+                          <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(item.result)}`}>
+                            {item.result}
+                          </span>
+                        ) : null}
+                      </div>
+                      <h3 className="mt-3 text-sm font-semibold text-white">{item.title}</h3>
+                      <p className="mt-1 truncate text-sm text-slate-400">{item.targetLabel ?? MISSING_VALUE}</p>
+                    </div>
+                    {item.externalUrl ? (
+                      <a
+                        href={item.externalUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="inline-flex shrink-0 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-cyan-200 transition hover:border-cyan-300/35 hover:bg-cyan-300/10"
+                      >
+                        Open related resource
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    ) : null}
+                  </div>
+                  <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Created</p>
+                      <p className="mt-1 text-slate-300">{formatTimelineDate(item.createdAt)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Duration</p>
+                      <p className="mt-1 text-slate-300">{formatTimelineDuration(item.durationMs)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Actor</p>
+                      <p className="mt-1 flex items-center gap-2 text-slate-300">
+                        <UserCircle className="h-3.5 w-3.5 text-slate-500" />
+                        {actorLabel(item.actor)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Operation</p>
+                      <p className="mt-1 font-mono text-slate-300">{shortOperationId(item.id)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Started</p>
+                      <p className="mt-1 text-slate-300">{formatTimelineDate(item.startedAt)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Completed</p>
+                      <p className="mt-1 text-slate-300">{formatTimelineDate(item.completedAt)}</p>
+                    </div>
+                  </div>
+                  {item.errorMessage ? (
+                    <div className="mt-4 rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+                      {item.errorMessage}
+                    </div>
+                  ) : null}
+                </article>
               ))
             )}
           </div>
