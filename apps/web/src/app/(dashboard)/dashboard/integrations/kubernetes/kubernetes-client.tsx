@@ -65,6 +65,11 @@ function formatTime(value: string | undefined): string {
   }).format(new Date(value));
 }
 
+function metricsApiValue(summary: KubernetesSummary | null): string {
+  if (summary?.metricsApi.status !== 'CONNECTED') return 'Not connected yet';
+  return `CONNECTED (${summary.metricsApi.nodeMetricsCount} nodes / ${summary.metricsApi.podMetricsCount} pods)`;
+}
+
 function SummaryCard({
   label,
   value,
@@ -242,11 +247,11 @@ export function KubernetesClient() {
               {currentStatus}
             </span>
             <h1 className="mt-4 text-4xl font-semibold tracking-tight text-white lg:text-5xl">
-              Kubernetes Read-only Connector
+              Kubernetes Control Connector
             </h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400">
-              Cluster visibility for namespaces, workloads, pods, and services. Read-only mode is active:
-              AutoOps will not mutate cluster resources in this milestone.
+              Cluster visibility is connected. Controlled Kubernetes actions such as scale and rollout
+              restart will be enabled through confirmation, audit, and approval gates.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -282,7 +287,7 @@ export function KubernetesClient() {
               </h2>
               <p className="mt-2 text-sm leading-6 text-amber-100/80">
                 {status?.message ??
-                  'Set KUBECONFIG for the API container to enable read-only Kubernetes discovery.'}
+                  'Set KUBECONFIG for the API container to enable Kubernetes discovery.'}
               </p>
               {currentStatus === 'NOT_CONFIGURED' ? (
                 <div className="mt-4 grid gap-2 rounded-2xl border border-white/10 bg-slate-950/35 p-4 text-sm text-slate-300">
@@ -291,7 +296,7 @@ export function KubernetesClient() {
                   <p>2. Run: kubectl config current-context</p>
                   <p>3. Run: kubectl get nodes</p>
                   <p>4. Set KUBECONFIG_HOST_PATH to your host kubeconfig file.</p>
-                  <p>5. Start with docker-compose.k8s.yml to mount it read-only into the API container.</p>
+                  <p>5. Start with docker-compose.k8s.yml to mount it into the API container.</p>
                 </div>
               ) : null}
               <p className="mt-3 text-sm text-slate-300">
@@ -305,7 +310,7 @@ export function KubernetesClient() {
       <section className="rounded-3xl border border-emerald-300/15 bg-emerald-300/10 p-4">
         <div className="flex items-center gap-3 text-sm font-medium text-emerald-200">
           <ShieldCheck className="h-4 w-4" />
-          Read-only mode active. AutoOps will not create, update, delete, scale, exec, attach, or apply Kubernetes resources.
+          Controlled operations mode is being prepared. Kubernetes actions must pass confirmation, audit, and approval policies before execution.
         </div>
       </section>
 
@@ -313,7 +318,7 @@ export function KubernetesClient() {
         <SummaryCard label="Context" value={summary?.cluster?.context ?? status?.context ?? 'Not connected'} icon={<Server className="h-5 w-5" />} />
         <SummaryCard label="Server" value={summary?.cluster?.server ?? status?.server ?? 'Not connected'} icon={<Network className="h-5 w-5" />} />
         <SummaryCard label="Version" value={summary?.cluster?.version ?? status?.version ?? 'Unknown'} icon={<CheckCircle2 className="h-5 w-5" />} />
-        <SummaryCard label="Metrics API" value="Not connected yet" icon={<Database className="h-5 w-5" />} />
+        <SummaryCard label="Metrics API" value={metricsApiValue(summary)} icon={<Database className="h-5 w-5" />} />
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-8">

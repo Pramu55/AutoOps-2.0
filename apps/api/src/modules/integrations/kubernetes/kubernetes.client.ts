@@ -11,6 +11,7 @@ export interface KubernetesClientBundle {
   kubeConfig: k8s.KubeConfig;
   core: k8s.CoreV1Api;
   apps: k8s.AppsV1Api;
+  customObjects: k8s.CustomObjectsApi;
   object: k8s.KubernetesObjectApi;
   version: k8s.VersionApi;
 }
@@ -131,6 +132,7 @@ export class KubernetesClientProvider {
       kubeConfig,
       core: kubeConfig.makeApiClient(k8s.CoreV1Api),
       apps: kubeConfig.makeApiClient(k8s.AppsV1Api),
+      customObjects: kubeConfig.makeApiClient(k8s.CustomObjectsApi),
       object: k8s.KubernetesObjectApi.makeApiClient(kubeConfig),
       version: kubeConfig.makeApiClient(k8s.VersionApi),
     };

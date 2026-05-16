@@ -264,7 +264,7 @@ function IntegrationCard({ integration }: { integration: OpsIntegrationReadiness
         disabled={!href}
         className="mt-4 w-full rounded-xl border border-white/10 bg-slate-950/35 px-3 py-2 text-xs font-medium text-slate-500"
       >
-        {href ? 'Open read-only view' : 'Connect later'}
+        {href ? 'Open connector view' : 'Connect later'}
       </button>
     </>
   );
@@ -372,7 +372,7 @@ export function OperationsClient() {
           <div>
             <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-200">
               <ShieldCheck className="h-3.5 w-3.5" />
-              Read-only operations foundation
+              Governed operations foundation
             </div>
             <h1 className="text-4xl font-semibold tracking-tight text-white lg:text-5xl">Operations Hub</h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400">
@@ -691,7 +691,7 @@ export function OperationsClient() {
             </p>
           </div>
           <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-1.5 text-xs font-medium text-amber-200">
-            Read-only foundation
+            Governed controls foundation
           </span>
         </div>
         <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -728,10 +728,10 @@ export function OperationsClient() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-cyan-300">Next milestone</p>
-            <h2 className="mt-2 text-xl font-semibold text-white">Kubernetes read-only connector</h2>
+            <h2 className="mt-2 text-xl font-semibold text-white">Kubernetes control connector</h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-              AutoOps will first read namespaces, pods, deployments, and services before any apply,
-              mutation, or execution capability is introduced.
+              AutoOps keeps real cluster visibility connected while controlled actions move through
+              confirmation, audit, and approval gates.
             </p>
           </div>
           <Code2 className="h-10 w-10 text-cyan-300" />

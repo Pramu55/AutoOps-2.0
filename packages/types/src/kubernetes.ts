@@ -137,6 +137,13 @@ export interface KubernetesConditionSummary {
   message?: string;
 }
 
+export interface KubernetesMetricsApiSummary {
+  status: 'CONNECTED' | 'NOT_CONNECTED';
+  nodeMetricsCount: number;
+  podMetricsCount: number;
+  message: string;
+}
+
 export interface KubernetesSummary {
   status: KubernetesConnectionStatus;
   generatedAt: string;
@@ -174,6 +181,7 @@ export interface KubernetesSummary {
     loadBalancer: number;
     externalName: number;
   };
+  metricsApi: KubernetesMetricsApiSummary;
   health: {
     clusterHealth: KubernetesHealthState;
     reasons: string[];

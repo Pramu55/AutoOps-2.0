@@ -9,6 +9,7 @@ import {
   type KubernetesApplyManifestInput,
   type KubernetesConditionSummary,
   type KubernetesListResponse,
+  type KubernetesMetricsApiSummary,
   type KubernetesNamespace,
   type KubernetesNode,
   type KubernetesPod,
@@ -95,6 +96,7 @@ export class KubernetesService {
         statefulSets,
         daemonSets,
         replicaSets,
+        metricsApi,
       ] = await Promise.all([
         client.version.getCode({}),
         client.core.listNamespace({}),
@@ -105,6 +107,7 @@ export class KubernetesService {
         client.apps.listStatefulSetForAllNamespaces({}),
         client.apps.listDaemonSetForAllNamespaces({}),
         client.apps.listReplicaSetForAllNamespaces({}),
+        this._metricsApiSummary(client),
       ]);
 
       const readyNodes = nodes.items.filter((node) => this._nodeReady(node)).length;
@@ -137,6 +140,7 @@ export class KubernetesService {
           replicaSets: replicaSets.items.length,
         },
         services: serviceStats,
+        metricsApi,
         health,
         counts: {
           namespaces: namespaces.items.length,
@@ -562,6 +566,12 @@ export class KubernetesService {
         loadBalancer: 0,
         externalName: 0,
       },
+      metricsApi: {
+        status: 'NOT_CONNECTED',
+        nodeMetricsCount: 0,
+        podMetricsCount: 0,
+        message: 'Metrics API is not connected.',
+      },
       health: {
         clusterHealth: KubernetesHealthState.UNKNOWN,
         reasons: [status.message ?? 'Kubernetes is not connected.'],
@@ -578,6 +588,48 @@ export class KubernetesService {
       return kubernetesClientProvider.authFailedStatus();
     }
     return kubernetesClientProvider.unreachableStatus(diagnostic);
+  }
+
+  private async _metricsApiSummary(
+    client: KubernetesClientBundle,
+  ): Promise<KubernetesMetricsApiSummary> {
+    try {
+      const [nodeMetrics, podMetrics] = await Promise.all([
+        client.customObjects.listClusterCustomObject({
+          group: 'metrics.k8s.io',
+          version: 'v1beta1',
+          plural: 'nodes',
+        }),
+        client.customObjects.listClusterCustomObject({
+          group: 'metrics.k8s.io',
+          version: 'v1beta1',
+          plural: 'pods',
+        }),
+      ]);
+
+      return {
+        status: 'CONNECTED',
+        nodeMetricsCount: this._resourceListCount(nodeMetrics),
+        podMetricsCount: this._resourceListCount(podMetrics),
+        message: 'Metrics API is available.',
+      };
+    } catch (error) {
+      return {
+        status: 'NOT_CONNECTED',
+        nodeMetricsCount: 0,
+        podMetricsCount: 0,
+        message: this._metricsFailureMessage(error),
+      };
+    }
+  }
+
+  private _metricsFailureMessage(error: unknown): string {
+    const diagnostic = kubernetesClientProvider.classifyConnectionError(error);
+    if (diagnostic !== 'UNKNOWN') {
+      return `Metrics API is not connected. Diagnostic: ${diagnostic}.`;
+    }
+
+    return 'Metrics API is not connected.';
   }
 
   private _providerError(error: unknown): ExternalServiceError {
@@ -761,6 +813,26 @@ export class KubernetesService {
     return Object.fromEntries(
       Object.entries(value ?? {}).map(([key, quantity]) => [key, String(quantity)]),
     );
+  }
+
+  private _resourceListCount(value: unknown): number {
+    const record = this._toRecord(value);
+    const body = this._toRecord(record.body);
+    const items = Array.isArray(record.items)
+      ? record.items
+      : Array.isArray(body.items)
+        ? body.items
+        : [];
+
+    return items.length;
+  }
+
+  private _toRecord(value: unknown): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+
+    return {};
   }
 
   private _iso(value: Date | string | undefined): string | undefined {

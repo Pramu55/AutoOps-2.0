@@ -53,7 +53,7 @@ const BASE_INTEGRATIONS: OpsIntegrationReadiness[] = [
     name: 'Kubernetes',
     category: IntegrationCategory.ORCHESTRATION,
     status: IntegrationStatus.NOT_CONFIGURED,
-    description: 'Read-only cluster visibility will be connected before any apply or execution capability.',
+    description: 'Cluster visibility connects first. Controlled Kubernetes actions require confirmation, audit, and approval gates.',
   },
   {
     key: 'jenkins',
