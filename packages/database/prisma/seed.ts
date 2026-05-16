@@ -64,7 +64,12 @@ async function main(): Promise<void> {
     await prisma.environment.upsert({
       where: { projectId_name: { projectId: project.id, name: kind.toLowerCase() } },
       update: {},
-      create: { projectId: project.id, name: kind.toLowerCase(), kind },
+      create: {
+        projectId: project.id,
+        name: kind.toLowerCase(),
+        slug: kind.toLowerCase(),
+        kind,
+      },
     });
   }
 
