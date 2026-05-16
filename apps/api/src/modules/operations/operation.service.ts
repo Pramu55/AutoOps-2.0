@@ -272,6 +272,9 @@ export class OperationService {
   }
 
   private _auditAction(operationType: OperationType): AuditAction {
+    if (operationType === OperationType.KUBERNETES_DEPLOYMENT_SCALE) {
+      return AuditAction.KUBERNETES_DEPLOYMENT_SCALE_REQUESTED;
+    }
     if (operationType === OperationType.KUBERNETES_DEPLOYMENT_RESTART) {
       return AuditAction.KUBERNETES_DEPLOYMENT_RESTART_REQUESTED;
     }

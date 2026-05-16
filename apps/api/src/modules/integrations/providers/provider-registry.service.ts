@@ -30,19 +30,15 @@ export class ProviderRegistryService {
         capabilities: [
           'kubernetes.read.cluster',
           'kubernetes.read.workloads',
-          'kubernetes.restart.deployment',
-          'kubernetes.apply.manifest.dry_run',
-          'kubernetes.apply.manifest',
+          'kubernetes.scale.deployment',
+          'kubernetes.rollout_restart.deployment',
         ],
         readCapabilities: ['kubernetes.read.cluster', 'kubernetes.read.workloads'],
         writeCapabilities:
           kubernetesStatus.status === ProviderConnectionStatus.CONNECTED
-            ? ['kubernetes.restart.deployment', 'kubernetes.apply.manifest.dry_run', 'kubernetes.apply.manifest']
+            ? ['kubernetes.scale.deployment', 'kubernetes.rollout_restart.deployment']
             : [],
-        dangerousCapabilities:
-          kubernetesStatus.status === ProviderConnectionStatus.CONNECTED
-            ? ['kubernetes.apply.manifest']
-            : [],
+        dangerousCapabilities: [],
         requiredEnvironment: [
           'KUBECONFIG',
           'KUBERNETES_API_SERVER_OVERRIDE',

@@ -116,16 +116,16 @@ async function executeOperation(operation: {
   const input = toRecord(operation.input);
   if (
     operation.provider === OperationProvider.KUBERNETES &&
-    operation.operationType === OperationType.KUBERNETES_DEPLOYMENT_RESTART
+    operation.operationType === OperationType.KUBERNETES_DEPLOYMENT_SCALE
   ) {
-    return restartDeployment(input);
+    return scaleDeployment(input);
   }
 
   if (
     operation.provider === OperationProvider.KUBERNETES &&
-    operation.operationType === OperationType.KUBERNETES_MANIFEST_APPLY
+    operation.operationType === OperationType.KUBERNETES_DEPLOYMENT_RESTART
   ) {
-    return applyManifest(input);
+    return restartDeployment(input);
   }
 
   if (
@@ -145,6 +145,45 @@ async function executeOperation(operation: {
   }
 
   throw new Error(`Unsupported operation type: ${operation.operationType}`);
+}
+
+async function scaleDeployment(input: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const namespace = stringField(input, 'namespace');
+  const name = stringField(input, 'name');
+  const replicas = numberField(input, 'replicas');
+  const client = getKubernetesObjectClient();
+
+  const patch: k8s.KubernetesObject & { spec: Record<string, unknown> } = {
+    apiVersion: 'apps/v1',
+    kind: 'Deployment',
+    metadata: {
+      name,
+      namespace,
+    },
+    spec: {
+      replicas,
+    },
+  };
+
+  const result = await client.patch(
+    patch,
+    undefined,
+    undefined,
+    'autoops',
+    undefined,
+    k8s.PatchStrategy.StrategicMergePatch,
+  );
+
+  return {
+    action: 'scale',
+    namespace,
+    kind: 'Deployment',
+    name,
+    replicas,
+    status: 'completed',
+    completedAt: new Date().toISOString(),
+    resourceVersion: result.metadata?.resourceVersion,
+  };
 }
 
 async function restartDeployment(input: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -181,34 +220,13 @@ async function restartDeployment(input: Record<string, unknown>): Promise<Record
   );
 
   return {
+    action: 'rolloutRestart',
     namespace,
+    kind: 'Deployment',
     name,
     restartedAt,
-    resourceVersion: result.metadata?.resourceVersion,
-  };
-}
-
-async function applyManifest(input: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const manifest = input.manifest;
-  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
-    throw new Error('Operation manifest is missing or invalid');
-  }
-
-  const client = getKubernetesObjectClient();
-  const result = await client.patch(
-    manifest as k8s.KubernetesObject,
-    undefined,
-    undefined,
-    'autoops',
-    undefined,
-    k8s.PatchStrategy.ServerSideApply,
-  );
-
-  return {
-    apiVersion: result.apiVersion,
-    kind: result.kind,
-    name: result.metadata?.name,
-    namespace: result.metadata?.namespace,
+    status: 'completed',
+    completedAt: new Date().toISOString(),
     resourceVersion: result.metadata?.resourceVersion,
   };
 }
@@ -252,6 +270,14 @@ function stringField(input: Record<string, unknown>, key: string): string {
 function optionalStringField(input: Record<string, unknown>, key: string): string | null {
   const value = input[key];
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function numberField(input: Record<string, unknown>, key: string): number {
+  const value = input[key];
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    throw new Error(`Operation input requires integer ${key}`);
+  }
+  return value;
 }
 
 async function executeDockerContainerAction(

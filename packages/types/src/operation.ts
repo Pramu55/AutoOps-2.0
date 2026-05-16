@@ -11,6 +11,7 @@ export const OperationProvider = {
 export type OperationProvider = (typeof OperationProvider)[keyof typeof OperationProvider];
 
 export const OperationType = {
+  KUBERNETES_DEPLOYMENT_SCALE: 'KUBERNETES_DEPLOYMENT_SCALE',
   KUBERNETES_DEPLOYMENT_RESTART: 'KUBERNETES_DEPLOYMENT_RESTART',
   KUBERNETES_MANIFEST_DRY_RUN: 'KUBERNETES_MANIFEST_DRY_RUN',
   KUBERNETES_MANIFEST_APPLY: 'KUBERNETES_MANIFEST_APPLY',

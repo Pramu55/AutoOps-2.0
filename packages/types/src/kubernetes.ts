@@ -211,6 +211,7 @@ export interface KubernetesListResponse<T> {
 export interface KubernetesRolloutStatus {
   namespace: string;
   name: string;
+  generation?: number;
   desired: number;
   updated: number;
   ready: number;
@@ -220,6 +221,13 @@ export interface KubernetesRolloutStatus {
   message: string;
   conditions: KubernetesConditionSummary[];
   checkedAt: string;
+}
+
+export interface KubernetesActionResponse {
+  operationId: string;
+  status: 'QUEUED' | 'PENDING_APPROVAL';
+  approvalRequired: boolean;
+  message: string;
 }
 
 export interface KubernetesApplyDryRunResult {
@@ -245,6 +253,27 @@ export const kubernetesRestartDeploymentSchema = z.object({
 });
 export type KubernetesRestartDeploymentInput = z.infer<
   typeof kubernetesRestartDeploymentSchema
+>;
+
+export const kubernetesScaleDeploymentSchema = z.object({
+  replicas: z.number().int().min(0).max(10),
+  confirmationToken: z.literal('SCALE'),
+  projectId: idSchema.optional(),
+  environmentId: idSchema.optional(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
+});
+export type KubernetesScaleDeploymentInput = z.infer<
+  typeof kubernetesScaleDeploymentSchema
+>;
+
+export const kubernetesRolloutRestartDeploymentSchema = z.object({
+  confirmationToken: z.literal('ROLLOUT'),
+  projectId: idSchema.optional(),
+  environmentId: idSchema.optional(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
+});
+export type KubernetesRolloutRestartDeploymentInput = z.infer<
+  typeof kubernetesRolloutRestartDeploymentSchema
 >;
 
 export const kubernetesApplyManifestSchema = z.object({

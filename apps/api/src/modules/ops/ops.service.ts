@@ -393,7 +393,7 @@ export class OpsService {
               : IntegrationStatus.NOT_CONFIGURED,
         description:
           kubernetesStatus.status === KubernetesConnectionStatus.CONNECTED
-            ? 'Kubernetes discovery is connected. Controlled restart/apply operations require audit and confirmation.'
+            ? 'Kubernetes discovery is connected. Controlled scale and rollout backend operations require audit and confirmation.'
             : kubernetesStatus.status === KubernetesConnectionStatus.UNREACHABLE
               ? 'Kubernetes configuration is present, but the API server is unreachable from AutoOps.'
               : integration.description,
@@ -559,7 +559,8 @@ export class OpsService {
 
   private _titleForType(type: OperationType): string {
     if (type === OperationType.JENKINS_BUILD_TRIGGER) return 'Jenkins build triggered';
-    if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) return 'Kubernetes deployment restart';
+    if (type === OperationType.KUBERNETES_DEPLOYMENT_SCALE) return 'Kubernetes deployment scaled';
+    if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) return 'Kubernetes deployment rollout restarted';
     if (type === OperationType.KUBERNETES_MANIFEST_DRY_RUN) return 'Kubernetes manifest dry run';
     if (type === OperationType.KUBERNETES_MANIFEST_APPLY) return 'Kubernetes manifest apply';
     if (type === OperationType.DOCKER_CONTAINER_START) return 'Docker container started';
@@ -581,10 +582,22 @@ export class OpsService {
     }
 
     if (
+      type === OperationType.KUBERNETES_DEPLOYMENT_SCALE ||
+      type === OperationType.KUBERNETES_DEPLOYMENT_RESTART ||
       type === OperationType.DOCKER_CONTAINER_START ||
       type === OperationType.DOCKER_CONTAINER_STOP ||
       type === OperationType.DOCKER_CONTAINER_RESTART
     ) {
+      if (
+        type === OperationType.KUBERNETES_DEPLOYMENT_SCALE ||
+        type === OperationType.KUBERNETES_DEPLOYMENT_RESTART
+      ) {
+        const namespace =
+          this._stringField(result, 'namespace') ?? this._stringField(input, 'namespace');
+        const name = this._stringField(result, 'name') ?? this._stringField(input, 'name');
+        if (namespace && name) return `${namespace}/${name}`;
+      }
+
       return (
         this._stringField(result, 'containerName') ??
         this._stringField(input, 'containerName') ??
@@ -605,6 +618,13 @@ export class OpsService {
   private _resultLabel(type: OperationType, result: Record<string, unknown>): string | null {
     if (type === OperationType.JENKINS_BUILD_TRIGGER) {
       return this._stringField(result, 'result');
+    }
+
+    if (
+      type === OperationType.KUBERNETES_DEPLOYMENT_SCALE ||
+      type === OperationType.KUBERNETES_DEPLOYMENT_RESTART
+    ) {
+      return this._stringField(result, 'status');
     }
 
     return this._stringField(result, 'status') ?? this._stringField(result, 'result');
@@ -643,15 +663,12 @@ export class OpsService {
       };
     }
 
+    if (type === OperationType.KUBERNETES_DEPLOYMENT_SCALE) {
+      return this._confirmationGovernance('SCALE', OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus);
+    }
+
     if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) {
-      return {
-        riskLevel: OperationRiskLevel.MEDIUM,
-        confirmationRequired: true,
-        confirmationTokenLabel: 'RESTART',
-        confirmationSatisfied: true,
-        approvalRequired,
-        approvalStatus,
-      };
+      return this._confirmationGovernance('ROLLOUT', OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus);
     }
 
     if (type === OperationType.KUBERNETES_MANIFEST_APPLY) {

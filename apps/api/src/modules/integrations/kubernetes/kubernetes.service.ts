@@ -7,14 +7,17 @@ import {
   OperationType,
   type KubernetesApplyDryRunResult,
   type KubernetesApplyManifestInput,
+  type KubernetesActionResponse,
   type KubernetesConditionSummary,
   type KubernetesListResponse,
   type KubernetesMetricsApiSummary,
   type KubernetesNamespace,
   type KubernetesNode,
   type KubernetesPod,
+  type KubernetesRolloutRestartDeploymentInput,
   type KubernetesRestartDeploymentInput,
   type KubernetesRolloutStatus,
+  type KubernetesScaleDeploymentInput,
   type KubernetesService as KubernetesServiceDto,
   type KubernetesStatus,
   type KubernetesSummary,
@@ -45,6 +48,15 @@ const FORBIDDEN_MANIFEST_KINDS = new Set([
   'Namespace',
 ]);
 
+const PROTECTED_MUTATION_NAMESPACES = new Set([
+  'kube-system',
+  'kube-public',
+  'kube-node-lease',
+  'local-path-storage',
+]);
+
+const DEFAULT_ALLOWED_MUTATION_NAMESPACES = new Set(['default']);
+
 type AuditContext = {
   ipAddress?: string;
   userAgent?: string;
@@ -72,7 +84,7 @@ export class KubernetesService {
         namespaceCount: namespaces.items.length,
         checkedAt: new Date().toISOString(),
         readOnly: true,
-        message: 'Kubernetes API is connected in read-only discovery mode.',
+        message: 'Kubernetes API is connected. Controlled backend operations require confirmation and audit.',
       };
     } catch (error) {
       return this._connectionFailure(error);
@@ -359,6 +371,7 @@ export class KubernetesService {
       return {
         namespace,
         name,
+        generation: deployment.metadata?.generation,
         desired,
         updated,
         ready,
@@ -412,6 +425,110 @@ export class KubernetesService {
       },
       auditContext,
     );
+  }
+
+  async requestDeploymentScale(
+    namespace: string,
+    name: string,
+    organizationId: string,
+    userId: string,
+    role: string | undefined,
+    input: KubernetesScaleDeploymentInput,
+    auditContext: AuditContext,
+  ): Promise<KubernetesActionResponse> {
+    if (input.confirmationToken !== 'SCALE') {
+      throw new BadRequestError('confirmationToken must be SCALE');
+    }
+
+    this._assertMutationNamespaceAllowed(namespace);
+    this._assertReplicaCountAllowed(input.replicas);
+    const client = this._getRequiredClient();
+    await client.apps.readNamespacedDeployment({ namespace, name });
+
+    const operation = await operationService.createQueuedOperation(
+      {
+        organizationId,
+        userId,
+        role,
+        provider: OperationProvider.KUBERNETES,
+        operationType: OperationType.KUBERNETES_DEPLOYMENT_SCALE,
+        projectId: input.projectId,
+        environmentId: input.environmentId,
+        idempotencyKey: input.idempotencyKey ?? `k8s-scale-${namespace}-${name}-${input.replicas}-${Date.now()}`,
+        confirmationToken: input.confirmationToken,
+        input: {
+          action: 'scale',
+          namespace,
+          kind: 'Deployment',
+          name,
+          replicas: input.replicas,
+          confirmationLabel: 'SCALE',
+          requestedAt: new Date().toISOString(),
+        },
+      },
+      auditContext,
+    );
+
+    return {
+      operationId: operation.id,
+      status: operation.status === 'PENDING_APPROVAL' ? 'PENDING_APPROVAL' : 'QUEUED',
+      approvalRequired: operation.status === 'PENDING_APPROVAL',
+      message:
+        operation.status === 'PENDING_APPROVAL'
+          ? 'Kubernetes deployment scale operation is pending approval.'
+          : 'Kubernetes deployment scale operation queued.',
+    };
+  }
+
+  async requestDeploymentRolloutRestart(
+    namespace: string,
+    name: string,
+    organizationId: string,
+    userId: string,
+    role: string | undefined,
+    input: KubernetesRolloutRestartDeploymentInput,
+    auditContext: AuditContext,
+  ): Promise<KubernetesActionResponse> {
+    if (input.confirmationToken !== 'ROLLOUT') {
+      throw new BadRequestError('confirmationToken must be ROLLOUT');
+    }
+
+    this._assertMutationNamespaceAllowed(namespace);
+    const client = this._getRequiredClient();
+    await client.apps.readNamespacedDeployment({ namespace, name });
+
+    const operation = await operationService.createQueuedOperation(
+      {
+        organizationId,
+        userId,
+        role,
+        provider: OperationProvider.KUBERNETES,
+        operationType: OperationType.KUBERNETES_DEPLOYMENT_RESTART,
+        projectId: input.projectId,
+        environmentId: input.environmentId,
+        idempotencyKey: input.idempotencyKey ?? `k8s-rollout-${namespace}-${name}-${Date.now()}`,
+        confirmationToken: input.confirmationToken,
+        input: {
+          action: 'rolloutRestart',
+          namespace,
+          kind: 'Deployment',
+          name,
+          confirmationLabel: 'ROLLOUT',
+          requestedAt: new Date().toISOString(),
+        },
+      },
+      auditContext,
+    );
+
+    return {
+      operationId: operation.id,
+      status: operation.status === 'PENDING_APPROVAL' ? 'PENDING_APPROVAL' : 'QUEUED',
+      approvalRequired: operation.status === 'PENDING_APPROVAL',
+      message:
+        operation.status === 'PENDING_APPROVAL'
+          ? 'Kubernetes deployment rollout restart operation is pending approval.'
+          : 'Kubernetes deployment rollout restart operation queued.',
+    };
   }
 
   async applyManifest(
@@ -511,6 +628,32 @@ export class KubernetesService {
     const client = this._getClient();
     if (!client) throw new BadRequestError('Kubernetes is not configured');
     return client;
+  }
+
+  private _assertMutationNamespaceAllowed(namespace: string): void {
+    if (PROTECTED_MUTATION_NAMESPACES.has(namespace)) {
+      throw new BadRequestError(`Kubernetes mutations are not allowed in namespace ${namespace}`);
+    }
+
+    const configuredNamespaces = process.env.KUBERNETES_ALLOWED_NAMESPACES?.split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const allowedNamespaces =
+      configuredNamespaces && configuredNamespaces.length > 0
+        ? new Set(configuredNamespaces)
+        : DEFAULT_ALLOWED_MUTATION_NAMESPACES;
+
+    if (!allowedNamespaces.has(namespace)) {
+      throw new BadRequestError(`Kubernetes mutations are not allowed in namespace ${namespace}`);
+    }
+  }
+
+  private _assertReplicaCountAllowed(replicas: number): void {
+    const configuredMax = Number(process.env.KUBERNETES_MAX_REPLICAS);
+    const maxReplicas = Number.isInteger(configuredMax) && configuredMax >= 0 ? configuredMax : 10;
+    if (replicas > maxReplicas) {
+      throw new BadRequestError(`replicas must be less than or equal to ${maxReplicas}`);
+    }
   }
 
   private async _list<T>(

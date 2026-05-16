@@ -1,6 +1,7 @@
 import { Router, type RequestHandler } from 'express';
 import {
-  kubernetesApplyManifestSchema,
+  kubernetesRolloutRestartDeploymentSchema,
+  kubernetesScaleDeploymentSchema,
   kubernetesRestartDeploymentSchema,
   kubernetesWorkloadParamsSchema,
 } from '@autoops/types';
@@ -52,6 +53,30 @@ kubernetesRouter.get(
   asyncHandler(kubernetesController.nodes as unknown as RequestHandler),
 );
 kubernetesRouter.get(
+  '/workloads/:namespace/deployments/:name/rollout-status',
+  requireAuth,
+  validate({ params: kubernetesWorkloadParamsSchema }),
+  asyncHandler(kubernetesController.rolloutStatus as unknown as RequestHandler),
+);
+kubernetesRouter.post(
+  '/workloads/:namespace/deployments/:name/scale',
+  requireAuth,
+  validate({
+    params: kubernetesWorkloadParamsSchema,
+    body: kubernetesScaleDeploymentSchema,
+  }),
+  asyncHandler(kubernetesController.scaleDeployment as unknown as RequestHandler),
+);
+kubernetesRouter.post(
+  '/workloads/:namespace/deployments/:name/rollout-restart',
+  requireAuth,
+  validate({
+    params: kubernetesWorkloadParamsSchema,
+    body: kubernetesRolloutRestartDeploymentSchema,
+  }),
+  asyncHandler(kubernetesController.rolloutRestartDeployment as unknown as RequestHandler),
+);
+kubernetesRouter.get(
   '/deployments/:namespace/:name/rollout-status',
   requireAuth,
   validate({ params: kubernetesWorkloadParamsSchema }),
@@ -65,10 +90,4 @@ kubernetesRouter.post(
     body: kubernetesRestartDeploymentSchema,
   }),
   asyncHandler(kubernetesController.restartDeployment as unknown as RequestHandler),
-);
-kubernetesRouter.post(
-  '/apply',
-  requireAuth,
-  validate({ body: kubernetesApplyManifestSchema }),
-  asyncHandler(kubernetesController.applyManifest as unknown as RequestHandler),
 );

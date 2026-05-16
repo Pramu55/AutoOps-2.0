@@ -4,10 +4,13 @@ import type {
   KubernetesNamespace,
   KubernetesPod,
   KubernetesApplyDryRunResult,
+  KubernetesActionResponse,
   KubernetesNode,
+  KubernetesRolloutRestartDeploymentInput,
   KubernetesRestartDeploymentInput,
   KubernetesApplyManifestInput,
   KubernetesRolloutStatus,
+  KubernetesScaleDeploymentInput,
   KubernetesService as KubernetesServiceDto,
   KubernetesStatus,
   KubernetesSummary,
@@ -90,6 +93,40 @@ export class KubernetesController {
       this._auditContext(req),
     );
     res.status(202).json({ data: operation });
+  };
+
+  scaleDeployment = async (
+    req: Request<WorkloadParams, unknown, KubernetesScaleDeploymentInput>,
+    res: Response<{ data: KubernetesActionResponse }>,
+  ): Promise<void> => {
+    const auth = this._requireAuth(req);
+    const data = await kubernetesService.requestDeploymentScale(
+      req.params.namespace,
+      req.params.name,
+      auth.orgId,
+      auth.userId,
+      auth.role,
+      req.body,
+      this._auditContext(req),
+    );
+    res.status(202).json({ data });
+  };
+
+  rolloutRestartDeployment = async (
+    req: Request<WorkloadParams, unknown, KubernetesRolloutRestartDeploymentInput>,
+    res: Response<{ data: KubernetesActionResponse }>,
+  ): Promise<void> => {
+    const auth = this._requireAuth(req);
+    const data = await kubernetesService.requestDeploymentRolloutRestart(
+      req.params.namespace,
+      req.params.name,
+      auth.orgId,
+      auth.userId,
+      auth.role,
+      req.body,
+      this._auditContext(req),
+    );
+    res.status(202).json({ data });
   };
 
   applyManifest = async (
