@@ -132,6 +132,33 @@ function actorLabel(actor: OperationActivityItem['actor']): string {
   return actor.name ?? actor.email ?? actor.id;
 }
 
+function riskTone(riskLevel: string): string {
+  if (riskLevel === 'LOW') return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
+  if (riskLevel === 'MEDIUM') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
+  if (riskLevel === 'HIGH') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
+  return 'border-slate-500/25 bg-slate-500/10 text-slate-300';
+}
+
+function approvalStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    NOT_REQUIRED: 'Approval not required',
+    PENDING: 'Approval pending',
+    APPROVED: 'Approved',
+    REJECTED: 'Rejected',
+  };
+
+  return labels[status] ?? status;
+}
+
+function governanceSummary(governance: OperationActivityItem['governance'] | undefined): string {
+  if (!governance) return MISSING_VALUE;
+  const confirmation = governance.confirmationRequired
+    ? `Confirmation ${governance.confirmationTokenLabel ?? MISSING_VALUE}`
+    : 'No confirmation required';
+
+  return `${governance.riskLevel} risk | ${confirmation} | ${approvalStatusLabel(governance.approvalStatus)}`;
+}
+
 function integrationIcon(key: string) {
   const icons: Record<string, React.ElementType> = {
     kubernetes: Boxes,
@@ -551,6 +578,11 @@ export function OperationsClient() {
                         <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(item.status)}`}>
                           {item.status}
                         </span>
+                        {item.governance ? (
+                          <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${riskTone(item.governance.riskLevel)}`}>
+                            {item.governance.riskLevel} risk
+                          </span>
+                        ) : null}
                         {item.result ? (
                           <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(item.result)}`}>
                             {item.result}
@@ -559,6 +591,7 @@ export function OperationsClient() {
                       </div>
                       <h3 className="mt-3 text-sm font-semibold text-white">{item.title}</h3>
                       <p className="mt-1 truncate text-sm text-slate-400">{item.targetLabel ?? MISSING_VALUE}</p>
+                      <p className="mt-2 text-xs text-slate-500">{governanceSummary(item.governance)}</p>
                     </div>
                     {item.externalUrl ? (
                       <a

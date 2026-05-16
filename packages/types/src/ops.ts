@@ -104,6 +104,22 @@ export const OperationActivitySource = {
 export type OperationActivitySource =
   (typeof OperationActivitySource)[keyof typeof OperationActivitySource];
 
+export const OperationRiskLevel = {
+  LOW: 'LOW',
+  MEDIUM: 'MEDIUM',
+  HIGH: 'HIGH',
+} as const;
+export type OperationRiskLevel = (typeof OperationRiskLevel)[keyof typeof OperationRiskLevel];
+
+export const OperationApprovalStatus = {
+  NOT_REQUIRED: 'NOT_REQUIRED',
+  PENDING: 'PENDING',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+} as const;
+export type OperationApprovalStatus =
+  (typeof OperationApprovalStatus)[keyof typeof OperationApprovalStatus];
+
 export const opsActivityQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
   status: z.nativeEnum(OperationStatus).optional(),
@@ -116,6 +132,15 @@ export interface OperationActivityActor {
   id: string;
   name: string | null;
   email: string | null;
+}
+
+export interface OperationGovernance {
+  riskLevel: OperationRiskLevel;
+  confirmationRequired: boolean;
+  confirmationTokenLabel: string | null;
+  confirmationSatisfied: boolean;
+  approvalRequired: boolean;
+  approvalStatus: OperationApprovalStatus;
 }
 
 export interface OperationActivityItem {
@@ -133,6 +158,7 @@ export interface OperationActivityItem {
   durationMs: number | null;
   actor: OperationActivityActor | null;
   errorMessage: string | null;
+  governance: OperationGovernance;
 }
 
 export interface OperationActivityResponse {

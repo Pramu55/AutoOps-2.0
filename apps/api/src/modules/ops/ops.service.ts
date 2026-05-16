@@ -4,8 +4,10 @@ import {
   IntegrationCategory,
   IntegrationStatus,
   KubernetesConnectionStatus,
+  OperationApprovalStatus,
   OperationActivitySource,
   OperationProvider,
+  OperationRiskLevel,
   OperationStatus,
   OperationType,
   ProviderConnectionStatus,
@@ -38,6 +40,8 @@ type OperationActivityRecord = {
   input: unknown;
   result: unknown;
   error: unknown;
+  approvedAt: Date | null;
+  rejectedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   requestedBy: {
@@ -142,6 +146,8 @@ export class OpsService {
         input: true,
         result: true,
         error: true,
+        approvedAt: true,
+        rejectedAt: true,
         createdAt: true,
         updatedAt: true,
         requestedBy: {
@@ -496,6 +502,12 @@ export class OpsService {
           }
         : null,
       errorMessage: this._stringField(error, 'message'),
+      governance: this._governanceForOperation(
+        operation.operationType,
+        operation.status,
+        operation.approvedAt,
+        operation.rejectedAt,
+      ),
     };
   }
 
@@ -565,6 +577,102 @@ export class OpsService {
   private _stringField(record: Record<string, unknown>, key: string): string | null {
     const value = record[key];
     return typeof value === 'string' && value.trim().length > 0 ? value : null;
+  }
+
+  private _governanceForOperation(
+    type: OperationType,
+    status: OperationStatus,
+    approvedAt: Date | null,
+    rejectedAt: Date | null,
+  ): OperationActivityItem['governance'] {
+    const approvalStatus = this._approvalStatus(status, approvedAt, rejectedAt);
+    const approvalRequired = approvalStatus !== OperationApprovalStatus.NOT_REQUIRED;
+
+    if (type === OperationType.JENKINS_BUILD_TRIGGER) {
+      return {
+        riskLevel: OperationRiskLevel.LOW,
+        confirmationRequired: true,
+        confirmationTokenLabel: 'BUILD',
+        confirmationSatisfied: true,
+        approvalRequired,
+        approvalStatus,
+      };
+    }
+
+    if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) {
+      return {
+        riskLevel: OperationRiskLevel.MEDIUM,
+        confirmationRequired: true,
+        confirmationTokenLabel: 'RESTART',
+        confirmationSatisfied: true,
+        approvalRequired,
+        approvalStatus,
+      };
+    }
+
+    if (type === OperationType.KUBERNETES_MANIFEST_APPLY) {
+      return {
+        riskLevel: OperationRiskLevel.HIGH,
+        confirmationRequired: true,
+        confirmationTokenLabel: 'APPLY',
+        confirmationSatisfied: true,
+        approvalRequired,
+        approvalStatus,
+      };
+    }
+
+    if (type === OperationType.GITHUB_WORKFLOW_DISPATCH) {
+      return {
+        riskLevel: OperationRiskLevel.MEDIUM,
+        confirmationRequired: true,
+        confirmationTokenLabel: 'DISPATCH',
+        confirmationSatisfied: true,
+        approvalRequired,
+        approvalStatus,
+      };
+    }
+
+    if (type === OperationType.DEPLOYMENT_ROLLBACK) {
+      return {
+        riskLevel: OperationRiskLevel.HIGH,
+        confirmationRequired: true,
+        confirmationTokenLabel: 'ROLLBACK',
+        confirmationSatisfied: true,
+        approvalRequired,
+        approvalStatus,
+      };
+    }
+
+    if (type === OperationType.AWS_DEPLOYMENT) {
+      return {
+        riskLevel: OperationRiskLevel.HIGH,
+        confirmationRequired: true,
+        confirmationTokenLabel: null,
+        confirmationSatisfied: false,
+        approvalRequired,
+        approvalStatus,
+      };
+    }
+
+    return {
+      riskLevel: OperationRiskLevel.LOW,
+      confirmationRequired: false,
+      confirmationTokenLabel: null,
+      confirmationSatisfied: false,
+      approvalRequired,
+      approvalStatus,
+    };
+  }
+
+  private _approvalStatus(
+    status: OperationStatus,
+    approvedAt: Date | null,
+    rejectedAt: Date | null,
+  ): OperationApprovalStatus {
+    if (rejectedAt || status === OperationStatus.REJECTED) return OperationApprovalStatus.REJECTED;
+    if (approvedAt) return OperationApprovalStatus.APPROVED;
+    if (status === OperationStatus.PENDING_APPROVAL) return OperationApprovalStatus.PENDING;
+    return OperationApprovalStatus.NOT_REQUIRED;
   }
 
   private _isStartedStatus(status: OperationStatus): boolean {
