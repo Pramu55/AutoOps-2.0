@@ -272,7 +272,9 @@ function IntegrationCard({ integration }: { integration: OpsIntegrationReadiness
       ? '/dashboard/integrations/kubernetes'
       : integration.key === 'jenkins'
         ? '/dashboard/integrations/jenkins'
-        : undefined;
+        : integration.key === 'docker'
+          ? '/dashboard/integrations/docker'
+          : undefined;
   const content = (
     <>
       <div className="flex items-start justify-between gap-4">
