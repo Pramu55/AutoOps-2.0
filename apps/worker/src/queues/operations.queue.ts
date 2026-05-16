@@ -3,6 +3,7 @@ import { Queue, Worker, type Job } from 'bullmq';
 import * as k8s from '@kubernetes/client-node';
 import { prisma as db, type Prisma } from '@autoops/database';
 import { OperationProvider, OperationStatus, OperationType } from '@autoops/types';
+import { DockerEngineClient } from '@autoops/utils';
 import { createBullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
@@ -134,6 +135,15 @@ async function executeOperation(operation: {
     return triggerJenkinsBuild(input);
   }
 
+  if (
+    operation.provider === OperationProvider.DOCKER &&
+    (operation.operationType === OperationType.DOCKER_CONTAINER_START ||
+      operation.operationType === OperationType.DOCKER_CONTAINER_STOP ||
+      operation.operationType === OperationType.DOCKER_CONTAINER_RESTART)
+  ) {
+    return executeDockerContainerAction(operation.operationType, input);
+  }
+
   throw new Error(`Unsupported operation type: ${operation.operationType}`);
 }
 
@@ -237,6 +247,47 @@ function stringField(input: Record<string, unknown>, key: string): string {
     throw new Error(`Operation input requires ${key}`);
   }
   return value;
+}
+
+function optionalStringField(input: Record<string, unknown>, key: string): string | null {
+  const value = input[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+async function executeDockerContainerAction(
+  operationType: OperationType,
+  input: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const containerId = stringField(input, 'containerId');
+  const containerName = optionalStringField(input, 'containerName');
+  const client = new DockerEngineClient();
+
+  if (operationType === OperationType.DOCKER_CONTAINER_START) {
+    await client.startContainer(containerId);
+    return dockerActionResult('start', containerId, containerName);
+  }
+
+  if (operationType === OperationType.DOCKER_CONTAINER_STOP) {
+    await client.stopContainer(containerId);
+    return dockerActionResult('stop', containerId, containerName);
+  }
+
+  await client.restartContainer(containerId);
+  return dockerActionResult('restart', containerId, containerName);
+}
+
+function dockerActionResult(
+  action: 'start' | 'stop' | 'restart',
+  containerId: string,
+  containerName: string | null,
+): Record<string, unknown> {
+  return {
+    action,
+    containerId,
+    containerName,
+    status: 'completed',
+    completedAt: new Date().toISOString(),
+  };
 }
 
 async function triggerJenkinsBuild(input: Record<string, unknown>): Promise<Record<string, unknown>> {

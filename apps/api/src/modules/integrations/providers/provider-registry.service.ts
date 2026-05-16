@@ -5,6 +5,7 @@ import {
   type IntegrationProvider,
 } from '@autoops/types';
 import { awsService } from '../aws/aws.service.js';
+import { dockerService } from '../docker/docker.service.js';
 import { jenkinsService } from '../jenkins/jenkins.service.js';
 import { kubernetesService } from '../kubernetes/kubernetes.service.js';
 
@@ -12,10 +13,11 @@ const now = () => new Date().toISOString();
 
 export class ProviderRegistryService {
   async listProviders(): Promise<IntegrationProvider[]> {
-    const [kubernetesStatus, awsStatus, jenkinsStatus] = await Promise.all([
+    const [kubernetesStatus, awsStatus, jenkinsStatus, dockerStatus] = await Promise.all([
       kubernetesService.getStatus(),
       awsService.getStatus(),
       jenkinsService.getStatus(),
+      dockerService.getStatus(),
     ]);
 
     return [
@@ -97,7 +99,42 @@ export class ProviderRegistryService {
         source: 'environment',
       },
       this._disconnected(ProviderKey.GITHUB, 'GitHub', ProviderCategory.CI_CD, ['GITHUB_TOKEN']),
-      this._disconnected(ProviderKey.DOCKER, 'Docker/local', ProviderCategory.CONTAINER, []),
+      {
+        key: ProviderKey.DOCKER,
+        displayName: 'Docker',
+        category: ProviderCategory.CONTAINER,
+        status: dockerStatus.status,
+        configured: dockerStatus.configured,
+        capabilities: [
+          'docker.read.status',
+          'docker.read.containers',
+          'docker.read.images',
+          'docker.read.networks',
+          'docker.read.volumes',
+          'docker.read.logs',
+          'docker.container.start',
+          'docker.container.stop',
+          'docker.container.restart',
+        ],
+        readCapabilities: [
+          'docker.read.status',
+          'docker.read.containers',
+          'docker.read.images',
+          'docker.read.networks',
+          'docker.read.volumes',
+          'docker.read.logs',
+        ],
+        writeCapabilities:
+          dockerStatus.status === ProviderConnectionStatus.CONNECTED
+            ? ['docker.container.start', 'docker.container.stop', 'docker.container.restart']
+            : [],
+        dangerousCapabilities:
+          dockerStatus.status === ProviderConnectionStatus.CONNECTED ? ['docker.container.stop'] : [],
+        requiredEnvironment: ['DOCKER_SOCKET_PATH', 'DOCKER_HOST'],
+        lastCheckedAt: dockerStatus.checkedAt,
+        message: dockerStatus.message,
+        source: 'runtime',
+      },
     ];
   }
 

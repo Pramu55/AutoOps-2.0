@@ -281,6 +281,15 @@ export class OperationService {
     if (operationType === OperationType.JENKINS_BUILD_TRIGGER) {
       return AuditAction.JENKINS_BUILD_TRIGGER_REQUESTED;
     }
+    if (operationType === OperationType.DOCKER_CONTAINER_START) {
+      return AuditAction.DOCKER_CONTAINER_START_REQUESTED;
+    }
+    if (operationType === OperationType.DOCKER_CONTAINER_STOP) {
+      return AuditAction.DOCKER_CONTAINER_STOP_REQUESTED;
+    }
+    if (operationType === OperationType.DOCKER_CONTAINER_RESTART) {
+      return AuditAction.DOCKER_CONTAINER_RESTART_REQUESTED;
+    }
     if (operationType === OperationType.KUBERNETES_MANIFEST_DRY_RUN) {
       return AuditAction.KUBERNETES_MANIFEST_DRY_RUN_REQUESTED;
     }

@@ -12,6 +12,7 @@ export * from './project.js';
 export * from './environment.js';
 export * from './deployment.js';
 export * from './kubernetes.js';
+export * from './docker.js';
 export * from './ops.js';
 export * from './provider.js';
 export * from './aws.js';

@@ -55,6 +55,7 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.api
     container_name: autoops-api
+    user: root
     restart: unless-stopped
     networks:
       - autoops
@@ -69,6 +70,9 @@ services:
       API_PORT: "4000"
       DATABASE_URL: postgresql://autoops:autoops_dev@postgres:5432/autoops
       REDIS_URL: redis://redis:6379
+      DOCKER_SOCKET_PATH: /var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "4000:4000"
     healthcheck:
@@ -83,6 +87,7 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.worker
     container_name: autoops-worker
+    user: root
     restart: unless-stopped
     networks:
       - autoops
@@ -97,6 +102,9 @@ services:
       WORKER_PORT: "4001"
       DATABASE_URL: postgresql://autoops:autoops_dev@postgres:5432/autoops
       REDIS_URL: redis://redis:6379
+      DOCKER_SOCKET_PATH: /var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "4001:4001"
     healthcheck:

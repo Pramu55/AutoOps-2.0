@@ -22,6 +22,7 @@ import {
 import { redis } from '../../lib/redis.js';
 import { deploymentsQueue } from '../deployments/deployment.queue.js';
 import { awsService } from '../integrations/aws/aws.service.js';
+import { dockerService } from '../integrations/docker/docker.service.js';
 import { jenkinsService } from '../integrations/jenkins/jenkins.service.js';
 import { kubernetesService } from '../integrations/kubernetes/kubernetes.service.js';
 
@@ -92,7 +93,7 @@ const BASE_INTEGRATIONS: OpsIntegrationReadiness[] = [
     name: 'Docker',
     category: IntegrationCategory.CONTAINER,
     status: IntegrationStatus.NOT_CONNECTED,
-    description: 'Container execution is not active. Current deployments use the safe simulation executor.',
+    description: 'Docker controlled operations require confirmation and audit before worker execution.',
   },
   {
     key: 'aws',
@@ -178,6 +179,7 @@ export class OpsService {
       kubernetesStatus,
       awsStatus,
       jenkinsStatus,
+      dockerStatus,
       operationStatusCounts,
     ] = await Promise.all([
       this._getDatabaseStatus(),
@@ -236,6 +238,7 @@ export class OpsService {
       kubernetesService.getStatus(),
       awsService.getStatus(),
       jenkinsService.getStatus(),
+      dockerService.getStatus(),
       prisma.operation.groupBy({
         by: ['status'],
         where: {
@@ -279,7 +282,7 @@ export class OpsService {
       queues: {
         deployments: queueSummary,
       },
-      integrations: this._withProviderStatus(kubernetesStatus, awsStatus, jenkinsStatus),
+      integrations: this._withProviderStatus(kubernetesStatus, awsStatus, jenkinsStatus, dockerStatus),
       operations: {
         total: operationStatusCounts.reduce((total, item) => total + item._count._all, 0),
         pendingApproval:
@@ -299,6 +302,7 @@ export class OpsService {
     kubernetesStatus: Awaited<ReturnType<typeof kubernetesService.getStatus>>,
     awsStatus: Awaited<ReturnType<typeof awsService.getStatus>>,
     jenkinsStatus: Awaited<ReturnType<typeof jenkinsService.getStatus>>,
+    dockerStatus: Awaited<ReturnType<typeof dockerService.getStatus>>,
   ): OpsIntegrationReadiness[] {
     return BASE_INTEGRATIONS.map((integration) => {
       if (integration.key === 'jenkins') {
@@ -348,6 +352,30 @@ export class OpsService {
           metrics: {
             region: awsStatus.region ?? null,
             accountId: awsStatus.accountId ?? null,
+          },
+        };
+      }
+
+      if (integration.key === 'docker') {
+        return {
+          ...integration,
+          status:
+            dockerStatus.status === ProviderConnectionStatus.CONNECTED
+              ? IntegrationStatus.CONNECTED
+              : dockerStatus.status === ProviderConnectionStatus.UNREACHABLE ||
+                  dockerStatus.status === ProviderConnectionStatus.AUTH_FAILED
+                ? IntegrationStatus.UNREACHABLE
+                : IntegrationStatus.NOT_CONFIGURED,
+          description:
+            dockerStatus.status === ProviderConnectionStatus.CONNECTED
+              ? 'Docker engine connected. Container start, stop, and restart operations are confirmation-protected and audited.'
+              : dockerStatus.message,
+          href: '/dashboard/operations',
+          lastCheckedAt: dockerStatus.checkedAt,
+          metrics: {
+            version: dockerStatus.version ?? null,
+            containers: dockerStatus.containers,
+            images: dockerStatus.images,
           },
         };
       }
@@ -534,6 +562,9 @@ export class OpsService {
     if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) return 'Kubernetes deployment restart';
     if (type === OperationType.KUBERNETES_MANIFEST_DRY_RUN) return 'Kubernetes manifest dry run';
     if (type === OperationType.KUBERNETES_MANIFEST_APPLY) return 'Kubernetes manifest apply';
+    if (type === OperationType.DOCKER_CONTAINER_START) return 'Docker container started';
+    if (type === OperationType.DOCKER_CONTAINER_STOP) return 'Docker container stopped';
+    if (type === OperationType.DOCKER_CONTAINER_RESTART) return 'Docker container restarted';
     if (type === OperationType.GITHUB_WORKFLOW_DISPATCH) return 'GitHub workflow dispatched';
     if (type === OperationType.AWS_DEPLOYMENT) return 'AWS deployment requested';
     if (type === OperationType.DEPLOYMENT_ROLLBACK) return 'Deployment rollback requested';
@@ -547,6 +578,19 @@ export class OpsService {
   ): string | null {
     if (type === OperationType.JENKINS_BUILD_TRIGGER) {
       return this._stringField(result, 'jobName') ?? this._stringField(input, 'jobName');
+    }
+
+    if (
+      type === OperationType.DOCKER_CONTAINER_START ||
+      type === OperationType.DOCKER_CONTAINER_STOP ||
+      type === OperationType.DOCKER_CONTAINER_RESTART
+    ) {
+      return (
+        this._stringField(result, 'containerName') ??
+        this._stringField(input, 'containerName') ??
+        this._stringField(result, 'containerId') ??
+        this._stringField(input, 'containerId')
+      );
     }
 
     return (
@@ -621,6 +665,18 @@ export class OpsService {
       };
     }
 
+    if (type === OperationType.DOCKER_CONTAINER_START) {
+      return this._confirmationGovernance('START', OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus);
+    }
+
+    if (type === OperationType.DOCKER_CONTAINER_STOP) {
+      return this._confirmationGovernance('STOP', OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus);
+    }
+
+    if (type === OperationType.DOCKER_CONTAINER_RESTART) {
+      return this._confirmationGovernance('RESTART', OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus);
+    }
+
     if (type === OperationType.GITHUB_WORKFLOW_DISPATCH) {
       return {
         riskLevel: OperationRiskLevel.MEDIUM,
@@ -659,6 +715,22 @@ export class OpsService {
       confirmationRequired: false,
       confirmationTokenLabel: null,
       confirmationSatisfied: false,
+      approvalRequired,
+      approvalStatus,
+    };
+  }
+
+  private _confirmationGovernance(
+    confirmationTokenLabel: string,
+    riskLevel: OperationRiskLevel,
+    approvalRequired: boolean,
+    approvalStatus: OperationApprovalStatus,
+  ): OperationActivityItem['governance'] {
+    return {
+      riskLevel,
+      confirmationRequired: true,
+      confirmationTokenLabel,
+      confirmationSatisfied: true,
       approvalRequired,
       approvalStatus,
     };
