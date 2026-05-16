@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { idSchema } from './common.js';
-import type { OperationStatus } from './operation.js';
+import { OperationStatus, OperationType } from './operation.js';
 import type { ProviderConnectionStatus } from './provider.js';
 
 export type JenkinsConnectionStatus =
@@ -84,6 +84,44 @@ export interface JenkinsListResponse<T> {
   checkedAt: string;
   message?: string;
   items: T[];
+}
+
+export const jenkinsOperationsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  status: z
+    .enum([
+      OperationStatus.PENDING_APPROVAL,
+      OperationStatus.QUEUED,
+      OperationStatus.RUNNING,
+      OperationStatus.SUCCEEDED,
+      OperationStatus.FAILED,
+      OperationStatus.REJECTED,
+      OperationStatus.CANCELLED,
+    ])
+    .optional(),
+  jobName: z.string().trim().min(1).max(500).optional(),
+});
+
+export type JenkinsOperationsQuery = z.infer<typeof jenkinsOperationsQuerySchema>;
+
+export interface JenkinsOperation {
+  id: string;
+  type: typeof OperationType.JENKINS_BUILD_TRIGGER;
+  status: OperationStatus;
+  jobName: string | null;
+  queueUrl: string | null;
+  buildNumber: number | null;
+  buildUrl: string | null;
+  result: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  errorMessage: string | null;
+}
+
+export interface JenkinsOperationListResponse {
+  items: JenkinsOperation[];
 }
 
 export const jenkinsTriggerBuildInputSchema = z.object({

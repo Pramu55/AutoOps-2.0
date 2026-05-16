@@ -2,7 +2,7 @@ import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../../../middleware/auth.js';
 import { validate } from '../../../middleware/validate.js';
-import { jenkinsTriggerBuildInputSchema } from '@autoops/types';
+import { jenkinsOperationsQuerySchema, jenkinsTriggerBuildInputSchema } from '@autoops/types';
 import { jenkinsController } from './jenkins.controller.js';
 
 export const jenkinsRouter: Router = Router();
@@ -21,6 +21,12 @@ jenkinsRouter.get('/status', requireAuth, asyncHandler(jenkinsController.status 
 jenkinsRouter.get('/summary', requireAuth, asyncHandler(jenkinsController.summary as unknown as RequestHandler));
 jenkinsRouter.get('/jobs', requireAuth, asyncHandler(jenkinsController.jobs as unknown as RequestHandler));
 jenkinsRouter.get('/builds', requireAuth, asyncHandler(jenkinsController.builds as unknown as RequestHandler));
+jenkinsRouter.get(
+  '/operations',
+  requireAuth,
+  validate({ query: jenkinsOperationsQuerySchema }),
+  asyncHandler(jenkinsController.operations as unknown as RequestHandler),
+);
 jenkinsRouter.post(
   '/jobs/:jobName/build',
   requireAuth,

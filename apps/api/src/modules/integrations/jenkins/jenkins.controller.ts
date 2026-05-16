@@ -4,6 +4,8 @@ import {
   type JenkinsBuild,
   type JenkinsJob,
   type JenkinsListResponse,
+  type JenkinsOperationListResponse,
+  type JenkinsOperationsQuery,
   type JenkinsStatusResponse,
   type JenkinsSummaryResponse,
   type JenkinsTriggerBuildResponse,
@@ -28,6 +30,11 @@ export class JenkinsController {
 
   builds = async (_req: Request, res: Response<{ data: JenkinsListResponse<JenkinsBuild> }>): Promise<void> => {
     res.json({ data: await jenkinsService.listBuilds() });
+  };
+
+  operations = async (req: Request, res: Response<{ data: JenkinsOperationListResponse }>): Promise<void> => {
+    const auth = this._requireAuth(req);
+    res.json({ data: await jenkinsService.listOperations(auth.orgId, req.query as unknown as JenkinsOperationsQuery) });
   };
 
   triggerBuild = async (

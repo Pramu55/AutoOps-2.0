@@ -1,8 +1,11 @@
-import { type Prisma } from '@autoops/database';
+import { prisma, type Prisma } from '@autoops/database';
 import {
   JenkinsBuild,
   JenkinsJob,
   JenkinsListResponse,
+  JenkinsOperation,
+  JenkinsOperationListResponse,
+  JenkinsOperationsQuery,
   JenkinsStatusResponse,
   JenkinsSummaryResponse,
   JenkinsTriggerBuildInput,
@@ -59,6 +62,17 @@ type JenkinsApiJob = {
   lastFailedBuild?: JenkinsApiBuild | null;
   builds?: JenkinsApiBuild[];
   healthReport?: Array<Record<string, unknown>>;
+};
+
+type JenkinsOperationRecord = {
+  id: string;
+  operationType: OperationType;
+  status: JenkinsOperation['status'];
+  input: unknown;
+  result: unknown;
+  error: unknown;
+  createdAt: Date;
+  updatedAt: Date;
 };
 
 export class JenkinsService {
@@ -197,6 +211,44 @@ export class JenkinsService {
     });
   }
 
+  async listOperations(
+    organizationId: string,
+    query: JenkinsOperationsQuery,
+  ): Promise<JenkinsOperationListResponse> {
+    const operations = await prisma.operation.findMany({
+      where: {
+        organizationId,
+        provider: OperationProvider.JENKINS,
+        operationType: OperationType.JENKINS_BUILD_TRIGGER,
+        status: query.status,
+        ...(query.jobName
+          ? {
+              input: {
+                path: ['jobName'],
+                equals: query.jobName,
+              },
+            }
+          : {}),
+      },
+      select: {
+        id: true,
+        operationType: true,
+        status: true,
+        input: true,
+        result: true,
+        error: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: query.limit,
+    });
+
+    return {
+      items: operations.map((operation) => this._toJenkinsOperation(operation)),
+    };
+  }
+
   async triggerBuild(
     jobName: string,
     organizationId: string,
@@ -318,6 +370,39 @@ export class JenkinsService {
     };
   }
 
+  private _toJenkinsOperation(operation: JenkinsOperationRecord): JenkinsOperation {
+    const input = this._toRecord(operation.input);
+    const result = this._toRecord(operation.result);
+    const error = this._toRecord(operation.error);
+    const jobName = this._stringField(result, 'jobName') ?? this._stringField(input, 'jobName');
+    const buildNumber = this._numberField(result, 'buildNumber');
+    const buildUrl = this._stringField(result, 'buildUrl');
+    const queueUrl = this._stringField(result, 'queueUrl');
+    const jenkinsResult = this._stringField(result, 'result');
+    const errorMessage = this._stringField(error, 'message');
+    const isTerminal =
+      operation.status === 'SUCCEEDED' ||
+      operation.status === 'FAILED' ||
+      operation.status === 'REJECTED' ||
+      operation.status === 'CANCELLED';
+
+    return {
+      id: operation.id,
+      type: OperationType.JENKINS_BUILD_TRIGGER,
+      status: operation.status,
+      jobName: jobName ?? null,
+      queueUrl: queueUrl ?? null,
+      buildNumber: buildNumber ?? null,
+      buildUrl: buildUrl ?? null,
+      result: jenkinsResult ?? null,
+      createdAt: operation.createdAt.toISOString(),
+      startedAt: operation.status === 'QUEUED' ? null : operation.updatedAt.toISOString(),
+      completedAt: isTerminal ? operation.updatedAt.toISOString() : null,
+      durationMs: isTerminal ? operation.updatedAt.getTime() - operation.createdAt.getTime() : null,
+      errorMessage: errorMessage ?? null,
+    };
+  }
+
   private _jobStatus(job: JenkinsApiJob): string {
     if (job.disabled) return 'DISABLED';
     if (job.inQueue) return 'QUEUED';
@@ -326,6 +411,23 @@ export class JenkinsService {
     if (job.color?.startsWith('red')) return 'FAILED';
     if (job.color?.startsWith('yellow')) return 'UNSTABLE';
     return 'UNKNOWN';
+  }
+
+  private _toRecord(value: unknown): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+    return {};
+  }
+
+  private _stringField(record: Record<string, unknown>, key: string): string | null {
+    const value = record[key];
+    return typeof value === 'string' && value.trim().length > 0 ? value : null;
+  }
+
+  private _numberField(record: Record<string, unknown>, key: string): number | null {
+    const value = record[key];
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
   }
 }
 
