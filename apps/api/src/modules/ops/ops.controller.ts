@@ -3,6 +3,7 @@ import type {
   OperationActivityResponse,
   OperationDetailResponse,
   OpsActivityQuery,
+  OpsObservabilityResponse,
   OpsSummary,
 } from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
@@ -31,6 +32,15 @@ export class OpsController {
     const organizationId = this._requireOrganizationId(req);
     const summary = await opsService.getSummary(organizationId);
     res.json({ data: summary });
+  };
+
+  observability = async (
+    req: Request,
+    res: Response<{ data: OpsObservabilityResponse }>,
+  ): Promise<void> => {
+    const organizationId = this._requireOrganizationId(req);
+    const observability = await opsService.getObservability(organizationId);
+    res.json({ data: observability });
   };
 
   private _requireOrganizationId(req: Request): string {

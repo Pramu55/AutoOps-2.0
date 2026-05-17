@@ -29,6 +29,15 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Recovery actions remain confirmation-gated, audit-backed, and worker-executed.
 - AutoOps does not provide generic operation replay, shell access, exec, delete, arbitrary apply, or secret access.
 
+## Observability and Real-Time Operations
+
+- `/api/v1/ops/observability` returns safe platform health, provider health, queue health, active operations, recent failures, and recent operation status breakdowns.
+- Queue counts come from BullMQ when safely readable; unavailable queues are reported honestly rather than filled with fake zeroes.
+- Provider health uses real Jenkins, Docker, and Kubernetes connector checks, including Kubernetes Metrics API status when available.
+- Operations Hub polls at a modest interval for live operation monitoring, and operation detail pages poll only while an operation is queued, running, or pending approval.
+- Failed operations show safe error summaries and link to operation detail/recovery where supported.
+- Observability responses do not expose raw operation metadata, provider credentials, kubeconfig, tokens, environment values, or stack traces.
+
 ## Local Verification Notes
 
 - Use disposable resources for action tests, such as `autoops-docker-smoke` or `default/autoops-k8s-smoke`.

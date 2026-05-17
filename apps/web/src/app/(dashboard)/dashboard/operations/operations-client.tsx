@@ -8,7 +8,10 @@ import type {
   Operation,
   OperationActivityItem,
   OperationActivityResponse,
+  OperationObservabilityItem,
   OpsIntegrationReadiness,
+  OpsObservabilityResponse,
+  OpsQueueHealthSummary,
   OpsQueueSummary,
   OpsSummary,
 } from '@autoops/types';
@@ -43,6 +46,7 @@ import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 
 type OpsSummaryResponse = { data: OpsSummary };
+type OpsObservabilityApiResponse = { data: OpsObservabilityResponse };
 type ProvidersResponse = { data: IntegrationProvider[] };
 type OperationsResponse = { data: Operation[] };
 type OperationActivityApiResponse = { data: OperationActivityResponse };
@@ -102,11 +106,11 @@ function shortSha(value: string | null): string {
 }
 
 function statusTone(status: string): string {
-  if (status === 'READY' || status === 'SUCCEEDED' || status === 'CONNECTED') {
+  if (status === 'READY' || status === 'SUCCEEDED' || status === 'CONNECTED' || status === 'HEALTHY' || status === 'RUNNING') {
     return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
   }
-  if (status === 'UNKNOWN') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
-  if (status === 'UNREACHABLE') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
+  if (status === 'UNKNOWN' || status === 'DEGRADED') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
+  if (status === 'UNREACHABLE' || status === 'UNAVAILABLE') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
   if (status === 'NOT_CONFIGURED') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
   if (status === 'FAILED') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
   if (status === 'NOT_CONNECTED') return 'border-slate-500/25 bg-slate-500/10 text-slate-300';
@@ -265,6 +269,171 @@ function QueueCounts({ queue }: { queue: OpsQueueSummary }) {
   );
 }
 
+function HealthCheckCard({
+  title,
+  status,
+  message,
+  icon,
+}: {
+  title: string;
+  status: string;
+  message: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-white">{title}</h3>
+          <span className={`mt-3 inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusTone(status)}`}>
+            {status}
+          </span>
+        </div>
+        <div className="rounded-xl bg-cyan-300/10 p-2 text-cyan-300">{icon}</div>
+      </div>
+      <p className="mt-4 text-sm leading-6 text-slate-400">{message}</p>
+    </section>
+  );
+}
+
+function QueueHealthCard({ title, queue }: { title: string; queue: OpsQueueHealthSummary | undefined }) {
+  return (
+    <section className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-white">{title}</h3>
+        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(queue?.status ?? 'UNKNOWN')}`}>
+          {queue?.status ?? 'UNKNOWN'}
+        </span>
+      </div>
+      <p className="mt-2 text-sm text-slate-400">{queue?.message ?? 'Queue status unavailable.'}</p>
+      {queue?.status === 'READY' ? (
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+          {[
+            ['Waiting', queue.waiting ?? 0],
+            ['Active', queue.active ?? 0],
+            ['Completed', queue.completed ?? 0],
+            ['Failed', queue.failed ?? 0],
+            ['Delayed', queue.delayed ?? 0],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
+              <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
+              <p className="mt-1 text-lg font-semibold text-white">{value}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ProviderHealthCard({
+  label,
+  provider,
+}: {
+  label: string;
+  provider: OpsObservabilityResponse['providers'][keyof OpsObservabilityResponse['providers']] | undefined;
+}) {
+  return (
+    <section className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-white">{label}</h3>
+          <p className="mt-1 text-xs text-slate-500">Checked {formatTimelineDate(provider?.checkedAt ?? null)}</p>
+        </div>
+        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(provider?.status ?? 'UNKNOWN')}`}>
+          {provider?.status ?? 'UNKNOWN'}
+        </span>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-slate-400">{provider?.message ?? 'Provider health unavailable.'}</p>
+      {provider?.metricsApiStatus ? (
+        <p className="mt-2 text-xs text-slate-500">Metrics API: {provider.metricsApiStatus}</p>
+      ) : null}
+      {provider?.triggerEnabled !== undefined ? (
+        <p className="mt-2 text-xs text-slate-500">Trigger enabled: {provider.triggerEnabled ? 'Yes' : 'No'}</p>
+      ) : null}
+      {provider?.href ? (
+        <Link
+          href={provider.href}
+          className="mt-4 inline-flex rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/45 hover:bg-cyan-300/15"
+        >
+          Open connector
+        </Link>
+      ) : null}
+    </section>
+  );
+}
+
+function OperationMiniList({
+  title,
+  items,
+  emptyMessage,
+  showError,
+}: {
+  title: string;
+  items: OperationObservabilityItem[];
+  emptyMessage: string;
+  showError?: boolean;
+}) {
+  return (
+    <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-base font-semibold text-white">{title}</h2>
+          <p className="mt-1 text-sm text-slate-400">Tenant-scoped operation records from AutoOps.</p>
+        </div>
+        <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-200">
+          {items.length}
+        </span>
+      </div>
+      <div className="mt-5 space-y-3">
+        {items.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-white/15 bg-slate-950/35 p-6 text-center text-sm text-slate-400">
+            {emptyMessage}
+          </div>
+        ) : (
+          items.map((item) => (
+            <article key={item.id} className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(item.status)}`}>
+                      {item.status}
+                    </span>
+                    <span className="rounded-full border border-white/10 bg-white/[0.045] px-2.5 py-1 text-[11px] font-semibold text-slate-300">
+                      {sourceLabel(item.source)}
+                    </span>
+                    {item.retry.supported ? (
+                      <span className="rounded-full border border-emerald-300/25 bg-emerald-300/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-200">
+                        Recovery available
+                      </span>
+                    ) : null}
+                  </div>
+                  <h3 className="mt-3 text-sm font-semibold text-white">{item.title}</h3>
+                  <p className="mt-1 truncate text-sm text-slate-400">{item.targetLabel ?? MISSING_VALUE}</p>
+                  <p className="mt-2 text-xs text-slate-500">
+                    Actor {actorLabel(item.actor)} | Created {formatTimelineDate(item.createdAt)}
+                  </p>
+                  {showError && item.errorMessage ? (
+                    <p className="mt-3 rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-100">
+                      {item.errorMessage}
+                    </p>
+                  ) : null}
+                </div>
+                <Link
+                  href={`/dashboard/operations/${item.id}`}
+                  className="inline-flex w-fit shrink-0 rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/45 hover:bg-cyan-300/15"
+                >
+                  View details
+                </Link>
+              </div>
+            </article>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
 function IntegrationCard({ integration }: { integration: OpsIntegrationReadiness }) {
   const Icon = integrationIcon(integration.key);
   const href =
@@ -318,6 +487,7 @@ function IntegrationCard({ integration }: { integration: OpsIntegrationReadiness
 
 export function OperationsClient() {
   const [summary, setSummary] = useState<OpsSummary | null>(null);
+  const [observability, setObservability] = useState<OpsObservabilityResponse | null>(null);
   const [providers, setProviders] = useState<IntegrationProvider[]>([]);
   const [operations, setOperations] = useState<Operation[]>([]);
   const [activityItems, setActivityItems] = useState<OperationActivityItem[]>([]);
@@ -337,13 +507,15 @@ export function OperationsClient() {
     setActivityError(null);
 
     try {
-      const [summaryResponse, providersResponse, operationsResponse, auditResponse] = await Promise.all([
+      const [summaryResponse, observabilityResponse, providersResponse, operationsResponse, auditResponse] = await Promise.all([
         api.get<OpsSummaryResponse>('/v1/ops/summary'),
+        api.get<OpsObservabilityApiResponse>('/v1/ops/observability'),
         api.get<ProvidersResponse>('/v1/integrations/providers'),
         api.get<OperationsResponse>('/v1/operations'),
         api.get<AuditLogsResponse>('/v1/audit-logs'),
       ]);
       setSummary(summaryResponse.data);
+      setObservability(observabilityResponse.data);
       setProviders(providersResponse.data);
       setOperations(operationsResponse.data);
       setAuditLogs(auditResponse.data);
@@ -374,6 +546,10 @@ export function OperationsClient() {
   }, [loadSummary]);
 
   const runtime = summary?.runtime;
+  const platform = observability?.platform;
+  const queueHealth = observability?.queues;
+  const providerHealth = observability?.providers;
+  const operationObservability = observability?.operations;
   const resources = summary?.resources;
   const deployments = summary?.deployments;
   const latestDeployments = useMemo(() => deployments?.latest ?? [], [deployments]);
@@ -431,6 +607,95 @@ export function OperationsClient() {
           {error}
         </div>
       ) : null}
+
+      <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-white">Platform Health</h2>
+            <p className="mt-1 text-sm text-slate-400">
+              Real readiness signals from API, PostgreSQL, Redis, and queue reachability.
+            </p>
+          </div>
+          <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-200">
+            Generated {formatTime(observability?.generatedAt ?? null)}
+          </span>
+        </div>
+        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <HealthCheckCard title="API" status={platform?.api.status ?? 'UNKNOWN'} message={platform?.api.message ?? 'API health unavailable.'} icon={<Server className="h-5 w-5" />} />
+          <HealthCheckCard title="PostgreSQL" status={platform?.database.status ?? 'UNKNOWN'} message={platform?.database.message ?? 'Database health unavailable.'} icon={<Database className="h-5 w-5" />} />
+          <HealthCheckCard title="Redis" status={platform?.redis.status ?? 'UNKNOWN'} message={platform?.redis.message ?? 'Redis health unavailable.'} icon={<RadioTower className="h-5 w-5" />} />
+          <HealthCheckCard title="Worker" status={platform?.worker.status ?? 'UNKNOWN'} message={platform?.worker.message ?? 'Worker health unavailable.'} icon={<Wrench className="h-5 w-5" />} />
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+          <div>
+            <h2 className="text-base font-semibold text-white">Provider Health</h2>
+            <p className="mt-1 text-sm text-slate-400">Connector status comes from the real provider checks.</p>
+          </div>
+          <div className="mt-5 grid gap-4">
+            <ProviderHealthCard label="Jenkins" provider={providerHealth?.jenkins} />
+            <ProviderHealthCard label="Docker" provider={providerHealth?.docker} />
+            <ProviderHealthCard label="Kubernetes" provider={providerHealth?.kubernetes} />
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+          <div>
+            <h2 className="text-base font-semibold text-white">Queue Health</h2>
+            <p className="mt-1 text-sm text-slate-400">BullMQ counts are shown only when safely readable.</p>
+          </div>
+          <div className="mt-5 space-y-4">
+            <QueueHealthCard title="Deployments Queue" queue={queueHealth?.deployments} />
+            <QueueHealthCard title="Operations Queue" queue={queueHealth?.operations} />
+          </div>
+        </section>
+      </div>
+
+      <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-white">Operation Status Breakdown</h2>
+            <p className="mt-1 text-sm text-slate-400">
+              {operationObservability?.recentWindowLabel ?? 'Latest tenant operations'}.
+            </p>
+          </div>
+          <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-slate-300">
+            {operationObservability?.totalRecent ?? 0} recent
+          </span>
+        </div>
+        <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+          {[
+            ['Queued', operationObservability?.statusBreakdown.queued ?? 0],
+            ['Running', operationObservability?.statusBreakdown.running ?? 0],
+            ['Succeeded', operationObservability?.statusBreakdown.succeeded ?? 0],
+            ['Failed', operationObservability?.statusBreakdown.failed ?? 0],
+            ['Rejected', operationObservability?.statusBreakdown.rejected ?? 0],
+            ['Cancelled', operationObservability?.statusBreakdown.cancelled ?? 0],
+            ['Pending approval', operationObservability?.statusBreakdown.pendingApproval ?? 0],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
+              <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
+              <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <OperationMiniList
+          title="Active Operations"
+          items={operationObservability?.active ?? []}
+          emptyMessage="No active queued, running, or pending approval operations."
+        />
+        <OperationMiniList
+          title="Recent Failures"
+          items={operationObservability?.recentFailures ?? []}
+          emptyMessage="No recent failed operations."
+          showError
+        />
+      </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
         <RuntimeCard title="API" status={runtime?.api.status ?? 'UNKNOWN'} icon={<Server className="h-5 w-5" />} description="Authenticated API route is responding." />

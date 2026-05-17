@@ -7,6 +7,7 @@ import type {
   JenkinsTriggerBuildResponse,
   KubernetesActionResponse,
   OperationDetailResponse,
+  OpsObservabilityResponse,
 } from '@autoops/types';
 import {
   Activity,
@@ -29,6 +30,7 @@ type DetailApiResponse = { data: OperationDetailResponse };
 type JenkinsRetryResponse = { data: JenkinsTriggerBuildResponse };
 type DockerRetryResponse = { data: DockerActionResponse };
 type KubernetesRetryResponse = { data: KubernetesActionResponse };
+type ObservabilityApiResponse = { data: OpsObservabilityResponse };
 type RetryAction = {
   token: string;
   label: string;
@@ -39,6 +41,8 @@ type RetryAction = {
 };
 
 const MISSING_VALUE = '-';
+const DETAIL_POLL_INTERVAL_MS = 7_000;
+const ACTIVE_OPERATION_STATUSES = new Set(['QUEUED', 'RUNNING', 'PENDING_APPROVAL']);
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.code === 'SESSION_EXPIRED') {
@@ -202,6 +206,9 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
   const [confirmationValue, setConfirmationValue] = useState('');
   const [pendingRetry, setPendingRetry] = useState<RetryAction | null>(null);
   const [queuedOperationId, setQueuedOperationId] = useState<string | null>(null);
+  const [providerHealth, setProviderHealth] = useState<
+    OpsObservabilityResponse['providers'][keyof OpsObservabilityResponse['providers']] | null
+  >(null);
 
   const loadDetail = useCallback(
     async (mode: 'initial' | 'refresh' = 'refresh') => {
@@ -211,6 +218,20 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
       try {
         const response = await api.get<DetailApiResponse>(`/v1/ops/activity/${encodeURIComponent(operationId)}`);
         setDetail(response.data);
+        if (
+          response.data.source === 'jenkins' ||
+          response.data.source === 'docker' ||
+          response.data.source === 'kubernetes'
+        ) {
+          try {
+            const observability = await api.get<ObservabilityApiResponse>('/v1/ops/observability');
+            setProviderHealth(observability.data.providers[response.data.source]);
+          } catch {
+            setProviderHealth(null);
+          }
+        } else {
+          setProviderHealth(null);
+        }
       } catch (loadError) {
         setError(getErrorMessage(loadError));
       } finally {
@@ -225,6 +246,16 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
     void loadDetail('initial');
   }, [loadDetail]);
 
+  const isActiveOperation = detail ? ACTIVE_OPERATION_STATUSES.has(detail.status) : false;
+
+  useEffect(() => {
+    if (!isActiveOperation || pendingRetry) return;
+    const intervalId = window.setInterval(() => {
+      void loadDetail();
+    }, DETAIL_POLL_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
+  }, [isActiveOperation, loadDetail, pendingRetry]);
+
   useEffect(() => {
     if (!pendingRetry) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -238,7 +269,10 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isSubmitting, pendingRetry]);
 
-  const retryAction = useMemo(() => (detail ? buildRetryAction(detail) : null), [detail]);
+  const retryAction = useMemo(
+    () => (detail && !isActiveOperation ? buildRetryAction(detail) : null),
+    [detail, isActiveOperation],
+  );
 
   const queueRetry = async () => {
     if (!pendingRetry || confirmationValue !== pendingRetry.token) return;
@@ -328,6 +362,18 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
           <Link className="font-semibold underline decoration-cyan-200/50 underline-offset-4" href={`/dashboard/operations/${queuedOperationId}`}>
             View new operation {shortId(queuedOperationId)}
           </Link>
+        </section>
+      ) : null}
+
+      {isActiveOperation ? (
+        <section className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100">
+          This operation is still active. AutoOps is refreshing this detail view every {DETAIL_POLL_INTERVAL_MS / 1_000} seconds until it reaches a terminal state.
+        </section>
+      ) : null}
+
+      {providerHealth && providerHealth.status !== 'CONNECTED' ? (
+        <section className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100">
+          Current provider health: {providerHealth.status}. {providerHealth.message}
         </section>
       ) : null}
 
@@ -421,8 +467,8 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
               <p className="text-sm text-slate-300">{detail.result}</p>
             ) : (
               <p className="text-sm text-slate-400">
-                {detail.status === 'QUEUED' || detail.status === 'RUNNING'
-                  ? 'Operation is still in progress. Refresh to check worker result.'
+                {isActiveOperation
+                  ? 'Operation is still in progress. This view will refresh while the operation remains active.'
                   : 'No safe result summary is available yet.'}
               </p>
             )}
@@ -449,7 +495,9 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
           ) : null}
         </div>
         <div className="mt-5 rounded-2xl border border-white/10 bg-slate-950/35 p-4 text-sm text-slate-300">
-          {retryAction
+          {isActiveOperation
+            ? 'Recovery is disabled while the operation is queued, running, or pending approval.'
+            : retryAction
             ? `${retryAction.label} is available for ${retryAction.target}. Confirmation ${retryAction.token} is required.`
             : detail.retry.reason ?? 'Recovery action is not available for this operation.'}
         </div>

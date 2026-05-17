@@ -13,6 +13,12 @@ function asyncHandler(handler: RequestHandler): RequestHandler {
 export const opsRouter: Router = Router();
 
 opsRouter.get(
+  '/observability',
+  requireAuth,
+  asyncHandler(opsController.observability as unknown as RequestHandler),
+);
+
+opsRouter.get(
   '/activity',
   requireAuth,
   validate({ query: opsActivityQuerySchema }),

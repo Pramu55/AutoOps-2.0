@@ -52,7 +52,7 @@ function getLoginErrorMessage(err: unknown): string {
 export default function LoginPage() {
   const router = useRouter();
 
-  const [email, setEmail] = useState('bullmq-test@example.com');
+  const [email, setEmail] = useState('pramod.local@autoops.dev');
   const [password, setPassword] = useState('StrongPass123');
   const [error, setError] = useState<string | null>(null);
   const [registeredUser, setRegisteredUser] = useState<{ name: string; email: string } | null>(null);
@@ -213,7 +213,7 @@ export default function LoginPage() {
 
             <div className="mt-8 border-t border-white/20 pt-6">
               <p className="text-xs font-semibold uppercase tracking-wide text-white/45">Demo credentials</p>
-              <p className="mt-2 break-all text-sm text-white/75">bullmq-test@example.com</p>
+              <p className="mt-2 break-all text-sm text-white/75">pramod.local@autoops.dev</p>
               <p className="mt-1 text-sm text-white/75">StrongPass123</p>
             </div>
           </div>

@@ -16,13 +16,18 @@ import {
   type OperationActivityItem,
   type OperationActivityResponse,
   type OperationDetailResponse,
+  type OperationObservabilityItem,
   type OpsActivityQuery,
+  type OpsObservabilityResponse,
   type OpsIntegrationReadiness,
+  type OpsProviderHealthSummary,
+  type OpsQueueHealthSummary,
   type OpsSummary,
 } from '@autoops/types';
 import { NotFoundError } from '@autoops/utils';
 import { redis } from '../../lib/redis.js';
 import { deploymentsQueue } from '../deployments/deployment.queue.js';
+import { operationsQueue } from '../operations/operation.queue.js';
 import { awsService } from '../integrations/aws/aws.service.js';
 import { dockerService } from '../integrations/docker/docker.service.js';
 import { jenkinsService } from '../integrations/jenkins/jenkins.service.js';
@@ -34,6 +39,14 @@ const ACTIVE_DEPLOYMENT_STATUSES = [
   DeploymentStatus.DEPLOYING,
   DeploymentStatus.RUNNING,
 ] as const;
+
+const ACTIVE_OPERATION_STATUSES = [
+  OperationStatus.QUEUED,
+  OperationStatus.RUNNING,
+  OperationStatus.PENDING_APPROVAL,
+] as const;
+
+const OBSERVABILITY_RECENT_LIMIT = 50;
 
 type OperationActivityRecord = {
   id: string;
@@ -336,6 +349,94 @@ export class OpsService {
     };
   }
 
+  async getObservability(organizationId: string): Promise<OpsObservabilityResponse> {
+    const generatedAt = new Date().toISOString();
+    const [
+      databaseStatus,
+      redisStatus,
+      deploymentQueue,
+      operationQueue,
+      recentOperations,
+      jenkinsHealth,
+      dockerHealth,
+      kubernetesHealth,
+    ] = await Promise.all([
+      this._getDatabaseStatus(),
+      this._getRedisStatus(),
+      this._getQueueHealth(deploymentsQueue, 'Deployments queue'),
+      this._getQueueHealth(operationsQueue, 'Operations queue'),
+      this._getRecentOperationRecords(organizationId),
+      this._getJenkinsHealth(),
+      this._getDockerHealth(),
+      this._getKubernetesHealth(),
+    ]);
+
+    const observableOperations = recentOperations.map((operation) =>
+      this._toObservabilityItem(operation),
+    );
+    const statusBreakdown = this._operationStatusBreakdown(recentOperations);
+    const active = observableOperations
+      .filter((operation) =>
+        ACTIVE_OPERATION_STATUSES.includes(operation.status as (typeof ACTIVE_OPERATION_STATUSES)[number]),
+      )
+      .slice(0, 10);
+    const recentFailures = observableOperations
+      .filter((operation) => operation.status === OperationStatus.FAILED)
+      .slice(0, 10);
+
+    return {
+      platform: {
+        api: {
+          status: 'HEALTHY',
+          message: 'API is serving authenticated operations requests.',
+          checkedAt: generatedAt,
+        },
+        database: {
+          status: databaseStatus === RuntimeStatus.READY ? 'CONNECTED' : 'UNAVAILABLE',
+          message:
+            databaseStatus === RuntimeStatus.READY
+              ? 'PostgreSQL readiness check succeeded.'
+              : 'PostgreSQL readiness check is unavailable.',
+          checkedAt: generatedAt,
+        },
+        redis: {
+          status: redisStatus === RuntimeStatus.READY ? 'CONNECTED' : 'UNAVAILABLE',
+          message:
+            redisStatus === RuntimeStatus.READY
+              ? 'Redis readiness check succeeded.'
+              : 'Redis readiness check is unavailable.',
+          checkedAt: generatedAt,
+        },
+        worker: {
+          status: operationQueue.status === RuntimeStatus.READY ? 'UNKNOWN' : 'UNAVAILABLE',
+          message:
+            operationQueue.status === RuntimeStatus.READY
+              ? 'Operations queue is reachable; direct worker heartbeat is not exposed to the API.'
+              : 'Operations queue is unavailable, so worker execution may be impacted.',
+          checkedAt: generatedAt,
+        },
+      },
+      queues: {
+        deployments: deploymentQueue,
+        operations: operationQueue,
+      },
+      providers: {
+        jenkins: jenkinsHealth,
+        docker: dockerHealth,
+        kubernetes: kubernetesHealth,
+      },
+      operations: {
+        totalRecent: observableOperations.length,
+        recentWindowLabel: `Latest ${OBSERVABILITY_RECENT_LIMIT} tenant operations`,
+        statusBreakdown,
+        active,
+        recentFailures,
+        latest: observableOperations.slice(0, 10),
+      },
+      generatedAt,
+    };
+  }
+
   private _withProviderStatus(
     kubernetesStatus: Awaited<ReturnType<typeof kubernetesService.getStatus>>,
     awsStatus: Awaited<ReturnType<typeof awsService.getStatus>>,
@@ -441,7 +542,7 @@ export class OpsService {
           nodes: kubernetesStatus.nodeCount ?? 0,
           readyNodes: kubernetesStatus.readyNodeCount ?? 0,
           namespaces: kubernetesStatus.namespaceCount ?? 0,
-          readOnly: true,
+          controlledOperations: 'scale and rollout restart',
         },
       };
     });
@@ -466,8 +567,33 @@ export class OpsService {
   }
 
   private async _getDeploymentQueueSummary(): Promise<OpsSummary['queues']['deployments']> {
+    const queue = await this._getQueueHealth(deploymentsQueue, 'Deployments queue');
+    return {
+      status: queue.status,
+      waiting: queue.waiting,
+      active: queue.active,
+      completed: queue.completed,
+      failed: queue.failed,
+      delayed: queue.delayed,
+    };
+  }
+
+  private async _getQueueHealth(
+    queue: {
+      getJobCounts: (
+        ...types: Array<'waiting' | 'active' | 'completed' | 'failed' | 'delayed'>
+      ) => Promise<{
+        waiting?: number;
+        active?: number;
+        completed?: number;
+        failed?: number;
+        delayed?: number;
+      }>;
+    },
+    label: string,
+  ): Promise<OpsQueueHealthSummary> {
     try {
-      const counts = await deploymentsQueue.getJobCounts(
+      const counts = await queue.getJobCounts(
         'waiting',
         'active',
         'completed',
@@ -477,6 +603,7 @@ export class OpsService {
 
       return {
         status: RuntimeStatus.READY,
+        message: `${label} counts are readable.`,
         waiting: counts.waiting ?? 0,
         active: counts.active ?? 0,
         completed: counts.completed ?? 0,
@@ -486,8 +613,149 @@ export class OpsService {
     } catch {
       return {
         status: RuntimeStatus.UNKNOWN,
+        message: `${label} counts are unavailable.`,
       };
     }
+  }
+
+  private async _getRecentOperationRecords(organizationId: string): Promise<OperationActivityRecord[]> {
+    return prisma.operation.findMany({
+      where: {
+        organizationId,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      take: OBSERVABILITY_RECENT_LIMIT,
+      select: {
+        id: true,
+        provider: true,
+        operationType: true,
+        status: true,
+        input: true,
+        result: true,
+        error: true,
+        approvedAt: true,
+        rejectedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        requestedBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+  }
+
+  private _toObservabilityItem(operation: OperationActivityRecord): OperationObservabilityItem {
+    const input = this._toRecord(operation.input);
+    const result = this._toRecord(operation.result);
+    return {
+      ...this._toActivityItem(operation),
+      retry: this._retryInfo(operation.operationType, input, result),
+    };
+  }
+
+  private _operationStatusBreakdown(
+    operations: OperationActivityRecord[],
+  ): OpsObservabilityResponse['operations']['statusBreakdown'] {
+    return operations.reduce<OpsObservabilityResponse['operations']['statusBreakdown']>(
+      (breakdown, operation) => {
+        if (operation.status === OperationStatus.QUEUED) breakdown.queued += 1;
+        else if (operation.status === OperationStatus.RUNNING) breakdown.running += 1;
+        else if (operation.status === OperationStatus.SUCCEEDED) breakdown.succeeded += 1;
+        else if (operation.status === OperationStatus.FAILED) breakdown.failed += 1;
+        else if (operation.status === OperationStatus.REJECTED) breakdown.rejected += 1;
+        else if (operation.status === OperationStatus.CANCELLED) breakdown.cancelled += 1;
+        else if (operation.status === OperationStatus.PENDING_APPROVAL) breakdown.pendingApproval += 1;
+        return breakdown;
+      },
+      {
+        queued: 0,
+        running: 0,
+        succeeded: 0,
+        failed: 0,
+        rejected: 0,
+        cancelled: 0,
+        pendingApproval: 0,
+      },
+    );
+  }
+
+  private async _getJenkinsHealth(): Promise<OpsProviderHealthSummary> {
+    try {
+      const status = await jenkinsService.getStatus();
+      return {
+        status: status.status,
+        message:
+          status.status === ProviderConnectionStatus.CONNECTED
+            ? status.triggerEnabled
+              ? 'Jenkins is connected and allowlisted build triggers are enabled.'
+              : 'Jenkins is connected; no jobs are allowlisted for triggering.'
+            : status.message,
+        href: '/dashboard/integrations/jenkins',
+        checkedAt: status.checkedAt,
+        triggerEnabled: status.triggerEnabled,
+      };
+    } catch {
+      return this._unknownProviderHealth(
+        '/dashboard/integrations/jenkins',
+        'Jenkins health check failed safely.',
+      );
+    }
+  }
+
+  private async _getDockerHealth(): Promise<OpsProviderHealthSummary> {
+    try {
+      const status = await dockerService.getStatus();
+      return {
+        status: status.status,
+        message:
+          status.status === ProviderConnectionStatus.CONNECTED
+            ? 'Docker engine is reachable for governed container operations.'
+            : status.message,
+        href: '/dashboard/integrations/docker',
+        checkedAt: status.checkedAt,
+      };
+    } catch {
+      return this._unknownProviderHealth(
+        '/dashboard/integrations/docker',
+        'Docker health check failed safely.',
+      );
+    }
+  }
+
+  private async _getKubernetesHealth(): Promise<OpsProviderHealthSummary> {
+    try {
+      const summary = await kubernetesService.getSummary();
+      return {
+        status: summary.status,
+        message:
+          summary.status === KubernetesConnectionStatus.CONNECTED
+            ? `Kubernetes API is connected. Metrics API ${summary.metricsApi.status}.`
+            : summary.message ?? 'Kubernetes is not connected.',
+        href: '/dashboard/integrations/kubernetes',
+        checkedAt: summary.checkedAt,
+        metricsApiStatus: summary.metricsApi.status,
+      };
+    } catch {
+      return this._unknownProviderHealth(
+        '/dashboard/integrations/kubernetes',
+        'Kubernetes health check failed safely.',
+      );
+    }
+  }
+
+  private _unknownProviderHealth(href: string, message: string): OpsProviderHealthSummary {
+    return {
+      status: 'UNKNOWN',
+      message,
+      href,
+      checkedAt: new Date().toISOString(),
+    };
   }
 
   private _toDeployment(deployment: {

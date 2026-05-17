@@ -65,6 +65,25 @@ export interface OpsQueueSummary {
   delayed?: number;
 }
 
+export type PlatformHealthStatus =
+  | 'HEALTHY'
+  | 'CONNECTED'
+  | 'READY'
+  | 'RUNNING'
+  | 'DEGRADED'
+  | 'UNAVAILABLE'
+  | 'UNKNOWN';
+
+export interface OpsHealthCheck {
+  status: PlatformHealthStatus;
+  message: string;
+  checkedAt: string;
+}
+
+export interface OpsQueueHealthSummary extends OpsQueueSummary {
+  message: string;
+}
+
 export interface OpsIntegrationReadiness {
   key: string;
   name: string;
@@ -200,4 +219,54 @@ export interface OperationDetailResponse extends OperationActivityItem {
   providerDetails: OperationProviderDetails;
   lifecycle: OperationLifecycleItem[];
   retry: OperationRetryInfo;
+}
+
+export interface OpsProviderHealthSummary {
+  status: string;
+  message: string;
+  href: string;
+  checkedAt: string | null;
+  triggerEnabled?: boolean;
+  metricsApiStatus?: string;
+}
+
+export interface OperationStatusBreakdown {
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  rejected: number;
+  cancelled: number;
+  pendingApproval: number;
+}
+
+export interface OperationObservabilityItem extends OperationActivityItem {
+  retry: OperationRetryInfo;
+}
+
+export interface OpsObservabilityResponse {
+  platform: {
+    api: OpsHealthCheck;
+    database: OpsHealthCheck;
+    redis: OpsHealthCheck;
+    worker: OpsHealthCheck;
+  };
+  queues: {
+    deployments: OpsQueueHealthSummary;
+    operations: OpsQueueHealthSummary;
+  };
+  providers: {
+    jenkins: OpsProviderHealthSummary;
+    docker: OpsProviderHealthSummary;
+    kubernetes: OpsProviderHealthSummary;
+  };
+  operations: {
+    totalRecent: number;
+    recentWindowLabel: string;
+    statusBreakdown: OperationStatusBreakdown;
+    active: OperationObservabilityItem[];
+    recentFailures: OperationObservabilityItem[];
+    latest: OperationObservabilityItem[];
+  };
+  generatedAt: string;
 }
