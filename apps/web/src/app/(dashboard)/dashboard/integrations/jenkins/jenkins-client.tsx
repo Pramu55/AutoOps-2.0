@@ -456,6 +456,11 @@ export function JenkinsClient() {
                       <p className="mt-1 text-xs text-slate-500">Done {operation.completedAt ? formatTime(operation.completedAt) : MISSING_VALUE}</p>
                     </div>
                     <div className="flex flex-col gap-2 xl:items-end">
+                      <Button asChild size="sm" variant="outline" className="rounded-full border-cyan-300/25 bg-cyan-300/10 text-cyan-100">
+                        <Link href={`/dashboard/operations/${operation.id}`}>
+                          View details
+                        </Link>
+                      </Button>
                       {displayBuildUrl ? (
                         <Button asChild size="sm" variant="outline" className="rounded-full border-white/10 bg-white/[0.04]">
                           <a href={displayBuildUrl} target="_blank" rel="noreferrer noopener">

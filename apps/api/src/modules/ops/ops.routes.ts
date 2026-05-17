@@ -1,5 +1,5 @@
 import { Router, type RequestHandler } from 'express';
-import { opsActivityQuerySchema } from '@autoops/types';
+import { operationParamsSchema, opsActivityQuerySchema } from '@autoops/types';
 import { requireAuth } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { opsController } from './ops.controller.js';
@@ -17,6 +17,13 @@ opsRouter.get(
   requireAuth,
   validate({ query: opsActivityQuerySchema }),
   asyncHandler(opsController.activity as unknown as RequestHandler),
+);
+
+opsRouter.get(
+  '/activity/:operationId',
+  requireAuth,
+  validate({ params: operationParamsSchema }),
+  asyncHandler(opsController.activityDetail as unknown as RequestHandler),
 );
 
 opsRouter.get(

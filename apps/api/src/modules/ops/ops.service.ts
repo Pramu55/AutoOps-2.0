@@ -15,10 +15,12 @@ import {
   type Deployment,
   type OperationActivityItem,
   type OperationActivityResponse,
+  type OperationDetailResponse,
   type OpsActivityQuery,
   type OpsIntegrationReadiness,
   type OpsSummary,
 } from '@autoops/types';
+import { NotFoundError } from '@autoops/utils';
 import { redis } from '../../lib/redis.js';
 import { deploymentsQueue } from '../deployments/deployment.queue.js';
 import { awsService } from '../integrations/aws/aws.service.js';
@@ -164,6 +166,42 @@ export class OpsService {
     return {
       items: operations.map((operation) => this._toActivityItem(operation)),
     };
+  }
+
+  async getActivityDetail(
+    organizationId: string,
+    operationId: string,
+  ): Promise<OperationDetailResponse> {
+    const operation = await prisma.operation.findFirst({
+      where: {
+        id: operationId,
+        organizationId,
+      },
+      select: {
+        id: true,
+        provider: true,
+        operationType: true,
+        status: true,
+        input: true,
+        result: true,
+        error: true,
+        approvedAt: true,
+        rejectedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        requestedBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!operation) throw new NotFoundError('Operation');
+
+    return this._toOperationDetail(operation);
   }
 
   async getSummary(organizationId: string): Promise<OpsSummary> {
@@ -539,6 +577,22 @@ export class OpsService {
     };
   }
 
+  private _toOperationDetail(operation: OperationActivityRecord): OperationDetailResponse {
+    const activity = this._toActivityItem(operation);
+    const input = this._toRecord(operation.input);
+    const result = this._toRecord(operation.result);
+    const error = this._toRecord(operation.error);
+
+    return {
+      ...activity,
+      updatedAt: operation.updatedAt.toISOString(),
+      providerDetails: this._providerDetails(operation.provider, operation.operationType, input, result),
+      lifecycle: this._lifecycle(operation),
+      retry: this._retryInfo(operation.operationType, input, result),
+      errorMessage: activity.errorMessage ?? this._stringField(error, 'reason'),
+    };
+  }
+
   private _sourceForProvider(provider: OperationProvider): OperationActivitySource {
     if (provider === OperationProvider.JENKINS) return OperationActivitySource.JENKINS;
     if (provider === OperationProvider.KUBERNETES) return OperationActivitySource.KUBERNETES;
@@ -638,9 +692,237 @@ export class OpsService {
     return null;
   }
 
+  private _providerDetails(
+    provider: OperationProvider,
+    type: OperationType,
+    input: Record<string, unknown>,
+    result: Record<string, unknown>,
+  ): OperationDetailResponse['providerDetails'] {
+    const safeSummary: string[] = [];
+    const action = this._stringField(result, 'action') ?? this._stringField(input, 'action');
+    const namespace = this._stringField(result, 'namespace') ?? this._stringField(input, 'namespace');
+    const targetName = this._stringField(result, 'name') ?? this._stringField(input, 'name');
+    const targetKind = this._stringField(result, 'kind') ?? this._stringField(input, 'kind');
+    const containerName =
+      this._stringField(result, 'containerName') ?? this._stringField(input, 'containerName');
+    const containerId =
+      this._stringField(result, 'containerId') ?? this._stringField(input, 'containerId');
+    const jobName = this._stringField(result, 'jobName') ?? this._stringField(input, 'jobName');
+    const buildNumber = this._numberField(result, 'buildNumber');
+    const buildUrl = this._stringField(result, 'buildUrl');
+    const replicas = this._numberField(result, 'replicas') ?? this._numberField(input, 'replicas');
+    const status = this._stringField(result, 'status') ?? this._stringField(result, 'result');
+    const completedAt = this._stringField(result, 'completedAt');
+    const restartedAt = this._stringField(result, 'restartedAt');
+
+    if (jobName) safeSummary.push(`Job: ${jobName}`);
+    if (buildNumber !== null) safeSummary.push(`Build: #${buildNumber}`);
+    if (buildUrl) safeSummary.push('Jenkins build URL is available.');
+    if (containerName) safeSummary.push(`Container: ${containerName}`);
+    if (containerId) safeSummary.push(`Container ID: ${this._shortId(containerId)}`);
+    if (namespace && targetName) safeSummary.push(`Workload: ${namespace}/${targetName}`);
+    if (action) safeSummary.push(`Action: ${this._humanizeAction(action)}`);
+    if (replicas !== null) safeSummary.push(`Replica target: ${replicas}`);
+    if (restartedAt) safeSummary.push(`Restarted at: ${restartedAt}`);
+    if (status) safeSummary.push(`Result: ${status}`);
+    if (completedAt) safeSummary.push(`Completed at: ${completedAt}`);
+    if (safeSummary.length === 0) safeSummary.push('No additional safe provider details are available.');
+
+    return {
+      provider,
+      operationType: type,
+      targetKind: targetKind ?? (namespace && targetName ? 'Deployment' : null),
+      targetName,
+      namespace,
+      containerName,
+      containerId,
+      jobName,
+      buildNumber,
+      buildUrl,
+      action,
+      replicas,
+      safeSummary,
+    };
+  }
+
+  private _lifecycle(operation: OperationActivityRecord): OperationDetailResponse['lifecycle'] {
+    const terminal = this._isTerminalStatus(operation.status);
+    const running = operation.status === OperationStatus.RUNNING;
+    const pendingApproval = operation.status === OperationStatus.PENDING_APPROVAL;
+    const failed =
+      operation.status === OperationStatus.FAILED ||
+      operation.status === OperationStatus.REJECTED ||
+      operation.status === OperationStatus.CANCELLED;
+
+    return [
+      {
+        label: 'Requested',
+        status: 'completed',
+        timestamp: operation.createdAt.toISOString(),
+        description: 'Operation request was recorded for this organization.',
+      },
+      {
+        label: pendingApproval ? 'Pending approval' : 'Queued',
+        status: pendingApproval ? 'active' : 'completed',
+        timestamp: pendingApproval ? null : operation.createdAt.toISOString(),
+        description: pendingApproval
+          ? 'Operation is waiting for approval before worker execution.'
+          : 'Operation was eligible for worker execution.',
+      },
+      {
+        label: 'Running',
+        status: running ? 'active' : terminal ? 'completed' : 'pending',
+        timestamp: this._isStartedStatus(operation.status) ? operation.updatedAt.toISOString() : null,
+        description: running
+          ? 'Worker execution is in progress.'
+          : terminal
+            ? 'Worker execution has finished.'
+            : 'Worker execution has not started yet.',
+      },
+      {
+        label: this._terminalLabel(operation.status),
+        status: failed ? 'failed' : terminal ? 'completed' : 'pending',
+        timestamp: terminal ? operation.updatedAt.toISOString() : null,
+        description: terminal
+          ? `Operation reached ${operation.status}.`
+          : 'Operation has not reached a terminal state yet.',
+      },
+    ];
+  }
+
+  private _retryInfo(
+    type: OperationType,
+    input: Record<string, unknown>,
+    result: Record<string, unknown>,
+  ): OperationDetailResponse['retry'] {
+    if (type === OperationType.JENKINS_BUILD_TRIGGER) {
+      const jobName = this._stringField(result, 'jobName') ?? this._stringField(input, 'jobName');
+      return jobName
+        ? {
+            supported: true,
+            actionLabel: 'Re-run Jenkins build',
+            confirmationTokenLabel: 'BUILD',
+            reason: null,
+          }
+        : {
+            supported: false,
+            actionLabel: null,
+            confirmationTokenLabel: null,
+            reason: 'Jenkins job name is missing.',
+          };
+    }
+
+    if (type === OperationType.DOCKER_CONTAINER_START) {
+      return this._dockerRetryInfo(input, result, 'START', 'Retry Docker start');
+    }
+    if (type === OperationType.DOCKER_CONTAINER_STOP) {
+      return this._dockerRetryInfo(input, result, 'STOP', 'Retry Docker stop');
+    }
+    if (type === OperationType.DOCKER_CONTAINER_RESTART) {
+      return this._dockerRetryInfo(input, result, 'RESTART', 'Retry Docker restart');
+    }
+
+    if (type === OperationType.KUBERNETES_DEPLOYMENT_SCALE) {
+      const namespace = this._stringField(result, 'namespace') ?? this._stringField(input, 'namespace');
+      const name = this._stringField(result, 'name') ?? this._stringField(input, 'name');
+      const replicas = this._numberField(result, 'replicas') ?? this._numberField(input, 'replicas');
+      if (!namespace || !name) {
+        return {
+          supported: false,
+          actionLabel: null,
+          confirmationTokenLabel: null,
+          reason: 'Deployment target is missing.',
+        };
+      }
+      if (replicas === null) {
+        return {
+          supported: false,
+          actionLabel: null,
+          confirmationTokenLabel: null,
+          reason: 'Replica target missing; retry from Kubernetes control page.',
+        };
+      }
+      return {
+        supported: true,
+        actionLabel: 'Retry Kubernetes scale',
+        confirmationTokenLabel: 'SCALE',
+        reason: null,
+      };
+    }
+
+    if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) {
+      const namespace = this._stringField(result, 'namespace') ?? this._stringField(input, 'namespace');
+      const name = this._stringField(result, 'name') ?? this._stringField(input, 'name');
+      return namespace && name
+        ? {
+            supported: true,
+            actionLabel: 'Retry rollout restart',
+            confirmationTokenLabel: 'ROLLOUT',
+            reason: null,
+          }
+        : {
+            supported: false,
+            actionLabel: null,
+            confirmationTokenLabel: null,
+            reason: 'Deployment target is missing.',
+          };
+    }
+
+    return {
+      supported: false,
+      actionLabel: null,
+      confirmationTokenLabel: null,
+      reason: 'Recovery action is not available for this operation.',
+    };
+  }
+
+  private _dockerRetryInfo(
+    input: Record<string, unknown>,
+    result: Record<string, unknown>,
+    token: string,
+    actionLabel: string,
+  ): OperationDetailResponse['retry'] {
+    const containerId =
+      this._stringField(result, 'containerId') ?? this._stringField(input, 'containerId');
+    return containerId
+      ? {
+          supported: true,
+          actionLabel,
+          confirmationTokenLabel: token,
+          reason: null,
+        }
+      : {
+          supported: false,
+          actionLabel: null,
+          confirmationTokenLabel: null,
+          reason: 'Container target is missing.',
+        };
+  }
+
   private _stringField(record: Record<string, unknown>, key: string): string | null {
     const value = record[key];
     return typeof value === 'string' && value.trim().length > 0 ? value : null;
+  }
+
+  private _numberField(record: Record<string, unknown>, key: string): number | null {
+    const value = record[key];
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+
+  private _shortId(value: string): string {
+    return value.length > 12 ? value.slice(0, 12) : value;
+  }
+
+  private _humanizeAction(value: string): string {
+    return value.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+  }
+
+  private _terminalLabel(status: OperationStatus): string {
+    if (status === OperationStatus.SUCCEEDED) return 'Succeeded';
+    if (status === OperationStatus.FAILED) return 'Failed';
+    if (status === OperationStatus.REJECTED) return 'Rejected';
+    if (status === OperationStatus.CANCELLED) return 'Cancelled';
+    return 'Completed';
   }
 
   private _governanceForOperation(

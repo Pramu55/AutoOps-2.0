@@ -1,5 +1,10 @@
 import type { Request, Response } from 'express';
-import type { OperationActivityResponse, OpsActivityQuery, OpsSummary } from '@autoops/types';
+import type {
+  OperationActivityResponse,
+  OperationDetailResponse,
+  OpsActivityQuery,
+  OpsSummary,
+} from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { opsService } from './ops.service.js';
 
@@ -11,6 +16,15 @@ export class OpsController {
       req.query as unknown as OpsActivityQuery,
     );
     res.json({ data: activity });
+  };
+
+  activityDetail = async (
+    req: Request<{ operationId: string }>,
+    res: Response<{ data: OperationDetailResponse }>,
+  ): Promise<void> => {
+    const organizationId = this._requireOrganizationId(req);
+    const detail = await opsService.getActivityDetail(organizationId, req.params.operationId);
+    res.json({ data: detail });
   };
 
   summary = async (req: Request, res: Response<{ data: OpsSummary }>): Promise<void> => {

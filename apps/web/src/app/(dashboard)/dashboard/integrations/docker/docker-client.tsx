@@ -678,20 +678,25 @@ export function DockerClient() {
             ) : (
               activity.map((item) => (
                 <article key={item.id} className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(item.status)}`}>
-                      {item.status}
-                    </span>
-                    {item.governance ? (
-                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${riskTone(item.governance.riskLevel)}`}>
-                        {item.governance.riskLevel} risk
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(item.status)}`}>
+                        {item.status}
                       </span>
-                    ) : null}
-                    {item.result ? (
-                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(item.result)}`}>
-                        {item.result}
-                      </span>
-                    ) : null}
+                      {item.governance ? (
+                        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${riskTone(item.governance.riskLevel)}`}>
+                          {item.governance.riskLevel} risk
+                        </span>
+                      ) : null}
+                      {item.result ? (
+                        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(item.result)}`}>
+                          {item.result}
+                        </span>
+                      ) : null}
+                    </div>
+                    <Button asChild size="sm" variant="outline" className="w-fit rounded-full border-cyan-300/25 bg-cyan-300/10 text-cyan-100">
+                      <Link href={`/dashboard/operations/${item.id}`}>View details</Link>
+                    </Button>
                   </div>
                   <h3 className="mt-3 text-sm font-semibold text-white">{item.title}</h3>
                   <p className="mt-1 text-sm text-slate-400">{item.targetLabel ?? MISSING_VALUE}</p>

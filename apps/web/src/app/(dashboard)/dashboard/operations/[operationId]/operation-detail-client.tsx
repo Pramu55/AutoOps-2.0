@@ -1,0 +1,549 @@
+'use client';
+
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type {
+  DockerActionResponse,
+  JenkinsTriggerBuildResponse,
+  KubernetesActionResponse,
+  OperationDetailResponse,
+} from '@autoops/types';
+import {
+  Activity,
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
+  ExternalLink,
+  RefreshCw,
+  RotateCw,
+  ShieldCheck,
+  Timer,
+  UserCircle,
+  X,
+} from 'lucide-react';
+import { ApiError, api } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+
+type DetailApiResponse = { data: OperationDetailResponse };
+type JenkinsRetryResponse = { data: JenkinsTriggerBuildResponse };
+type DockerRetryResponse = { data: DockerActionResponse };
+type KubernetesRetryResponse = { data: KubernetesActionResponse };
+type RetryAction = {
+  token: string;
+  label: string;
+  endpoint: string;
+  body: Record<string, string | number>;
+  target: string;
+  scaleReplicas: number | null;
+};
+
+const MISSING_VALUE = '-';
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.code === 'SESSION_EXPIRED') {
+    return 'Session expired. Please sign in again.';
+  }
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return 'Unable to load operation detail.';
+}
+
+function statusTone(status: string): string {
+  if (status === 'SUCCEEDED' || status === 'CONNECTED' || status === 'completed') {
+    return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
+  }
+  if (status === 'FAILED' || status === 'REJECTED' || status === 'CANCELLED' || status === 'failed') {
+    return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
+  }
+  if (status === 'RUNNING' || status === 'QUEUED' || status === 'PENDING_APPROVAL' || status === 'active') {
+    return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
+  }
+  return 'border-slate-500/25 bg-slate-500/10 text-slate-300';
+}
+
+function riskTone(riskLevel: string): string {
+  if (riskLevel === 'LOW') return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
+  if (riskLevel === 'MEDIUM') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
+  if (riskLevel === 'HIGH') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
+  return 'border-slate-500/25 bg-slate-500/10 text-slate-300';
+}
+
+function formatDate(value: string | null): string {
+  if (!value) return MISSING_VALUE;
+  return new Intl.DateTimeFormat('en', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+function formatDuration(value: number | null): string {
+  if (value === null) return MISSING_VALUE;
+  if (value < 1_000) return `${value} ms`;
+  return `${(value / 1_000).toFixed(1)} s`;
+}
+
+function shortId(value: string): string {
+  return value.length > 12 ? value.slice(0, 12) : value;
+}
+
+function actorLabel(actor: OperationDetailResponse['actor']): string {
+  if (!actor) return MISSING_VALUE;
+  return actor.name ?? actor.email ?? actor.id;
+}
+
+function approvalLabel(status: string): string {
+  if (status === 'NOT_REQUIRED') return 'Approval not required';
+  if (status === 'PENDING') return 'Approval pending';
+  if (status === 'APPROVED') return 'Approved';
+  if (status === 'REJECTED') return 'Rejected';
+  return status;
+}
+
+function detailRows(detail: OperationDetailResponse): Array<[string, string | number | null]> {
+  const provider = detail.providerDetails;
+  return [
+    ['Provider', provider.provider],
+    ['Operation type', provider.operationType],
+    ['Target kind', provider.targetKind],
+    ['Target name', provider.targetName],
+    ['Namespace', provider.namespace],
+    ['Container', provider.containerName],
+    ['Container ID', provider.containerId ? shortId(provider.containerId) : null],
+    ['Jenkins job', provider.jobName],
+    ['Build number', provider.buildNumber],
+    ['Action', provider.action],
+    ['Replicas', provider.replicas],
+  ];
+}
+
+function buildRetryAction(detail: OperationDetailResponse): RetryAction | null {
+  if (!detail.retry.supported || !detail.retry.confirmationTokenLabel || !detail.retry.actionLabel) {
+    return null;
+  }
+
+  const provider = detail.providerDetails;
+  const token = detail.retry.confirmationTokenLabel;
+  if (detail.type === 'JENKINS_BUILD_TRIGGER' && provider.jobName) {
+    return {
+      token,
+      label: detail.retry.actionLabel,
+      endpoint: `/v1/integrations/jenkins/jobs/${encodeURIComponent(provider.jobName)}/trigger`,
+      body: { confirmationToken: token, reason: `Recovery from operation ${shortId(detail.id)}` },
+      target: provider.jobName,
+      scaleReplicas: null,
+    };
+  }
+
+  const dockerAction =
+    provider.action === 'start' || provider.action === 'stop' || provider.action === 'restart'
+      ? provider.action
+      : null;
+
+  if (detail.source === 'docker' && provider.containerId && dockerAction) {
+    return {
+      token,
+      label: detail.retry.actionLabel,
+      endpoint: `/v1/integrations/docker/containers/${encodeURIComponent(provider.containerId)}/${dockerAction}`,
+      body: { confirmationToken: token },
+      target: provider.containerName ?? shortId(provider.containerId),
+      scaleReplicas: null,
+    };
+  }
+
+  if (detail.type === 'KUBERNETES_DEPLOYMENT_SCALE' && provider.namespace && provider.targetName && provider.replicas !== null) {
+    return {
+      token,
+      label: detail.retry.actionLabel,
+      endpoint: `/v1/integrations/kubernetes/workloads/${encodeURIComponent(provider.namespace)}/deployments/${encodeURIComponent(provider.targetName)}/scale`,
+      body: { replicas: provider.replicas, confirmationToken: token },
+      target: `${provider.namespace}/${provider.targetName}`,
+      scaleReplicas: provider.replicas,
+    };
+  }
+
+  if (detail.type === 'KUBERNETES_DEPLOYMENT_RESTART' && provider.namespace && provider.targetName) {
+    return {
+      token,
+      label: detail.retry.actionLabel,
+      endpoint: `/v1/integrations/kubernetes/workloads/${encodeURIComponent(provider.namespace)}/deployments/${encodeURIComponent(provider.targetName)}/rollout-restart`,
+      body: { confirmationToken: token },
+      target: `${provider.namespace}/${provider.targetName}`,
+      scaleReplicas: null,
+    };
+  }
+
+  return null;
+}
+
+function SummaryCard({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
+  return (
+    <section className="rounded-2xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
+          <p className="mt-2 truncate text-sm font-semibold text-white">{value}</p>
+        </div>
+        <div className="rounded-xl bg-cyan-300/10 p-2 text-cyan-300">{icon}</div>
+      </div>
+    </section>
+  );
+}
+
+export function OperationDetailClient({ operationId }: { operationId: string }) {
+  const [detail, setDetail] = useState<OperationDetailResponse | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const [confirmationValue, setConfirmationValue] = useState('');
+  const [pendingRetry, setPendingRetry] = useState<RetryAction | null>(null);
+  const [queuedOperationId, setQueuedOperationId] = useState<string | null>(null);
+
+  const loadDetail = useCallback(
+    async (mode: 'initial' | 'refresh' = 'refresh') => {
+      if (mode === 'initial') setIsLoading(true);
+      else setIsRefreshing(true);
+      setError(null);
+      try {
+        const response = await api.get<DetailApiResponse>(`/v1/ops/activity/${encodeURIComponent(operationId)}`);
+        setDetail(response.data);
+      } catch (loadError) {
+        setError(getErrorMessage(loadError));
+      } finally {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    },
+    [operationId],
+  );
+
+  useEffect(() => {
+    void loadDetail('initial');
+  }, [loadDetail]);
+
+  useEffect(() => {
+    if (!pendingRetry) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isSubmitting) {
+        setPendingRetry(null);
+        setConfirmationValue('');
+        setRetryError(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSubmitting, pendingRetry]);
+
+  const retryAction = useMemo(() => (detail ? buildRetryAction(detail) : null), [detail]);
+
+  const queueRetry = async () => {
+    if (!pendingRetry || confirmationValue !== pendingRetry.token) return;
+    setIsSubmitting(true);
+    setRetryError(null);
+    setQueuedOperationId(null);
+    try {
+      const response =
+        detail?.source === 'jenkins'
+          ? await api.post<JenkinsRetryResponse>(pendingRetry.endpoint, pendingRetry.body)
+          : detail?.source === 'docker'
+            ? await api.post<DockerRetryResponse>(pendingRetry.endpoint, pendingRetry.body)
+            : await api.post<KubernetesRetryResponse>(pendingRetry.endpoint, pendingRetry.body);
+      setQueuedOperationId(response.data.operationId);
+      setPendingRetry(null);
+      setConfirmationValue('');
+      await loadDetail();
+    } catch (retryActionError) {
+      setRetryError(getErrorMessage(retryActionError));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="rounded-3xl border border-white/10 bg-white/[0.055] p-8 text-sm text-slate-300">
+        Loading operation detail...
+      </div>
+    );
+  }
+
+  if (error || !detail) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <Button asChild variant="outline" size="sm" className="rounded-full border-white/10 bg-white/[0.04]">
+          <Link href="/dashboard/operations">
+            <ArrowLeft className="h-4 w-4" />
+            Back to Ops Hub
+          </Link>
+        </Button>
+        <section className="rounded-3xl border border-rose-400/30 bg-rose-500/10 p-6 text-sm text-rose-100">
+          {error ?? 'Operation detail was not found.'}
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <Button asChild variant="outline" size="sm" className="rounded-full border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.08]">
+        <Link href="/dashboard/operations">
+          <ArrowLeft className="h-4 w-4" />
+          Back to Ops Hub
+        </Link>
+      </Button>
+
+      <section className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.24),transparent_34%),radial-gradient(circle_at_88%_8%,rgba(124,58,237,0.18),transparent_32%),linear-gradient(135deg,rgba(255,255,255,0.11),rgba(255,255,255,0.025))] p-6 shadow-2xl shadow-black/25 lg:p-8">
+        <div className="relative flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${statusTone(detail.status)}`}>
+                {detail.status}
+              </span>
+              <span className="rounded-full border border-white/10 bg-white/[0.045] px-3 py-1.5 text-xs font-semibold text-slate-300">
+                {detail.source}
+              </span>
+              <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${riskTone(detail.governance.riskLevel)}`}>
+                {detail.governance.riskLevel} risk
+              </span>
+            </div>
+            <h1 className="mt-4 text-4xl font-semibold tracking-tight text-white lg:text-5xl">{detail.title}</h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400">
+              Safe operation detail for {detail.targetLabel ?? 'an AutoOps operation'}. Raw provider input, result, and error blobs are not exposed.
+            </p>
+          </div>
+          <Button type="button" onClick={() => void loadDetail()} disabled={isRefreshing} className="rounded-full bg-white text-slate-950 hover:bg-slate-200">
+            <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+            Refresh
+          </Button>
+        </div>
+      </section>
+
+      {queuedOperationId ? (
+        <section className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-4 text-sm text-cyan-100">
+          Operation queued successfully.{' '}
+          <Link className="font-semibold underline decoration-cyan-200/50 underline-offset-4" href={`/dashboard/operations/${queuedOperationId}`}>
+            View new operation {shortId(queuedOperationId)}
+          </Link>
+        </section>
+      ) : null}
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+        <SummaryCard label="Status" value={detail.status} icon={<Activity className="h-5 w-5" />} />
+        <SummaryCard label="Source" value={detail.source} icon={<ShieldCheck className="h-5 w-5" />} />
+        <SummaryCard label="Target" value={detail.targetLabel ?? MISSING_VALUE} icon={<CheckCircle2 className="h-5 w-5" />} />
+        <SummaryCard label="Actor" value={actorLabel(detail.actor)} icon={<UserCircle className="h-5 w-5" />} />
+        <SummaryCard label="Duration" value={formatDuration(detail.durationMs)} icon={<Timer className="h-5 w-5" />} />
+        <SummaryCard label="Created" value={formatDate(detail.createdAt)} icon={<Activity className="h-5 w-5" />} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.75fr_1.25fr]">
+        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+          <h2 className="text-base font-semibold text-white">Governance</h2>
+          <div className="mt-5 grid gap-3 text-sm">
+            {[
+              ['Risk level', detail.governance.riskLevel],
+              ['Confirmation required', detail.governance.confirmationRequired ? 'Yes' : 'No'],
+              ['Confirmation label', detail.governance.confirmationTokenLabel ?? MISSING_VALUE],
+              ['Confirmation satisfied', detail.governance.confirmationSatisfied ? 'Yes' : 'No'],
+              ['Approval required', detail.governance.approvalRequired ? 'Yes' : 'No'],
+              ['Approval status', approvalLabel(detail.governance.approvalStatus)],
+            ].map(([label, value]) => (
+              <div key={label} className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-slate-950/35 p-3">
+                <span className="text-slate-500">{label}</span>
+                <span className="text-right font-medium text-slate-200">{value}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+          <h2 className="text-base font-semibold text-white">Lifecycle</h2>
+          <div className="mt-5 space-y-3">
+            {detail.lifecycle.map((item) => (
+              <div key={item.label} className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-white">{item.label}</p>
+                  <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(item.status)}`}>
+                    {item.status}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-slate-400">{item.description}</p>
+                <p className="mt-2 text-xs text-slate-500">{formatDate(item.timestamp)}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-base font-semibold text-white">Provider details</h2>
+            {detail.externalUrl ? (
+              <Button asChild size="sm" variant="outline" className="rounded-full border-white/10 bg-white/[0.04]">
+                <a href={detail.externalUrl} target="_blank" rel="noreferrer noopener">
+                  <ExternalLink className="h-4 w-4" />
+                  Open related resource
+                </a>
+              </Button>
+            ) : null}
+          </div>
+          <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+            {detailRows(detail).map(([label, value]) => (
+              <div key={label} className="rounded-xl border border-white/10 bg-slate-950/35 p-3">
+                <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
+                <p className="mt-1 break-words text-slate-300">{value ?? MISSING_VALUE}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-5 space-y-2">
+            {detail.providerDetails.safeSummary.map((item) => (
+              <p key={item} className="rounded-xl border border-white/10 bg-white/[0.035] p-3 text-sm text-slate-300">
+                {item}
+              </p>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+          <h2 className="text-base font-semibold text-white">Safe result</h2>
+          <div className="mt-5 rounded-2xl border border-white/10 bg-slate-950/35 p-4">
+            {detail.errorMessage ? (
+              <div className="flex gap-3 text-sm text-rose-100">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
+                <p>{detail.errorMessage}</p>
+              </div>
+            ) : detail.result ? (
+              <p className="text-sm text-slate-300">{detail.result}</p>
+            ) : (
+              <p className="text-sm text-slate-400">
+                {detail.status === 'QUEUED' || detail.status === 'RUNNING'
+                  ? 'Operation is still in progress. Refresh to check worker result.'
+                  : 'No safe result summary is available yet.'}
+              </p>
+            )}
+          </div>
+          <div className="mt-5 rounded-2xl border border-cyan-300/15 bg-cyan-300/10 p-4 text-sm text-cyan-100">
+            Raw operation input, result, and error metadata are intentionally hidden from this view.
+          </div>
+        </section>
+      </div>
+
+      <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-white">Recovery</h2>
+            <p className="mt-1 text-sm text-slate-400">
+              Recovery uses provider-specific controlled endpoints with the same confirmation model.
+            </p>
+          </div>
+          {retryAction ? (
+            <Button type="button" onClick={() => setPendingRetry(retryAction)} className="rounded-full bg-white text-slate-950 hover:bg-slate-200">
+              <RotateCw className="h-4 w-4" />
+              {retryAction.label}
+            </Button>
+          ) : null}
+        </div>
+        <div className="mt-5 rounded-2xl border border-white/10 bg-slate-950/35 p-4 text-sm text-slate-300">
+          {retryAction
+            ? `${retryAction.label} is available for ${retryAction.target}. Confirmation ${retryAction.token} is required.`
+            : detail.retry.reason ?? 'Recovery action is not available for this operation.'}
+        </div>
+      </section>
+
+      {pendingRetry ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="operation-retry-title"
+        >
+          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-slate-950 p-6 shadow-2xl shadow-black/40">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">
+                  {detail.governance.riskLevel} risk | {approvalLabel(detail.governance.approvalStatus)}
+                </p>
+                <h2 id="operation-retry-title" className="mt-2 text-xl font-semibold text-white">
+                  {pendingRetry.label}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingRetry(null);
+                  setConfirmationValue('');
+                  setRetryError(null);
+                }}
+                disabled={isSubmitting}
+                className="rounded-full border border-white/10 bg-white/[0.04] p-2 text-slate-300 transition hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Close recovery confirmation"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-3 text-sm leading-6 text-slate-300">
+              <p>
+                You are about to queue <span className="font-semibold text-white">{pendingRetry.label}</span> for{' '}
+                <span className="font-semibold text-white">{pendingRetry.target}</span>.
+              </p>
+              {pendingRetry.scaleReplicas !== null ? (
+                <p>Replica target: {pendingRetry.scaleReplicas}</p>
+              ) : null}
+              <p>
+                Type <span className="font-semibold text-amber-200">{pendingRetry.token}</span> to queue the worker-executed recovery operation.
+              </p>
+            </div>
+
+            {retryError ? (
+              <div className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-100">
+                {retryError}
+              </div>
+            ) : null}
+
+            <label className="mt-5 block text-sm font-medium text-slate-200" htmlFor="operation-retry-token">
+              Required confirmation token
+            </label>
+            <Input
+              id="operation-retry-token"
+              value={confirmationValue}
+              onChange={(event) => setConfirmationValue(event.target.value)}
+              placeholder={`Type ${pendingRetry.token} to confirm`}
+              className="mt-2 border-white/10 bg-slate-900/80"
+              autoFocus
+            />
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setPendingRetry(null);
+                  setConfirmationValue('');
+                  setRetryError(null);
+                }}
+                disabled={isSubmitting}
+                className="rounded-full border-white/10 bg-white/[0.04]"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void queueRetry()}
+                disabled={confirmationValue !== pendingRetry.token || isSubmitting}
+                className="rounded-full bg-white text-slate-950 hover:bg-slate-200"
+              >
+                {isSubmitting ? 'Queueing...' : 'Queue recovery operation'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}

@@ -164,3 +164,40 @@ export interface OperationActivityItem {
 export interface OperationActivityResponse {
   items: OperationActivityItem[];
 }
+
+export interface OperationProviderDetails {
+  provider: string;
+  operationType: string;
+  targetKind: string | null;
+  targetName: string | null;
+  namespace: string | null;
+  containerName: string | null;
+  containerId: string | null;
+  jobName: string | null;
+  buildNumber: number | null;
+  buildUrl: string | null;
+  action: string | null;
+  replicas: number | null;
+  safeSummary: string[];
+}
+
+export interface OperationLifecycleItem {
+  label: string;
+  status: 'completed' | 'active' | 'pending' | 'failed';
+  timestamp: string | null;
+  description: string;
+}
+
+export interface OperationRetryInfo {
+  supported: boolean;
+  actionLabel: string | null;
+  confirmationTokenLabel: string | null;
+  reason: string | null;
+}
+
+export interface OperationDetailResponse extends OperationActivityItem {
+  updatedAt: string;
+  providerDetails: OperationProviderDetails;
+  lifecycle: OperationLifecycleItem[];
+  retry: OperationRetryInfo;
+}

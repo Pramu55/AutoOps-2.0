@@ -21,6 +21,14 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Docker exec, shell, delete/remove, image push/delete, volume delete, and network delete are not exposed.
 - Kubernetes exec, shell, port-forward, Secret access, arbitrary apply/patch, and delete actions are not exposed.
 
+## Operation Detail and Recovery
+
+- Operation detail views use safe derived DTOs from `/api/v1/ops/activity/:operationId`.
+- Raw operation input, result, and error payloads are not rendered in the UI.
+- Recovery is provider-specific only: Jenkins BUILD, Docker START/STOP/RESTART, and Kubernetes SCALE/ROLLOUT.
+- Recovery actions remain confirmation-gated, audit-backed, and worker-executed.
+- AutoOps does not provide generic operation replay, shell access, exec, delete, arbitrary apply, or secret access.
+
 ## Local Verification Notes
 
 - Use disposable resources for action tests, such as `autoops-docker-smoke` or `default/autoops-k8s-smoke`.

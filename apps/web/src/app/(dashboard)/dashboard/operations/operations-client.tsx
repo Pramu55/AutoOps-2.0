@@ -595,17 +595,25 @@ export function OperationsClient() {
                       <p className="mt-1 truncate text-sm text-slate-400">{item.targetLabel ?? MISSING_VALUE}</p>
                       <p className="mt-2 text-xs text-slate-500">{governanceSummary(item.governance)}</p>
                     </div>
-                    {item.externalUrl ? (
-                      <a
-                        href={item.externalUrl}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        className="inline-flex shrink-0 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-cyan-200 transition hover:border-cyan-300/35 hover:bg-cyan-300/10"
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <Link
+                        href={`/dashboard/operations/${item.id}`}
+                        className="inline-flex items-center gap-2 rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/45 hover:bg-cyan-300/15"
                       >
-                        Open related resource
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
-                    ) : null}
+                        View details
+                      </Link>
+                      {item.externalUrl ? (
+                        <a
+                          href={item.externalUrl}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-cyan-200 transition hover:border-cyan-300/35 hover:bg-cyan-300/10"
+                        >
+                          Open related resource
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
                     <div>
