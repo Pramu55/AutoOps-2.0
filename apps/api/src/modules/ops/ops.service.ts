@@ -72,7 +72,7 @@ const BASE_INTEGRATIONS: OpsIntegrationReadiness[] = [
     name: 'Ansible',
     category: IntegrationCategory.CONFIGURATION,
     status: IntegrationStatus.NOT_CONNECTED,
-    description: 'Playbook inventory and run history are planned as read-only surfaces first.',
+    description: 'Playbook inventory and governed run controls are planned for a future milestone.',
   },
   {
     key: 'terraform',
@@ -370,7 +370,7 @@ export class OpsService {
             dockerStatus.status === ProviderConnectionStatus.CONNECTED
               ? 'Docker engine connected. Container start, stop, and restart operations are confirmation-protected and audited.'
               : dockerStatus.message,
-          href: '/dashboard/operations',
+          href: '/dashboard/integrations/docker',
           lastCheckedAt: dockerStatus.checkedAt,
           metrics: {
             version: dockerStatus.version ?? null,

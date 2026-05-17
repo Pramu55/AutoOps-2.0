@@ -605,7 +605,7 @@ export function KubernetesClient() {
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
             <h2 className="text-base font-semibold text-white">Deployment rollout status</h2>
-            <p className="mt-1 text-sm text-slate-400">Read-only rollout state from the Kubernetes API.</p>
+            <p className="mt-1 text-sm text-slate-400">Non-mutating rollout state from the Kubernetes API.</p>
           </div>
           {rolloutStatus ? (
             <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${rolloutTone(rolloutStatus)}`}>

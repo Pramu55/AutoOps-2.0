@@ -1,11 +1,12 @@
 # AutoOps local Kubernetes setup
 
 This optional setup connects the AutoOps API and worker containers to a local
-Kubernetes cluster. Discovery endpoints are read-only. Controlled operations
-currently support deployment restart and server-side apply with guardrails.
+Kubernetes cluster. Discovery endpoints are safe, non-mutating surfaces.
+Controlled operations currently support deployment scale and rollout restart
+with guardrails.
 
-AutoOps still does not delete resources, scale workloads, exec into pods,
-port-forward, shell out to kubectl, or list Secret resources.
+AutoOps still does not delete resources, exec into pods, port-forward, shell
+out to kubectl, apply arbitrary manifests, or list Secret resources.
 
 ## 1. Verify a local cluster on the host
 

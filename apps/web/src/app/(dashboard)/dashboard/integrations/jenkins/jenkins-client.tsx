@@ -24,6 +24,7 @@ import {
   RotateCw,
   Server,
   ShieldCheck,
+  X,
 } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -36,6 +37,13 @@ type BuildsResponse = { data: JenkinsListResponse<JenkinsBuild> };
 type OperationsResponse = { data: JenkinsOperationListResponse };
 type TriggerResponse = { data: JenkinsTriggerBuildResponse };
 const MISSING_VALUE = '—';
+
+type PendingJenkinsAction = {
+  jobName: string;
+  reason: string;
+  mode: 'trigger' | 'rerun';
+  operationId?: string;
+};
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
@@ -120,6 +128,8 @@ export function JenkinsClient() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [operationsError, setOperationsError] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingJenkinsAction | null>(null);
+  const [confirmationValue, setConfirmationValue] = useState('');
 
   const loadJenkins = useCallback(async (initial = false) => {
     if (initial) setIsLoading(true);
@@ -158,6 +168,20 @@ export function JenkinsClient() {
     void loadJenkins(true);
   }, [loadJenkins]);
 
+  useEffect(() => {
+    if (!pendingAction) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isSubmitting) {
+        setPendingAction(null);
+        setConfirmationValue('');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSubmitting, pendingAction]);
+
   const currentStatus = status?.status ?? summary?.status ?? 'NOT_CONFIGURED';
   const allowedJobs = status?.allowedJobs ?? summary?.allowedJobs ?? [];
   const triggerEnabled = currentStatus === 'CONNECTED' && allowedJobs.length > 0;
@@ -167,15 +191,16 @@ export function JenkinsClient() {
     [builds],
   );
 
-  const queueBuild = async (targetJobName: string, reason: string) => {
+  const queueBuild = async () => {
+    if (!pendingAction || confirmationValue !== 'BUILD') return;
     setIsSubmitting(true);
     setMessage(null);
     try {
       const response = await api.post<TriggerResponse>(
-        `/v1/integrations/jenkins/jobs/${encodeURIComponent(targetJobName)}/trigger`,
+        `/v1/integrations/jenkins/jobs/${encodeURIComponent(pendingAction.jobName)}/trigger`,
         {
           confirmationToken: 'BUILD',
-          reason,
+          reason: pendingAction.reason,
         },
       );
       setMessage(
@@ -183,6 +208,8 @@ export function JenkinsClient() {
           ? `Operation ${response.data.operationId} is pending approval.`
           : `Operation ${response.data.operationId} queued for Jenkins worker execution.`,
       );
+      setPendingAction(null);
+      setConfirmationValue('');
       await loadJenkins();
     } catch (triggerError) {
       setMessage(getErrorMessage(triggerError));
@@ -191,13 +218,28 @@ export function JenkinsClient() {
     }
   };
 
-  const triggerBuild = async () => {
-    await queueBuild(jobName.trim(), 'Triggered from AutoOps Jenkins integration page');
+  const triggerBuild = () => {
+    const targetJobName = jobName.trim();
+    if (!targetJobName) return;
+    setPendingAction({
+      jobName: targetJobName,
+      reason: 'Triggered from AutoOps Jenkins integration page',
+      mode: 'trigger',
+    });
+    setConfirmationValue('');
+    setMessage(null);
   };
 
-  const rerunOperation = async (operation: JenkinsOperation) => {
+  const rerunOperation = (operation: JenkinsOperation) => {
     if (!operation.jobName) return;
-    await queueBuild(operation.jobName, `Re-run from AutoOps operation ${shortId(operation.id)}`);
+    setPendingAction({
+      jobName: operation.jobName,
+      reason: `Re-run from AutoOps operation ${shortId(operation.id)}`,
+      mode: 'rerun',
+      operationId: operation.id,
+    });
+    setConfirmationValue('');
+    setMessage(null);
   };
 
   return (
@@ -314,7 +356,7 @@ export function JenkinsClient() {
           <Button
             type="button"
             disabled={!triggerEnabled || !jobName.trim() || isSubmitting}
-            onClick={() => void triggerBuild()}
+            onClick={triggerBuild}
             className="rounded-full bg-white text-slate-950 hover:bg-slate-200"
           >
             <PlayCircle className="h-4 w-4" />
@@ -428,14 +470,15 @@ export function JenkinsClient() {
                         type="button"
                         size="sm"
                         disabled={!triggerEnabled || !canRerun || isSubmitting}
-                        onClick={() => void rerunOperation(operation)}
+                        onClick={() => rerunOperation(operation)}
                         className="rounded-full bg-white text-slate-950 hover:bg-slate-200"
                       >
                         <RotateCw className="h-4 w-4" />
                         Re-run
                       </Button>
                     </div>
-                    <div className="grid gap-2 text-xs text-slate-500 xl:col-span-5 md:grid-cols-3">
+                    <div className="grid gap-2 text-xs text-slate-500 xl:col-span-5 md:grid-cols-4">
+                      <p>LOW risk | Confirmation BUILD | Approval not required</p>
                       <p>Started {operation.startedAt ? formatTime(operation.startedAt) : MISSING_VALUE}</p>
                       <p>Queue {formatOptional(operation.queueUrl)}</p>
                       <p className="truncate">Build URL {formatOptional(displayBuildUrl)}</p>
@@ -496,6 +539,91 @@ export function JenkinsClient() {
           </div>
         </section>
       </div>
+
+      {pendingAction ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="jenkins-confirmation-title"
+        >
+          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-slate-950 p-6 shadow-2xl shadow-black/40">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-300">
+                  LOW risk | Approval not required
+                </p>
+                <h2 id="jenkins-confirmation-title" className="mt-2 text-xl font-semibold text-white">
+                  {pendingAction.mode === 'rerun' ? 'Confirm Jenkins re-run' : 'Confirm Jenkins build'}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingAction(null);
+                  setConfirmationValue('');
+                }}
+                disabled={isSubmitting}
+                className="rounded-full border border-white/10 bg-white/[0.04] p-2 text-slate-300 transition hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Close confirmation"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-3 text-sm leading-6 text-slate-300">
+              <p>
+                You are about to trigger allowlisted Jenkins job{' '}
+                <span className="font-semibold text-white">{pendingAction.jobName}</span>.
+              </p>
+              <p>
+                Type <span className="font-semibold text-emerald-200">BUILD</span> to queue the
+                worker-executed and audited operation.
+              </p>
+              {pendingAction.operationId ? (
+                <p className="font-mono text-xs text-slate-500">
+                  Source operation: {shortId(pendingAction.operationId)}
+                </p>
+              ) : null}
+            </div>
+
+            <label className="mt-5 block text-sm font-medium text-slate-200" htmlFor="jenkins-confirmation-token">
+              Required confirmation token
+            </label>
+            <Input
+              id="jenkins-confirmation-token"
+              value={confirmationValue}
+              onChange={(event) => setConfirmationValue(event.target.value)}
+              placeholder="Type BUILD to confirm"
+              className="mt-2 border-white/10 bg-slate-900/80"
+              autoFocus
+            />
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setPendingAction(null);
+                  setConfirmationValue('');
+                }}
+                disabled={isSubmitting}
+                className="rounded-full border-white/10 bg-white/[0.04]"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void queueBuild()}
+                disabled={confirmationValue !== 'BUILD' || isSubmitting}
+                className="rounded-full bg-white text-slate-950 hover:bg-slate-200"
+              >
+                {isSubmitting ? 'Queueing...' : 'Queue operation'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

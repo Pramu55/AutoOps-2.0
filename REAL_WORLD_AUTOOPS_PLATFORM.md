@@ -6,7 +6,7 @@ real-world DevOps control plane.
 ## Foundation implemented
 
 - Provider registry: `GET /api/v1/integrations/providers`
-- AWS read-only connector:
+- AWS discovery connector:
   - `GET /api/v1/integrations/aws/status`
   - `GET /api/v1/integrations/aws/summary`
   - `GET /api/v1/integrations/aws/ec2/instances`
@@ -22,9 +22,9 @@ real-world DevOps control plane.
   - `POST /api/v1/integrations/jenkins/jobs/:jobName/build`
 - Kubernetes real visibility and controlled operations:
   - `GET /api/v1/integrations/kubernetes/nodes`
-  - `GET /api/v1/integrations/kubernetes/deployments/:namespace/:name/rollout-status`
-  - `POST /api/v1/integrations/kubernetes/deployments/:namespace/:name/restart`
-  - `POST /api/v1/integrations/kubernetes/apply`
+  - `GET /api/v1/integrations/kubernetes/workloads/:namespace/deployments/:name/rollout-status`
+  - `POST /api/v1/integrations/kubernetes/workloads/:namespace/deployments/:name/scale`
+  - `POST /api/v1/integrations/kubernetes/workloads/:namespace/deployments/:name/rollout-restart`
 - Operation lifecycle:
   - `GET /api/v1/operations`
   - `GET /api/v1/operations/:operationId`
@@ -80,13 +80,14 @@ until its real connector is implemented.
 
 ## Known limitations
 
-- Kubernetes apply currently rejects Secret, Namespace, ClusterRole, and
-  ClusterRoleBinding manifests.
+- Kubernetes controlled operations are limited to deployment scale and rollout
+  restart, with protected namespaces blocked.
 - Jenkins build trigger polls the queue item for a real executable build number.
   If Jenkins accepts the trigger but no executable is observed before timeout,
   the operation result records `buildVerified: false`.
 - GitHub read/write connector is not implemented in this foundation slice.
-- AWS integration is read-only only.
+- AWS integration is discovery-only until a governed control milestone is
+  implemented.
 - The existing deployment executor can still run simulation deployments when
   explicitly triggered through the deployment flow; real provider operations use
   the separate Operation model and operations queue.
