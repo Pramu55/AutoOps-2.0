@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   JenkinsBuild,
@@ -13,6 +14,7 @@ import type {
 } from '@autoops/types';
 import {
   AlertTriangle,
+  ArrowLeft,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -200,6 +202,18 @@ export function JenkinsClient() {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      <Button
+        asChild
+        variant="outline"
+        size="sm"
+        className="rounded-full border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.08]"
+      >
+        <Link href="/dashboard/operations">
+          <ArrowLeft className="h-4 w-4" />
+          Back to Ops Hub
+        </Link>
+      </Button>
+
       <section className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.24),transparent_34%),radial-gradient(circle_at_88%_8%,rgba(245,158,11,0.18),transparent_32%),linear-gradient(135deg,rgba(255,255,255,0.11),rgba(255,255,255,0.025))] p-6 shadow-2xl shadow-black/25 lg:p-8">
         <div className="relative flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
           <div>

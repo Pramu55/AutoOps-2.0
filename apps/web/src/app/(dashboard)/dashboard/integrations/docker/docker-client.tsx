@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   DockerActionName,
@@ -16,6 +17,7 @@ import type {
 } from '@autoops/types';
 import {
   AlertTriangle,
+  ArrowLeft,
   Box,
   CheckCircle2,
   Container,
@@ -30,6 +32,7 @@ import {
   ShieldCheck,
   Square,
   TerminalSquare,
+  X,
 } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -336,6 +339,20 @@ export function DockerClient() {
     void loadDocker('initial');
   }, [loadDocker]);
 
+  useEffect(() => {
+    if (!pendingAction) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isSubmitting) {
+        setPendingAction(null);
+        setConfirmationValue('');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSubmitting, pendingAction]);
+
   const openConfirmation = (action: DockerActionName, container: DockerContainer) => {
     const token = action === 'start' ? 'START' : action === 'stop' ? 'STOP' : 'RESTART';
     setPendingAction({ action, token, container });
@@ -372,6 +389,18 @@ export function DockerClient() {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      <Button
+        asChild
+        variant="outline"
+        size="sm"
+        className="rounded-full border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.08]"
+      >
+        <Link href="/dashboard/operations">
+          <ArrowLeft className="h-4 w-4" />
+          Back to Ops Hub
+        </Link>
+      </Button>
+
       <section className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.24),transparent_34%),radial-gradient(circle_at_88%_8%,rgba(34,197,94,0.18),transparent_32%),linear-gradient(135deg,rgba(255,255,255,0.11),rgba(255,255,255,0.025))] p-6 shadow-2xl shadow-black/25 lg:p-8">
         <div className="relative flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
           <div>
@@ -572,50 +601,6 @@ export function DockerClient() {
         </div>
       </section>
 
-      {pendingAction ? (
-        <section className="rounded-3xl border border-amber-300/25 bg-amber-300/10 p-5 shadow-xl shadow-black/10">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-            <div>
-              <h2 className="text-base font-semibold text-white">
-                Confirm Docker {pendingAction.action}
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-amber-100/80">
-                You are about to {pendingAction.action} container {pendingAction.container.name}.
-                This is a MEDIUM risk Docker operation. Type {pendingAction.token} to queue the
-                worker-executed operation.
-              </p>
-              <p className="mt-2 font-mono text-xs text-slate-400">
-                {shortId(pendingAction.container.id)}
-              </p>
-            </div>
-            <div className="flex w-full flex-col gap-3 sm:flex-row xl:w-auto">
-              <Input
-                value={confirmationValue}
-                onChange={(event) => setConfirmationValue(event.target.value)}
-                placeholder={pendingAction.token}
-                className="border-white/10 bg-slate-950/55 sm:w-44"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setPendingAction(null)}
-                className="rounded-full border-white/10 bg-white/[0.04]"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                onClick={() => void queueAction()}
-                disabled={confirmationValue !== pendingAction.token || isSubmitting}
-                className="rounded-full bg-white text-slate-950 hover:bg-slate-200"
-              >
-                Queue operation
-              </Button>
-            </div>
-          </div>
-        </section>
-      ) : null}
-
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_0.9fr]">
         <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -774,6 +759,89 @@ export function DockerClient() {
           }))}
         />
       </div>
+
+      {pendingAction ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="docker-confirmation-title"
+        >
+          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-slate-950 p-6 shadow-2xl shadow-black/40">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">
+                  MEDIUM risk | Approval not required
+                </p>
+                <h2 id="docker-confirmation-title" className="mt-2 text-xl font-semibold text-white">
+                  Confirm Docker {pendingAction.action}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingAction(null);
+                  setConfirmationValue('');
+                }}
+                disabled={isSubmitting}
+                className="rounded-full border border-white/10 bg-white/[0.04] p-2 text-slate-300 transition hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Close confirmation"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-3 text-sm leading-6 text-slate-300">
+              <p>
+                You are about to {pendingAction.action} container{' '}
+                <span className="font-semibold text-white">{pendingAction.container.name}</span>.
+              </p>
+              <p>
+                Type <span className="font-semibold text-amber-200">{pendingAction.token}</span> to
+                queue the worker-executed and audited operation.
+              </p>
+              <p className="font-mono text-xs text-slate-500">
+                Container ID: {shortId(pendingAction.container.id)}
+              </p>
+            </div>
+
+            <label className="mt-5 block text-sm font-medium text-slate-200" htmlFor="docker-confirmation-token">
+              Required confirmation token
+            </label>
+            <Input
+              id="docker-confirmation-token"
+              value={confirmationValue}
+              onChange={(event) => setConfirmationValue(event.target.value)}
+              placeholder={`Type ${pendingAction.token} to confirm`}
+              className="mt-2 border-white/10 bg-slate-900/80"
+              autoFocus
+            />
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setPendingAction(null);
+                  setConfirmationValue('');
+                }}
+                disabled={isSubmitting}
+                className="rounded-full border-white/10 bg-white/[0.04]"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void queueAction()}
+                disabled={confirmationValue !== pendingAction.token || isSubmitting}
+                className="rounded-full bg-white text-slate-950 hover:bg-slate-200"
+              >
+                {isSubmitting ? 'Queueing...' : 'Queue operation'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,9 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   KubernetesListResponse,
-  KubernetesApplyDryRunResult,
   KubernetesNamespace,
   KubernetesNode,
   KubernetesPod,
@@ -11,10 +11,10 @@ import type {
   KubernetesStatus,
   KubernetesSummary,
   KubernetesWorkload,
-  Operation,
 } from '@autoops/types';
 import {
   AlertTriangle,
+  ArrowLeft,
   Boxes,
   CheckCircle2,
   Container,
@@ -38,7 +38,6 @@ type WorkloadResponse = { data: KubernetesListResponse<KubernetesWorkload> };
 type PodResponse = { data: KubernetesListResponse<KubernetesPod> };
 type ServiceResponse = { data: KubernetesListResponse<KubernetesService> };
 type NodeResponse = { data: KubernetesListResponse<KubernetesNode> };
-type KubernetesOperationResponse = { data: Operation | KubernetesApplyDryRunResult };
 type Tab = 'namespaces' | 'workloads' | 'pods' | 'services' | 'nodes';
 
 function getErrorMessage(error: unknown): string {
@@ -111,12 +110,6 @@ export function KubernetesClient() {
   const [nodes, setNodes] = useState<KubernetesNode[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>('namespaces');
   const [query, setQuery] = useState('');
-  const [restartNamespace, setRestartNamespace] = useState('');
-  const [restartName, setRestartName] = useState('');
-  const [manifest, setManifest] = useState('');
-  const [applyMode, setApplyMode] = useState<'dry-run' | 'apply'>('dry-run');
-  const [operationMessage, setOperationMessage] = useState<string | null>(null);
-  const [isSubmittingOperation, setIsSubmittingOperation] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -190,55 +183,20 @@ export function KubernetesClient() {
 
   const currentStatus = status?.status ?? summary?.status ?? 'NOT_CONFIGURED';
 
-  const requestRestart = async () => {
-    setIsSubmittingOperation(true);
-    setOperationMessage(null);
-    try {
-      const namespace = encodeURIComponent(restartNamespace.trim());
-      const name = encodeURIComponent(restartName.trim());
-      const response = await api.post<KubernetesOperationResponse>(
-        `/v1/integrations/kubernetes/deployments/${namespace}/${name}/restart`,
-        {
-          confirmationToken: 'RESTART',
-        },
-      );
-      setOperationMessage(
-        'status' in response.data
-          ? `Restart operation ${response.data.status.toLowerCase()} (${response.data.id}).`
-          : 'Restart request accepted.',
-      );
-      void loadKubernetes();
-    } catch (submitError) {
-      setOperationMessage(getErrorMessage(submitError));
-    } finally {
-      setIsSubmittingOperation(false);
-    }
-  };
-
-  const requestApply = async () => {
-    setIsSubmittingOperation(true);
-    setOperationMessage(null);
-    try {
-      const response = await api.post<KubernetesOperationResponse>('/v1/integrations/kubernetes/apply', {
-        manifest,
-        dryRun: applyMode === 'dry-run',
-        ...(applyMode === 'apply' ? { confirmationToken: 'APPLY' } : {}),
-      });
-      setOperationMessage(
-        'dryRun' in response.data
-          ? `Server-side dry-run succeeded for ${response.data.kind}/${response.data.name}.`
-          : `Apply operation ${response.data.status.toLowerCase()} (${response.data.id}).`,
-      );
-      void loadKubernetes();
-    } catch (submitError) {
-      setOperationMessage(getErrorMessage(submitError));
-    } finally {
-      setIsSubmittingOperation(false);
-    }
-  };
-
   return (
     <div className="space-y-6 animate-fade-in">
+      <Button
+        asChild
+        variant="outline"
+        size="sm"
+        className="rounded-full border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.08]"
+      >
+        <Link href="/dashboard/operations">
+          <ArrowLeft className="h-4 w-4" />
+          Back to Ops Hub
+        </Link>
+      </Button>
+
       <section className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.26),transparent_34%),radial-gradient(circle_at_88%_8%,rgba(124,58,237,0.24),transparent_32%),linear-gradient(135deg,rgba(255,255,255,0.11),rgba(255,255,255,0.025))] p-6 shadow-2xl shadow-black/25 lg:p-8">
         <div className="absolute inset-0 bg-grid opacity-45" />
         <div className="relative flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
@@ -345,65 +303,16 @@ export function KubernetesClient() {
             </p>
           </div>
           <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-1.5 text-xs font-medium text-amber-200">
-            No delete, exec, scale, or Secret access
+            No delete, exec, apply, or Secret access
           </span>
         </div>
-        {operationMessage ? (
-          <div className="mt-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm text-cyan-100">
-            {operationMessage}
-          </div>
-        ) : null}
-        <div className="mt-5 grid gap-4 xl:grid-cols-2">
-          <div className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
-            <h3 className="text-sm font-semibold text-white">Restart deployment</h3>
-            <p className="mt-1 text-sm text-slate-500">Queues a rollout restart using the Kubernetes API annotation patch.</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <Input value={restartNamespace} onChange={(event) => setRestartNamespace(event.target.value)} placeholder="namespace" className="border-white/10 bg-slate-950/55" />
-              <Input value={restartName} onChange={(event) => setRestartName(event.target.value)} placeholder="deployment name" className="border-white/10 bg-slate-950/55" />
-            </div>
-            <Button
-              type="button"
-              onClick={() => void requestRestart()}
-              disabled={currentStatus !== 'CONNECTED' || isSubmittingOperation || !restartNamespace || !restartName}
-              className="mt-4 rounded-full bg-white text-slate-950 hover:bg-slate-200"
-            >
-              Queue restart
-            </Button>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
-            <h3 className="text-sm font-semibold text-white">Server-side apply</h3>
-            <p className="mt-1 text-sm text-slate-500">Dry-run is the default. Secret, Namespace, ClusterRole, and ClusterRoleBinding manifests are rejected.</p>
-            <textarea
-              value={manifest}
-              onChange={(event) => setManifest(event.target.value)}
-              placeholder="Paste Kubernetes YAML or JSON manifest"
-              className="mt-4 min-h-32 w-full rounded-2xl border border-white/10 bg-slate-950/55 p-3 font-mono text-xs text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/40"
-            />
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setApplyMode('dry-run')}
-                className={cn('rounded-full border px-3 py-1.5 text-xs font-medium', applyMode === 'dry-run' ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-200' : 'border-white/10 text-slate-400')}
-              >
-                Dry-run
-              </button>
-              <button
-                type="button"
-                onClick={() => setApplyMode('apply')}
-                className={cn('rounded-full border px-3 py-1.5 text-xs font-medium', applyMode === 'apply' ? 'border-amber-300/30 bg-amber-300/10 text-amber-200' : 'border-white/10 text-slate-400')}
-              >
-                Real apply
-              </button>
-              <Button
-                type="button"
-                onClick={() => void requestApply()}
-                disabled={currentStatus !== 'CONNECTED' || isSubmittingOperation || !manifest.trim()}
-                className="rounded-full bg-white text-slate-950 hover:bg-slate-200"
-              >
-                {applyMode === 'dry-run' ? 'Run dry-run' : 'Queue apply'}
-              </Button>
-            </div>
-          </div>
+        <div className="mt-5 rounded-2xl border border-white/10 bg-slate-950/35 p-4">
+          <h3 className="text-sm font-semibold text-white">Backend controls are ready for Day 7 UI</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-400">
+            Scale and rollout restart APIs are available through confirmation-gated, audited worker
+            execution. This page is intentionally keeping Kubernetes mutations out of the UI until
+            the dedicated Day 7 control experience is implemented.
+          </p>
         </div>
       </section>
 
