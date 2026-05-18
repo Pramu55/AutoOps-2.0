@@ -1,0 +1,123 @@
+import {
+  OperationProvider,
+  OperationRiskLevel,
+  OperationType,
+} from '@autoops/types';
+
+export type OperationPolicyInput = {
+  provider: OperationProvider;
+  operationType: OperationType;
+  input: Record<string, unknown>;
+};
+
+export type OperationPolicyDecision = {
+  riskLevel: OperationRiskLevel;
+  confirmationRequired: boolean;
+  confirmationTokenLabel: string | null;
+  approvalRequired: boolean;
+  approvalReason: string | null;
+  policyName: string;
+};
+
+const LOCAL_POLICY_NAME = 'local-pilot-operation-policy-v1';
+
+export function evaluateOperationPolicy(input: OperationPolicyInput): OperationPolicyDecision {
+  if (
+    input.provider === OperationProvider.JENKINS &&
+    input.operationType === OperationType.JENKINS_BUILD_TRIGGER
+  ) {
+    return confirmationOnly(OperationRiskLevel.LOW, 'BUILD');
+  }
+
+  if (
+    input.provider === OperationProvider.DOCKER &&
+    input.operationType === OperationType.DOCKER_CONTAINER_START
+  ) {
+    return confirmationOnly(OperationRiskLevel.MEDIUM, 'START');
+  }
+
+  if (
+    input.provider === OperationProvider.DOCKER &&
+    input.operationType === OperationType.DOCKER_CONTAINER_STOP
+  ) {
+    return approvalRequired(
+      OperationRiskLevel.MEDIUM,
+      'STOP',
+      'Stopping a running container may interrupt a service.',
+    );
+  }
+
+  if (
+    input.provider === OperationProvider.DOCKER &&
+    input.operationType === OperationType.DOCKER_CONTAINER_RESTART
+  ) {
+    return approvalRequired(
+      OperationRiskLevel.MEDIUM,
+      'RESTART',
+      'Restarting a container may interrupt a service.',
+    );
+  }
+
+  if (
+    input.provider === OperationProvider.KUBERNETES &&
+    input.operationType === OperationType.KUBERNETES_DEPLOYMENT_RESTART
+  ) {
+    return confirmationOnly(OperationRiskLevel.MEDIUM, 'ROLLOUT');
+  }
+
+  if (
+    input.provider === OperationProvider.KUBERNETES &&
+    input.operationType === OperationType.KUBERNETES_DEPLOYMENT_SCALE
+  ) {
+    const replicas = numberField(input.input, 'replicas');
+    if (replicas !== null && replicas > 2) {
+      return approvalRequired(
+        OperationRiskLevel.MEDIUM,
+        'SCALE',
+        'Scaling above 2 replicas requires approval in the local policy.',
+      );
+    }
+
+    return confirmationOnly(OperationRiskLevel.MEDIUM, 'SCALE');
+  }
+
+  return approvalRequired(
+    OperationRiskLevel.HIGH,
+    null,
+    'Unknown operation type requires approval.',
+  );
+}
+
+function confirmationOnly(
+  riskLevel: OperationRiskLevel,
+  confirmationTokenLabel: string | null,
+): OperationPolicyDecision {
+  return {
+    riskLevel,
+    confirmationRequired: confirmationTokenLabel !== null,
+    confirmationTokenLabel,
+    approvalRequired: false,
+    approvalReason: null,
+    policyName: LOCAL_POLICY_NAME,
+  };
+}
+
+function approvalRequired(
+  riskLevel: OperationRiskLevel,
+  confirmationTokenLabel: string | null,
+  approvalReason: string,
+): OperationPolicyDecision {
+  return {
+    riskLevel,
+    confirmationRequired: confirmationTokenLabel !== null,
+    confirmationTokenLabel,
+    approvalRequired: true,
+    approvalReason,
+    policyName: LOCAL_POLICY_NAME,
+  };
+}
+
+function numberField(input: Record<string, unknown>, key: string): number | null {
+  const value = input[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}

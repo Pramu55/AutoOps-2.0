@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { idSchema } from './common.js';
 import { OperationStatus, OperationType } from './operation.js';
+import type { OperationRiskLevel } from './ops.js';
 import type { ProviderConnectionStatus } from './provider.js';
 
 export type JenkinsConnectionStatus =
@@ -138,5 +139,8 @@ export interface JenkinsTriggerBuildResponse {
   operationId: string;
   status: OperationStatus;
   approvalRequired: boolean;
+  approvalReason: string | null;
+  riskLevel: OperationRiskLevel;
+  policyName: string | null;
   message: string;
 }

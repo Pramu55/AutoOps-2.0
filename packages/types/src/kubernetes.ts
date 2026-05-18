@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { idSchema } from './common.js';
+import type { OperationRiskLevel } from './ops.js';
 
 export const KubernetesConnectionStatus = {
   CONNECTED: 'CONNECTED',
@@ -227,6 +228,9 @@ export interface KubernetesActionResponse {
   operationId: string;
   status: 'QUEUED' | 'PENDING_APPROVAL';
   approvalRequired: boolean;
+  approvalReason: string | null;
+  riskLevel: OperationRiskLevel;
+  policyName: string | null;
   message: string;
 }
 

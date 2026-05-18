@@ -468,14 +468,18 @@ export class KubernetesService {
       },
       auditContext,
     );
+    const policy = this._policyFromOperation(operation.input);
 
     return {
       operationId: operation.id,
       status: operation.status === 'PENDING_APPROVAL' ? 'PENDING_APPROVAL' : 'QUEUED',
       approvalRequired: operation.status === 'PENDING_APPROVAL',
+      approvalReason: policy.approvalReason,
+      riskLevel: policy.riskLevel,
+      policyName: policy.policyName,
       message:
         operation.status === 'PENDING_APPROVAL'
-          ? 'Kubernetes deployment scale operation is pending approval.'
+          ? 'Kubernetes deployment scale operation submitted for approval.'
           : 'Kubernetes deployment scale operation queued.',
     };
   }
@@ -519,14 +523,18 @@ export class KubernetesService {
       },
       auditContext,
     );
+    const policy = this._policyFromOperation(operation.input);
 
     return {
       operationId: operation.id,
       status: operation.status === 'PENDING_APPROVAL' ? 'PENDING_APPROVAL' : 'QUEUED',
       approvalRequired: operation.status === 'PENDING_APPROVAL',
+      approvalReason: policy.approvalReason,
+      riskLevel: policy.riskLevel,
+      policyName: policy.policyName,
       message:
         operation.status === 'PENDING_APPROVAL'
-          ? 'Kubernetes deployment rollout restart operation is pending approval.'
+          ? 'Kubernetes deployment rollout restart operation submitted for approval.'
           : 'Kubernetes deployment rollout restart operation queued.',
     };
   }
@@ -976,6 +984,29 @@ export class KubernetesService {
     }
 
     return {};
+  }
+
+  private _policyFromOperation(input: Record<string, unknown>): {
+    approvalReason: string | null;
+    riskLevel: KubernetesActionResponse['riskLevel'];
+    policyName: string | null;
+  } {
+    const policy = this._toRecord(input.policy);
+    return {
+      approvalReason: this._stringField(policy, 'approvalReason'),
+      riskLevel: this._riskLevel(policy),
+      policyName: this._stringField(policy, 'policyName'),
+    };
+  }
+
+  private _stringField(record: Record<string, unknown>, key: string): string | null {
+    const value = record[key];
+    return typeof value === 'string' && value.trim().length > 0 ? value : null;
+  }
+
+  private _riskLevel(record: Record<string, unknown>): KubernetesActionResponse['riskLevel'] {
+    const value = record.riskLevel;
+    return value === 'LOW' || value === 'MEDIUM' || value === 'HIGH' ? value : 'MEDIUM';
   }
 
   private _iso(value: Date | string | undefined): string | undefined {

@@ -199,6 +199,10 @@ export interface OperationGovernance {
   confirmationSatisfied: boolean;
   approvalRequired: boolean;
   approvalStatus: OperationApprovalStatus;
+  approvalReason: string | null;
+  policyName: string | null;
+  approvedAt: string | null;
+  rejectedAt: string | null;
 }
 
 export interface OperationActivityItem {

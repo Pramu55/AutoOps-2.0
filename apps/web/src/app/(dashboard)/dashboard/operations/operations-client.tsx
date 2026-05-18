@@ -41,6 +41,7 @@ import {
   UserCircle,
   Workflow,
   Wrench,
+  X,
 } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -48,9 +49,13 @@ import { Button } from '@/components/ui/button';
 type OpsSummaryResponse = { data: OpsSummary };
 type OpsObservabilityApiResponse = { data: OpsObservabilityResponse };
 type ProvidersResponse = { data: IntegrationProvider[] };
-type OperationsResponse = { data: Operation[] };
 type OperationActivityApiResponse = { data: OperationActivityResponse };
 type AuditLogsResponse = { data: AuditLog[] };
+type ApprovalDecision = 'approve' | 'reject';
+type PendingApprovalDecision = {
+  operation: OperationActivityItem;
+  decision: ApprovalDecision;
+};
 
 const POLL_INTERVAL_MS = 15_000;
 const MISSING_VALUE = '—';
@@ -585,13 +590,17 @@ export function OperationsClient() {
   const [summary, setSummary] = useState<OpsSummary | null>(null);
   const [observability, setObservability] = useState<OpsObservabilityResponse | null>(null);
   const [providers, setProviders] = useState<IntegrationProvider[]>([]);
-  const [operations, setOperations] = useState<Operation[]>([]);
   const [activityItems, setActivityItems] = useState<OperationActivityItem[]>([]);
+  const [pendingApprovalItems, setPendingApprovalItems] = useState<OperationActivityItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isDecidingApproval, setIsDecidingApproval] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activityError, setActivityError] = useState<string | null>(null);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [pendingDecision, setPendingDecision] = useState<PendingApprovalDecision | null>(null);
+  const [decisionConfirmation, setDecisionConfirmation] = useState('');
 
   const loadSummary = useCallback(async (mode: 'initial' | 'refresh' = 'refresh') => {
     if (mode === 'initial') {
@@ -603,17 +612,23 @@ export function OperationsClient() {
     setActivityError(null);
 
     try {
-      const [summaryResponse, observabilityResponse, providersResponse, operationsResponse, auditResponse] = await Promise.all([
+      const [
+        summaryResponse,
+        observabilityResponse,
+        providersResponse,
+        pendingApprovalResponse,
+        auditResponse,
+      ] = await Promise.all([
         api.get<OpsSummaryResponse>('/v1/ops/summary'),
         api.get<OpsObservabilityApiResponse>('/v1/ops/observability'),
         api.get<ProvidersResponse>('/v1/integrations/providers'),
-        api.get<OperationsResponse>('/v1/operations'),
+        api.get<OperationActivityApiResponse>('/v1/ops/activity?status=PENDING_APPROVAL&limit=20'),
         api.get<AuditLogsResponse>('/v1/audit-logs'),
       ]);
       setSummary(summaryResponse.data);
       setObservability(observabilityResponse.data);
       setProviders(providersResponse.data);
-      setOperations(operationsResponse.data);
+      setPendingApprovalItems(pendingApprovalResponse.data.items);
       setAuditLogs(auditResponse.data);
 
       try {
@@ -641,6 +656,19 @@ export function OperationsClient() {
     return () => window.clearInterval(intervalId);
   }, [loadSummary]);
 
+  useEffect(() => {
+    if (!pendingDecision) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isDecidingApproval) {
+        setPendingDecision(null);
+        setDecisionConfirmation('');
+        setDecisionError(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isDecidingApproval, pendingDecision]);
+
   const runtime = summary?.runtime;
   const platform = observability?.platform;
   const queueHealth = observability?.queues;
@@ -649,19 +677,34 @@ export function OperationsClient() {
   const resources = summary?.resources;
   const deployments = summary?.deployments;
   const latestDeployments = useMemo(() => deployments?.latest ?? [], [deployments]);
-  const pendingApprovals = useMemo(
-    () => operations.filter((operation) => operation.status === 'PENDING_APPROVAL'),
-    [operations],
-  );
+  const pendingApprovals = useMemo(() => pendingApprovalItems, [pendingApprovalItems]);
 
-  const decideOperation = async (operationId: string, decision: 'approve' | 'reject') => {
+  const openDecisionModal = (operation: OperationActivityItem, decision: ApprovalDecision) => {
+    setPendingDecision({ operation, decision });
+    setDecisionConfirmation('');
+    setDecisionError(null);
+  };
+
+  const decideOperation = async () => {
+    if (!pendingDecision) return;
+    const expectedToken = pendingDecision.decision === 'approve' ? 'APPROVE' : 'REJECT';
+    if (decisionConfirmation !== expectedToken) return;
+    setIsDecidingApproval(true);
+    setDecisionError(null);
     try {
-      await api.post<{ data: Operation }>(`/v1/operations/${operationId}/${decision}`, {
-        reason: decision === 'approve' ? 'Approved from Operations Hub' : 'Rejected from Operations Hub',
+      await api.post<{ data: Operation }>(`/v1/operations/${pendingDecision.operation.id}/${pendingDecision.decision}`, {
+        reason:
+          pendingDecision.decision === 'approve'
+            ? 'Approved from Operations Hub'
+            : 'Rejected from Operations Hub',
       });
+      setPendingDecision(null);
+      setDecisionConfirmation('');
       await loadSummary();
     } catch (decisionError) {
-      setError(getErrorMessage(decisionError));
+      setDecisionError(getErrorMessage(decisionError));
+    } finally {
+      setIsDecidingApproval(false);
     }
   };
 
@@ -864,16 +907,39 @@ export function OperationsClient() {
             ) : (
               pendingApprovals.map((operation) => (
                 <div key={operation.id} className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-white">{operation.operationType}</p>
-                      <p className="mt-1 text-xs text-slate-500">{operation.provider} | {formatDate(operation.createdAt)}</p>
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${riskTone(operation.governance.riskLevel)}`}>
+                          {operation.governance.riskLevel} risk
+                        </span>
+                        <span className="rounded-full border border-white/10 bg-white/[0.045] px-2.5 py-1 text-[11px] font-semibold text-slate-300">
+                          {sourceLabel(operation.source)}
+                        </span>
+                      </div>
+                      <p className="mt-3 text-sm font-semibold text-white">{operation.title}</p>
+                      <p className="mt-1 text-sm text-slate-400">{operation.targetLabel ?? MISSING_VALUE}</p>
+                      <p className="mt-2 text-xs text-slate-500">
+                        Requester {actorLabel(operation.actor)} | Created {formatDate(operation.createdAt)}
+                      </p>
+                      <p className="mt-2 text-xs text-slate-500">{governanceSummary(operation.governance)}</p>
+                      {operation.governance.approvalReason ? (
+                        <p className="mt-3 rounded-xl border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
+                          {operation.governance.approvalReason}
+                        </p>
+                      ) : null}
                     </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" className="rounded-full bg-emerald-400 text-slate-950 hover:bg-emerald-300" onClick={() => void decideOperation(operation.id, 'approve')}>
+                    <div className="flex shrink-0 flex-wrap gap-2">
+                      <Link
+                        href={`/dashboard/operations/${operation.id}`}
+                        className="inline-flex items-center rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/45 hover:bg-cyan-300/15"
+                      >
+                        View details
+                      </Link>
+                      <Button size="sm" className="rounded-full bg-emerald-400 text-slate-950 hover:bg-emerald-300" onClick={() => openDecisionModal(operation, 'approve')}>
                         Approve
                       </Button>
-                      <Button size="sm" variant="outline" className="rounded-full border-rose-300/30 text-rose-200" onClick={() => void decideOperation(operation.id, 'reject')}>
+                      <Button size="sm" variant="outline" className="rounded-full border-rose-300/30 text-rose-200" onClick={() => openDecisionModal(operation, 'reject')}>
                         Reject
                       </Button>
                     </div>
@@ -1141,6 +1207,117 @@ export function OperationsClient() {
           <Code2 className="h-10 w-10 text-cyan-300" />
         </div>
       </section>
+
+      {pendingDecision ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="approval-decision-title"
+        >
+          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-slate-950 p-6 shadow-2xl shadow-black/40">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">
+                  {pendingDecision.operation.governance.riskLevel} risk | {approvalStatusLabel(pendingDecision.operation.governance.approvalStatus)}
+                </p>
+                <h2 id="approval-decision-title" className="mt-2 text-xl font-semibold text-white">
+                  {pendingDecision.decision === 'approve' ? 'Approve operation' : 'Reject operation'}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingDecision(null);
+                  setDecisionConfirmation('');
+                  setDecisionError(null);
+                }}
+                disabled={isDecidingApproval}
+                className="rounded-full border border-white/10 bg-white/[0.04] p-2 text-slate-300 transition hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Close approval decision"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-3 text-sm leading-6 text-slate-300">
+              <p className="font-semibold text-white">{pendingDecision.operation.title}</p>
+              <p>Target: {pendingDecision.operation.targetLabel ?? MISSING_VALUE}</p>
+              <p>
+                {pendingDecision.decision === 'approve'
+                  ? 'Approving this operation will queue it for worker execution.'
+                  : 'Rejecting this operation prevents worker execution.'}
+              </p>
+              {pendingDecision.operation.governance.approvalReason ? (
+                <p className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-3 text-amber-100">
+                  {pendingDecision.operation.governance.approvalReason}
+                </p>
+              ) : null}
+              <p>
+                Type{' '}
+                <span className="font-semibold text-amber-200">
+                  {pendingDecision.decision === 'approve' ? 'APPROVE' : 'REJECT'}
+                </span>{' '}
+                to continue.
+              </p>
+            </div>
+
+            {decisionError ? (
+              <div className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-100">
+                {decisionError}
+              </div>
+            ) : null}
+
+            <label className="mt-5 block text-sm font-medium text-slate-200" htmlFor="approval-decision-token">
+              Required decision token
+            </label>
+            <input
+              id="approval-decision-token"
+              value={decisionConfirmation}
+              onChange={(event) => setDecisionConfirmation(event.target.value)}
+              placeholder={`Type ${pendingDecision.decision === 'approve' ? 'APPROVE' : 'REJECT'} to confirm`}
+              className="mt-2 w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/40"
+              autoFocus
+            />
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setPendingDecision(null);
+                  setDecisionConfirmation('');
+                  setDecisionError(null);
+                }}
+                disabled={isDecidingApproval}
+                className="rounded-full border-white/10 bg-white/[0.04]"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void decideOperation()}
+                disabled={
+                  decisionConfirmation !==
+                    (pendingDecision.decision === 'approve' ? 'APPROVE' : 'REJECT') ||
+                  isDecidingApproval
+                }
+                className={
+                  pendingDecision.decision === 'approve'
+                    ? 'rounded-full bg-emerald-400 text-slate-950 hover:bg-emerald-300'
+                    : 'rounded-full bg-rose-400 text-slate-950 hover:bg-rose-300'
+                }
+              >
+                {isDecidingApproval
+                  ? 'Submitting...'
+                  : pendingDecision.decision === 'approve'
+                    ? 'Approve and queue'
+                    : 'Reject operation'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

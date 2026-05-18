@@ -39,6 +39,7 @@ type RetryAction = {
   target: string;
   scaleReplicas: number | null;
 };
+type ApprovalDecision = 'approve' | 'reject';
 
 const MISSING_VALUE = '-';
 const DETAIL_POLL_INTERVAL_MS = 7_000;
@@ -203,8 +204,11 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
   const [confirmationValue, setConfirmationValue] = useState('');
+  const [decisionConfirmationValue, setDecisionConfirmationValue] = useState('');
   const [pendingRetry, setPendingRetry] = useState<RetryAction | null>(null);
+  const [pendingDecision, setPendingDecision] = useState<ApprovalDecision | null>(null);
   const [queuedOperationId, setQueuedOperationId] = useState<string | null>(null);
   const [providerHealth, setProviderHealth] = useState<
     OpsObservabilityResponse['providers'][keyof OpsObservabilityResponse['providers']] | null
@@ -262,22 +266,26 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
   }, [isActiveOperation, loadDetail, pendingRetry]);
 
   useEffect(() => {
-    if (!pendingRetry) return;
+    if (!pendingRetry && !pendingDecision) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !isSubmitting) {
         setPendingRetry(null);
+        setPendingDecision(null);
         setConfirmationValue('');
+        setDecisionConfirmationValue('');
         setRetryError(null);
+        setDecisionError(null);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isSubmitting, pendingRetry]);
+  }, [isSubmitting, pendingDecision, pendingRetry]);
 
   const retryAction = useMemo(
     () => (detail && !isActiveOperation ? buildRetryAction(detail) : null),
     [detail, isActiveOperation],
   );
+  const isPendingApproval = detail?.status === 'PENDING_APPROVAL';
 
   const queueRetry = async () => {
     if (!pendingRetry || confirmationValue !== pendingRetry.token) return;
@@ -297,6 +305,29 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
       await loadDetail();
     } catch (retryActionError) {
       setRetryError(getErrorMessage(retryActionError));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const submitApprovalDecision = async () => {
+    if (!pendingDecision || !detail) return;
+    const expectedToken = pendingDecision === 'approve' ? 'APPROVE' : 'REJECT';
+    if (decisionConfirmationValue !== expectedToken) return;
+    setIsSubmitting(true);
+    setDecisionError(null);
+    try {
+      await api.post<{ data: unknown }>(`/v1/operations/${detail.id}/${pendingDecision}`, {
+        reason:
+          pendingDecision === 'approve'
+            ? 'Approved from operation detail'
+            : 'Rejected from operation detail',
+      });
+      setPendingDecision(null);
+      setDecisionConfirmationValue('');
+      await loadDetail();
+    } catch (approvalError) {
+      setDecisionError(getErrorMessage(approvalError));
     } finally {
       setIsSubmitting(false);
     }
@@ -409,6 +440,10 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
               ['Confirmation satisfied', detail.governance.confirmationSatisfied ? 'Yes' : 'No'],
               ['Approval required', detail.governance.approvalRequired ? 'Yes' : 'No'],
               ['Approval status', approvalLabel(detail.governance.approvalStatus)],
+              ['Policy', detail.governance.policyName ?? MISSING_VALUE],
+              ['Policy reason', detail.governance.approvalReason ?? MISSING_VALUE],
+              ['Approved at', formatDate(detail.governance.approvedAt)],
+              ['Rejected at', formatDate(detail.governance.rejectedAt)],
             ].map(([label, value]) => (
               <div key={label} className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-slate-950/35 p-3">
                 <span className="text-slate-500">{label}</span>
@@ -436,6 +471,33 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
           </div>
         </section>
       </div>
+
+      {isPendingApproval ? (
+        <section className="rounded-3xl border border-amber-300/20 bg-amber-300/10 p-5 shadow-xl shadow-black/10">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-white">Approval decision</h2>
+              <p className="mt-1 text-sm text-amber-100">
+                This operation will not execute until an authenticated approver approves it.
+              </p>
+              <div className="mt-4 grid gap-2 text-sm text-amber-50">
+                <p>Requester: {actorLabel(detail.actor)}</p>
+                <p>Requested: {formatDate(detail.createdAt)}</p>
+                <p>Policy: {detail.governance.policyName ?? MISSING_VALUE}</p>
+                <p>Reason: {detail.governance.approvalReason ?? 'Policy requires approval before worker execution.'}</p>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <Button type="button" onClick={() => setPendingDecision('approve')} className="rounded-full bg-emerald-400 text-slate-950 hover:bg-emerald-300">
+                Approve
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setPendingDecision('reject')} className="rounded-full border-rose-300/30 text-rose-100">
+                Reject
+              </Button>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
@@ -599,6 +661,112 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
                 className="rounded-full bg-white text-slate-950 hover:bg-slate-200"
               >
                 {isSubmitting ? 'Queueing...' : 'Queue recovery operation'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingDecision ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="operation-approval-title"
+        >
+          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-slate-950 p-6 shadow-2xl shadow-black/40">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">
+                  {detail.governance.riskLevel} risk | {approvalLabel(detail.governance.approvalStatus)}
+                </p>
+                <h2 id="operation-approval-title" className="mt-2 text-xl font-semibold text-white">
+                  {pendingDecision === 'approve' ? 'Approve operation' : 'Reject operation'}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingDecision(null);
+                  setDecisionConfirmationValue('');
+                  setDecisionError(null);
+                }}
+                disabled={isSubmitting}
+                className="rounded-full border border-white/10 bg-white/[0.04] p-2 text-slate-300 transition hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Close approval decision"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-3 text-sm leading-6 text-slate-300">
+              <p>
+                {pendingDecision === 'approve'
+                  ? 'Approving this operation will queue it for worker execution.'
+                  : 'Rejecting this operation prevents worker execution.'}
+              </p>
+              <p>Target: {detail.targetLabel ?? MISSING_VALUE}</p>
+              {detail.governance.approvalReason ? (
+                <p className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-3 text-amber-100">
+                  {detail.governance.approvalReason}
+                </p>
+              ) : null}
+              <p>
+                Type{' '}
+                <span className="font-semibold text-amber-200">
+                  {pendingDecision === 'approve' ? 'APPROVE' : 'REJECT'}
+                </span>{' '}
+                to continue.
+              </p>
+            </div>
+
+            {decisionError ? (
+              <div className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-100">
+                {decisionError}
+              </div>
+            ) : null}
+
+            <label className="mt-5 block text-sm font-medium text-slate-200" htmlFor="operation-approval-token">
+              Required decision token
+            </label>
+            <Input
+              id="operation-approval-token"
+              value={decisionConfirmationValue}
+              onChange={(event) => setDecisionConfirmationValue(event.target.value)}
+              placeholder={`Type ${pendingDecision === 'approve' ? 'APPROVE' : 'REJECT'} to confirm`}
+              className="mt-2 border-white/10 bg-slate-900/80"
+              autoFocus
+            />
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setPendingDecision(null);
+                  setDecisionConfirmationValue('');
+                  setDecisionError(null);
+                }}
+                disabled={isSubmitting}
+                className="rounded-full border-white/10 bg-white/[0.04]"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void submitApprovalDecision()}
+                disabled={decisionConfirmationValue !== (pendingDecision === 'approve' ? 'APPROVE' : 'REJECT') || isSubmitting}
+                className={
+                  pendingDecision === 'approve'
+                    ? 'rounded-full bg-emerald-400 text-slate-950 hover:bg-emerald-300'
+                    : 'rounded-full bg-rose-400 text-slate-950 hover:bg-rose-300'
+                }
+              >
+                {isSubmitting
+                  ? 'Submitting...'
+                  : pendingDecision === 'approve'
+                    ? 'Approve and queue'
+                    : 'Reject operation'}
               </Button>
             </div>
           </div>

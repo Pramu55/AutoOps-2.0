@@ -1,4 +1,4 @@
-import { prisma, AuditAction, EnvironmentKind, type Prisma } from '@autoops/database';
+import { prisma, AuditAction, type Prisma } from '@autoops/database';
 import {
   OperationProvider,
   OperationStatus,
@@ -7,6 +7,7 @@ import {
 } from '@autoops/types';
 import { BadRequestError, ConflictError, NotFoundError, UnauthorizedError } from '@autoops/utils';
 import { enqueueOperationJob } from './operation.queue.js';
+import { evaluateOperationPolicy, type OperationPolicyDecision } from './operation-policy.service.js';
 
 type CreateOperationInput = {
   organizationId: string;
@@ -68,10 +69,19 @@ export class OperationService {
       if (existing) return this._toOperation(existing);
     }
 
-    const requiresApproval = await this._requiresApproval(
-      input.organizationId,
-      input.environmentId,
-    );
+    const policy = evaluateOperationPolicy({
+      provider: input.provider,
+      operationType: input.operationType,
+      input: input.input,
+    });
+
+    if (
+      policy.confirmationRequired &&
+      policy.confirmationTokenLabel &&
+      input.confirmationToken !== policy.confirmationTokenLabel
+    ) {
+      throw new BadRequestError(`confirmationToken must be ${policy.confirmationTokenLabel}`);
+    }
 
     const created = await prisma.$transaction(async (tx) => {
       const operation = await tx.operation.create({
@@ -81,10 +91,10 @@ export class OperationService {
           environmentId: input.environmentId ?? null,
           provider: input.provider,
           operationType: input.operationType,
-          status: requiresApproval ? OperationStatus.PENDING_APPROVAL : OperationStatus.QUEUED,
+          status: policy.approvalRequired ? OperationStatus.PENDING_APPROVAL : OperationStatus.QUEUED,
           requestedByUserId: input.userId,
           idempotencyKey: input.idempotencyKey ?? null,
-          input: input.input as Prisma.InputJsonObject,
+          input: this._inputWithPolicy(input.input, policy) as Prisma.InputJsonObject,
         },
       });
 
@@ -104,7 +114,10 @@ export class OperationService {
           metadata: {
             operationType: input.operationType,
             status: operation.status,
-            requiresApproval,
+            approvalRequired: policy.approvalRequired,
+            approvalReason: policy.approvalReason,
+            riskLevel: policy.riskLevel,
+            policyName: policy.policyName,
           },
         },
       });
@@ -112,7 +125,7 @@ export class OperationService {
       return operation;
     });
 
-    if (!requiresApproval) {
+    if (!policy.approvalRequired) {
       await enqueueOperationJob({
         operationId: created.id,
         organizationId: input.organizationId,
@@ -238,39 +251,6 @@ export class OperationService {
     }
   }
 
-  private async _requiresApproval(
-    organizationId: string,
-    environmentId?: string,
-  ): Promise<boolean> {
-    if (!environmentId) return false;
-
-    const environment = await prisma.environment.findFirst({
-      where: {
-        id: environmentId,
-        archivedAt: null,
-        project: {
-          organizationId,
-          archivedAt: null,
-        },
-      },
-      select: {
-        kind: true,
-        name: true,
-        slug: true,
-      },
-    });
-
-    if (!environment) {
-      throw new NotFoundError('Environment');
-    }
-
-    return (
-      environment.kind === EnvironmentKind.PRODUCTION ||
-      environment.name.toLowerCase().includes('prod') ||
-      environment.slug.toLowerCase().includes('prod')
-    );
-  }
-
   private _auditAction(operationType: OperationType): AuditAction {
     if (operationType === OperationType.KUBERNETES_DEPLOYMENT_SCALE) {
       return AuditAction.KUBERNETES_DEPLOYMENT_SCALE_REQUESTED;
@@ -346,6 +326,23 @@ export class OperationService {
       return value as Record<string, unknown>;
     }
     return {};
+  }
+
+  private _inputWithPolicy(
+    input: Record<string, unknown>,
+    policy: OperationPolicyDecision,
+  ): Record<string, unknown> {
+    return {
+      ...input,
+      policy: {
+        riskLevel: policy.riskLevel,
+        confirmationRequired: policy.confirmationRequired,
+        confirmationTokenLabel: policy.confirmationTokenLabel,
+        approvalRequired: policy.approvalRequired,
+        approvalReason: policy.approvalReason,
+        policyName: policy.policyName,
+      },
+    };
   }
 }
 

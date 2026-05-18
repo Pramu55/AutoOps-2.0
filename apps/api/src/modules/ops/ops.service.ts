@@ -76,6 +76,14 @@ type OperationActivityRecord = {
   } | null;
 };
 
+type SafePolicyMetadata = {
+  riskLevel: OperationRiskLevel | null;
+  confirmationTokenLabel: string | null;
+  approvalRequired: boolean | null;
+  approvalReason: string | null;
+  policyName: string | null;
+};
+
 const BASE_INTEGRATIONS: OpsIntegrationReadiness[] = [
   {
     key: 'kubernetes',
@@ -1021,6 +1029,7 @@ export class OpsService {
         operation.status,
         operation.approvedAt,
         operation.rejectedAt,
+        input,
       ),
     };
   }
@@ -1197,6 +1206,13 @@ export class OpsService {
     const terminal = this._isTerminalStatus(operation.status);
     const running = operation.status === OperationStatus.RUNNING;
     const pendingApproval = operation.status === OperationStatus.PENDING_APPROVAL;
+    const policy = this._policyFromInput(this._toRecord(operation.input));
+    const approvalRequired =
+      policy.approvalRequired === true ||
+      pendingApproval ||
+      operation.approvedAt !== null ||
+      operation.rejectedAt !== null ||
+      operation.status === OperationStatus.REJECTED;
     const failed =
       operation.status === OperationStatus.FAILED ||
       operation.status === OperationStatus.REJECTED ||
@@ -1210,12 +1226,38 @@ export class OpsService {
         description: 'Operation request was recorded for this organization.',
       },
       {
-        label: pendingApproval ? 'Pending approval' : 'Queued',
-        status: pendingApproval ? 'active' : 'completed',
-        timestamp: pendingApproval ? null : operation.createdAt.toISOString(),
-        description: pendingApproval
-          ? 'Operation is waiting for approval before worker execution.'
-          : 'Operation was eligible for worker execution.',
+        label: approvalRequired ? 'Approval' : 'Policy check',
+        status:
+          operation.status === OperationStatus.REJECTED
+            ? 'failed'
+            : pendingApproval
+              ? 'active'
+              : 'completed',
+        timestamp:
+          operation.approvedAt?.toISOString() ??
+          operation.rejectedAt?.toISOString() ??
+          (approvalRequired ? null : operation.createdAt.toISOString()),
+        description:
+          operation.status === OperationStatus.REJECTED
+            ? 'Operation was rejected and will not execute.'
+            : pendingApproval
+              ? 'Operation is waiting for approval before worker execution.'
+              : approvalRequired
+                ? 'Operation approval was granted before worker execution.'
+                : 'Local policy did not require approval for this operation.',
+      },
+      {
+        label: 'Queued',
+        status:
+          pendingApproval || operation.status === OperationStatus.REJECTED ? 'pending' : 'completed',
+        timestamp:
+          pendingApproval || operation.status === OperationStatus.REJECTED
+            ? null
+            : operation.createdAt.toISOString(),
+        description:
+          pendingApproval || operation.status === OperationStatus.REJECTED
+            ? 'Operation is not eligible for worker execution yet.'
+            : 'Operation was eligible for worker execution.',
       },
       {
         label: 'Running',
@@ -1378,92 +1420,135 @@ export class OpsService {
     status: OperationStatus,
     approvedAt: Date | null,
     rejectedAt: Date | null,
+    input: Record<string, unknown>,
   ): OperationActivityItem['governance'] {
+    const policy = this._policyFromInput(input);
     const approvalStatus = this._approvalStatus(status, approvedAt, rejectedAt);
-    const approvalRequired = approvalStatus !== OperationApprovalStatus.NOT_REQUIRED;
+    const approvalRequired =
+      policy.approvalRequired ?? approvalStatus !== OperationApprovalStatus.NOT_REQUIRED;
 
     if (type === OperationType.JENKINS_BUILD_TRIGGER) {
       return {
-        riskLevel: OperationRiskLevel.LOW,
+        riskLevel: policy.riskLevel ?? OperationRiskLevel.LOW,
         confirmationRequired: true,
-        confirmationTokenLabel: 'BUILD',
+        confirmationTokenLabel: policy.confirmationTokenLabel ?? 'BUILD',
         confirmationSatisfied: true,
         approvalRequired,
         approvalStatus,
+        approvalReason: policy.approvalReason,
+        policyName: policy.policyName,
+        approvedAt: approvedAt?.toISOString() ?? null,
+        rejectedAt: rejectedAt?.toISOString() ?? null,
       };
     }
 
     if (type === OperationType.KUBERNETES_DEPLOYMENT_SCALE) {
-      return this._confirmationGovernance('SCALE', OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus);
+      return this._confirmationGovernance(
+        policy.confirmationTokenLabel ?? 'SCALE',
+        policy.riskLevel ?? OperationRiskLevel.MEDIUM,
+        approvalRequired,
+        approvalStatus,
+        policy,
+        approvedAt,
+        rejectedAt,
+      );
     }
 
     if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) {
-      return this._confirmationGovernance('ROLLOUT', OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus);
+      return this._confirmationGovernance(
+        policy.confirmationTokenLabel ?? 'ROLLOUT',
+        policy.riskLevel ?? OperationRiskLevel.MEDIUM,
+        approvalRequired,
+        approvalStatus,
+        policy,
+        approvedAt,
+        rejectedAt,
+      );
     }
 
     if (type === OperationType.KUBERNETES_MANIFEST_APPLY) {
       return {
-        riskLevel: OperationRiskLevel.HIGH,
+        riskLevel: policy.riskLevel ?? OperationRiskLevel.HIGH,
         confirmationRequired: true,
-        confirmationTokenLabel: 'APPLY',
+        confirmationTokenLabel: policy.confirmationTokenLabel ?? 'APPLY',
         confirmationSatisfied: true,
         approvalRequired,
         approvalStatus,
+        approvalReason: policy.approvalReason,
+        policyName: policy.policyName,
+        approvedAt: approvedAt?.toISOString() ?? null,
+        rejectedAt: rejectedAt?.toISOString() ?? null,
       };
     }
 
     if (type === OperationType.DOCKER_CONTAINER_START) {
-      return this._confirmationGovernance('START', OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus);
+      return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'START', policy.riskLevel ?? OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
     }
 
     if (type === OperationType.DOCKER_CONTAINER_STOP) {
-      return this._confirmationGovernance('STOP', OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus);
+      return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'STOP', policy.riskLevel ?? OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
     }
 
     if (type === OperationType.DOCKER_CONTAINER_RESTART) {
-      return this._confirmationGovernance('RESTART', OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus);
+      return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'RESTART', policy.riskLevel ?? OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
     }
 
     if (type === OperationType.GITHUB_WORKFLOW_DISPATCH) {
       return {
-        riskLevel: OperationRiskLevel.MEDIUM,
+        riskLevel: policy.riskLevel ?? OperationRiskLevel.MEDIUM,
         confirmationRequired: true,
-        confirmationTokenLabel: 'DISPATCH',
+        confirmationTokenLabel: policy.confirmationTokenLabel ?? 'DISPATCH',
         confirmationSatisfied: true,
         approvalRequired,
         approvalStatus,
+        approvalReason: policy.approvalReason,
+        policyName: policy.policyName,
+        approvedAt: approvedAt?.toISOString() ?? null,
+        rejectedAt: rejectedAt?.toISOString() ?? null,
       };
     }
 
     if (type === OperationType.DEPLOYMENT_ROLLBACK) {
       return {
-        riskLevel: OperationRiskLevel.HIGH,
+        riskLevel: policy.riskLevel ?? OperationRiskLevel.HIGH,
         confirmationRequired: true,
-        confirmationTokenLabel: 'ROLLBACK',
+        confirmationTokenLabel: policy.confirmationTokenLabel ?? 'ROLLBACK',
         confirmationSatisfied: true,
         approvalRequired,
         approvalStatus,
+        approvalReason: policy.approvalReason,
+        policyName: policy.policyName,
+        approvedAt: approvedAt?.toISOString() ?? null,
+        rejectedAt: rejectedAt?.toISOString() ?? null,
       };
     }
 
     if (type === OperationType.AWS_DEPLOYMENT) {
       return {
-        riskLevel: OperationRiskLevel.HIGH,
+        riskLevel: policy.riskLevel ?? OperationRiskLevel.HIGH,
         confirmationRequired: true,
-        confirmationTokenLabel: null,
+        confirmationTokenLabel: policy.confirmationTokenLabel,
         confirmationSatisfied: false,
         approvalRequired,
         approvalStatus,
+        approvalReason: policy.approvalReason,
+        policyName: policy.policyName,
+        approvedAt: approvedAt?.toISOString() ?? null,
+        rejectedAt: rejectedAt?.toISOString() ?? null,
       };
     }
 
     return {
-      riskLevel: OperationRiskLevel.LOW,
+      riskLevel: policy.riskLevel ?? OperationRiskLevel.LOW,
       confirmationRequired: false,
-      confirmationTokenLabel: null,
+      confirmationTokenLabel: policy.confirmationTokenLabel,
       confirmationSatisfied: false,
       approvalRequired,
       approvalStatus,
+      approvalReason: policy.approvalReason,
+      policyName: policy.policyName,
+      approvedAt: approvedAt?.toISOString() ?? null,
+      rejectedAt: rejectedAt?.toISOString() ?? null,
     };
   }
 
@@ -1472,6 +1557,9 @@ export class OpsService {
     riskLevel: OperationRiskLevel,
     approvalRequired: boolean,
     approvalStatus: OperationApprovalStatus,
+    policy: SafePolicyMetadata,
+    approvedAt: Date | null,
+    rejectedAt: Date | null,
   ): OperationActivityItem['governance'] {
     return {
       riskLevel,
@@ -1480,6 +1568,28 @@ export class OpsService {
       confirmationSatisfied: true,
       approvalRequired,
       approvalStatus,
+      approvalReason: policy.approvalReason,
+      policyName: policy.policyName,
+      approvedAt: approvedAt?.toISOString() ?? null,
+      rejectedAt: rejectedAt?.toISOString() ?? null,
+    };
+  }
+
+  private _policyFromInput(input: Record<string, unknown>): SafePolicyMetadata {
+    const policy = this._toRecord(input.policy);
+    const riskLevel = this._stringField(policy, 'riskLevel');
+    const approvalRequired = policy.approvalRequired;
+    return {
+      riskLevel:
+        riskLevel === OperationRiskLevel.LOW ||
+        riskLevel === OperationRiskLevel.MEDIUM ||
+        riskLevel === OperationRiskLevel.HIGH
+          ? riskLevel
+          : null,
+      confirmationTokenLabel: this._stringField(policy, 'confirmationTokenLabel'),
+      approvalRequired: typeof approvalRequired === 'boolean' ? approvalRequired : null,
+      approvalReason: this._stringField(policy, 'approvalReason'),
+      policyName: this._stringField(policy, 'policyName'),
     };
   }
 

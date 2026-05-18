@@ -351,7 +351,11 @@ export function KubernetesClient() {
           ? { replicas: desiredReplicaValue, confirmationToken: 'SCALE' }
           : { confirmationToken: 'ROLLOUT' };
       const response = await api.post<KubernetesActionApiResponse>(endpoint, body);
-      setActionMessage(`${response.data.message} Operation ${response.data.operationId}.`);
+      setActionMessage(
+        response.data.approvalRequired
+          ? `${response.data.message} Approval required: ${response.data.approvalReason ?? 'Policy requires approval before worker execution.'} Operation ${response.data.operationId}.`
+          : `${response.data.message} Operation ${response.data.operationId}.`,
+      );
       setPendingAction(null);
       setDesiredReplicas('');
       setConfirmationValue('');

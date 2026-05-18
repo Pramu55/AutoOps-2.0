@@ -6,9 +6,11 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 
 | Provider | Actions | Confirmation | Risk | Approval |
 | --- | --- | --- | --- | --- |
-| Jenkins | Build trigger / re-run for allowlisted jobs | BUILD | LOW | Not required for local dev |
-| Docker | Start, stop, restart container | START, STOP, RESTART | MEDIUM | Not required for local dev |
-| Kubernetes | Scale deployment, rollout restart deployment | SCALE, ROLLOUT | MEDIUM | Not required for local dev |
+| Jenkins | Build trigger / re-run for allowlisted jobs | BUILD | LOW | Not required |
+| Docker | Start container | START | MEDIUM | Not required |
+| Docker | Stop, restart container | STOP, RESTART | MEDIUM | Required by local policy |
+| Kubernetes | Scale deployment to 0-2 replicas, rollout restart deployment | SCALE, ROLLOUT | MEDIUM | Not required |
+| Kubernetes | Scale deployment above 2 replicas | SCALE | MEDIUM | Required by local policy |
 
 ## Safety Rules
 
@@ -45,6 +47,15 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Queue coverage is reported from active worker heartbeats for operations, deployments, and system queues.
 - AutoOps does not infer worker liveness from Redis alone and does not fake worker health.
 - Heartbeat metadata stores only safe runtime facts and does not store environment dumps, URLs, credentials, tokens, kubeconfig, or host secrets.
+
+## Policy and Approval Engine
+
+- Confirmations remain required for all controlled actions; approval is an additional policy gate, not a replacement.
+- The local pilot policy keeps Jenkins BUILD, Docker START, Kubernetes ROLLOUT, and Kubernetes SCALE to 0-2 replicas confirmation-only.
+- Docker STOP/RESTART and Kubernetes SCALE above 2 replicas enter `PENDING_APPROVAL` and are not enqueued until approved.
+- Approving a pending operation records the decision and queues the existing worker-executed operation; rejecting records the decision and prevents worker execution.
+- Ops Hub and operation detail expose safe policy reason, risk, confirmation label, approval status, and decision timestamps without rendering raw operation metadata.
+- AutoOps does not provide generic replay, unsafe Docker/Kubernetes controls, or fake approval records. Future RBAC can separate requester and approver responsibilities.
 
 ## Local Verification Notes
 

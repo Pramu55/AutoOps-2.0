@@ -205,7 +205,7 @@ export function JenkinsClient() {
       );
       setMessage(
         response.data.approvalRequired
-          ? `Operation ${response.data.operationId} is pending approval.`
+          ? `Operation ${response.data.operationId} submitted for approval. Approval required: ${response.data.approvalReason ?? 'Policy requires approval before worker execution.'}`
           : `Operation ${response.data.operationId} queued for Jenkins worker execution.`,
       );
       setPendingAction(null);

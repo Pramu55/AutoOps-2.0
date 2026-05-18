@@ -371,7 +371,11 @@ export function DockerClient() {
           confirmationToken: pendingAction.token,
         },
       );
-      setMessage(`${response.data.message} Operation ${response.data.operationId}.`);
+      setMessage(
+        response.data.approvalRequired
+          ? `${response.data.message} Approval required: ${response.data.approvalReason ?? 'Policy requires approval before worker execution.'} Operation ${response.data.operationId}.`
+          : `${response.data.message} Operation ${response.data.operationId}.`,
+      );
       setPendingAction(null);
       setConfirmationValue('');
       await loadDocker();

@@ -168,14 +168,18 @@ export class DockerService {
       },
       auditContext,
     );
+    const policy = this._policyFromOperation(operation.input);
 
     return {
       operationId: operation.id,
       status: operation.status,
       approvalRequired: operation.status === OperationStatus.PENDING_APPROVAL,
+      approvalReason: policy.approvalReason,
+      riskLevel: policy.riskLevel,
+      policyName: policy.policyName,
       message:
         operation.status === OperationStatus.PENDING_APPROVAL
-          ? `Docker container ${config.action} operation is pending approval.`
+          ? `Docker container ${config.action} operation submitted for approval.`
           : `Docker container ${config.action} operation queued.`,
     };
   }
@@ -292,6 +296,36 @@ export class DockerService {
     if (error.code === 'PERMISSION_DENIED') return ProviderConnectionStatus.AUTH_FAILED;
     if (error.code === 'UNREACHABLE' || error.code === 'TIMEOUT') return ProviderConnectionStatus.UNREACHABLE;
     return ProviderConnectionStatus.UNKNOWN_ERROR;
+  }
+
+  private _policyFromOperation(input: Record<string, unknown>): {
+    approvalReason: string | null;
+    riskLevel: DockerActionResponse['riskLevel'];
+    policyName: string | null;
+  } {
+    const policy = this._toRecord(input.policy);
+    return {
+      approvalReason: this._stringField(policy, 'approvalReason'),
+      riskLevel: this._riskLevel(policy),
+      policyName: this._stringField(policy, 'policyName'),
+    };
+  }
+
+  private _toRecord(value: unknown): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+    return {};
+  }
+
+  private _stringField(record: Record<string, unknown>, key: string): string | null {
+    const value = record[key];
+    return typeof value === 'string' && value.trim().length > 0 ? value : null;
+  }
+
+  private _riskLevel(record: Record<string, unknown>): DockerActionResponse['riskLevel'] {
+    const value = record.riskLevel;
+    return value === 'LOW' || value === 'MEDIUM' || value === 'HIGH' ? value : 'MEDIUM';
   }
 }
 

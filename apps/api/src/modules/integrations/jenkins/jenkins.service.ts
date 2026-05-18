@@ -289,14 +289,18 @@ export class JenkinsService {
       },
       auditContext,
     );
+    const policy = this._policyFromOperation(operation.input);
 
     return {
       operationId: operation.id,
       status: operation.status,
       approvalRequired: operation.status === 'PENDING_APPROVAL',
+      approvalReason: policy.approvalReason,
+      riskLevel: policy.riskLevel,
+      policyName: policy.policyName,
       message:
         operation.status === 'PENDING_APPROVAL'
-          ? 'Jenkins build trigger is pending approval.'
+          ? 'Jenkins build trigger submitted for approval.'
           : 'Jenkins build trigger operation queued.',
     };
   }
@@ -428,6 +432,24 @@ export class JenkinsService {
   private _numberField(record: Record<string, unknown>, key: string): number | null {
     const value = record[key];
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+
+  private _policyFromOperation(input: Record<string, unknown>): {
+    approvalReason: string | null;
+    riskLevel: JenkinsTriggerBuildResponse['riskLevel'];
+    policyName: string | null;
+  } {
+    const policy = this._toRecord(input.policy);
+    return {
+      approvalReason: this._stringField(policy, 'approvalReason'),
+      riskLevel: this._riskLevel(policy),
+      policyName: this._stringField(policy, 'policyName'),
+    };
+  }
+
+  private _riskLevel(record: Record<string, unknown>): JenkinsTriggerBuildResponse['riskLevel'] {
+    const value = record.riskLevel;
+    return value === 'LOW' || value === 'MEDIUM' || value === 'HIGH' ? value : 'LOW';
   }
 }
 
