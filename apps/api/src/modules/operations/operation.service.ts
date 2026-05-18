@@ -7,6 +7,7 @@ import {
 } from '@autoops/types';
 import { BadRequestError, ConflictError, NotFoundError, UnauthorizedError } from '@autoops/utils';
 import { enqueueOperationJob } from './operation.queue.js';
+import { operationAuthorizationService } from './operation-authorization.service.js';
 import { evaluateOperationPolicy, type OperationPolicyDecision } from './operation-policy.service.js';
 
 type CreateOperationInput = {
@@ -26,8 +27,6 @@ type AuditRequestContext = {
   ipAddress?: string;
   userAgent?: string;
 };
-
-const MUTATION_ROLES = new Set(['OWNER', 'ADMIN']);
 
 export class OperationService {
   async listOperations(organizationId: string): Promise<Operation[]> {
@@ -51,7 +50,15 @@ export class OperationService {
     input: CreateOperationInput,
     auditContext: AuditRequestContext = {},
   ): Promise<Operation> {
-    this._requireMutationRole(input.role);
+    const triggerDecision = await operationAuthorizationService.canTriggerOperation({
+      organizationId: input.organizationId,
+      userId: input.userId,
+      provider: input.provider,
+      operationType: input.operationType,
+    });
+    if (!triggerDecision.allowed) {
+      throw new UnauthorizedError(triggerDecision.reason ?? 'You do not have permission to trigger this operation.');
+    }
 
     if (!input.confirmationToken) {
       throw new BadRequestError('A confirmation token is required for real operations');
@@ -140,18 +147,24 @@ export class OperationService {
     operationId: string,
     organizationId: string,
     userId: string,
-    role?: string,
+    _role?: string,
     reason?: string,
     auditContext: AuditRequestContext = {},
   ): Promise<Operation> {
-    this._requireMutationRole(role);
-
     const operation = await prisma.operation.findFirst({
       where: { id: operationId, organizationId },
     });
     if (!operation) throw new NotFoundError('Operation');
     if (operation.status !== OperationStatus.PENDING_APPROVAL) {
       throw new ConflictError('Only pending approval operations can be approved');
+    }
+    const approvalDecision = await operationAuthorizationService.canApproveOperation({
+      organizationId,
+      userId,
+      operation,
+    });
+    if (!approvalDecision.allowed) {
+      throw new UnauthorizedError(approvalDecision.reason ?? 'You do not have permission to approve this operation.');
     }
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -197,18 +210,24 @@ export class OperationService {
     operationId: string,
     organizationId: string,
     userId: string,
-    role?: string,
+    _role?: string,
     reason?: string,
     auditContext: AuditRequestContext = {},
   ): Promise<Operation> {
-    this._requireMutationRole(role);
-
     const operation = await prisma.operation.findFirst({
       where: { id: operationId, organizationId },
     });
     if (!operation) throw new NotFoundError('Operation');
     if (operation.status !== OperationStatus.PENDING_APPROVAL) {
       throw new ConflictError('Only pending approval operations can be rejected');
+    }
+    const rejectionDecision = await operationAuthorizationService.canRejectOperation({
+      organizationId,
+      userId,
+      operation,
+    });
+    if (!rejectionDecision.allowed) {
+      throw new UnauthorizedError(rejectionDecision.reason ?? 'You do not have permission to reject this operation.');
     }
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -243,12 +262,6 @@ export class OperationService {
     });
 
     return this._toOperation(updated);
-  }
-
-  private _requireMutationRole(role?: string): void {
-    if (!role || !MUTATION_ROLES.has(role)) {
-      throw new UnauthorizedError('Requires organization OWNER or ADMIN role');
-    }
   }
 
   private _auditAction(operationType: OperationType): AuditAction {

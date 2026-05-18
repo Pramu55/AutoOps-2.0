@@ -286,9 +286,16 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
     [detail, isActiveOperation],
   );
   const isPendingApproval = detail?.status === 'PENDING_APPROVAL';
+  const canApprove = detail?.permissions.canApprove ?? false;
+  const canReject = detail?.permissions.canReject ?? false;
+  const canTriggerRecovery = detail?.permissions.canTriggerRecovery ?? false;
 
   const queueRetry = async () => {
     if (!pendingRetry || confirmationValue !== pendingRetry.token) return;
+    if (!detail?.permissions.canTriggerRecovery) {
+      setRetryError(detail?.permissions.reason ?? 'You do not have permission to trigger recovery for this operation.');
+      return;
+    }
     setIsSubmitting(true);
     setRetryError(null);
     setQueuedOperationId(null);
@@ -312,6 +319,14 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
 
   const submitApprovalDecision = async () => {
     if (!pendingDecision || !detail) return;
+    if (pendingDecision === 'approve' && !detail.permissions.canApprove) {
+      setDecisionError(detail.permissions.reason ?? 'You do not have permission to approve this operation.');
+      return;
+    }
+    if (pendingDecision === 'reject' && !detail.permissions.canReject) {
+      setDecisionError(detail.permissions.reason ?? 'You do not have permission to reject this operation.');
+      return;
+    }
     const expectedToken = pendingDecision === 'approve' ? 'APPROVE' : 'REJECT';
     if (decisionConfirmationValue !== expectedToken) return;
     setIsSubmitting(true);
@@ -486,12 +501,28 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
                 <p>Policy: {detail.governance.policyName ?? MISSING_VALUE}</p>
                 <p>Reason: {detail.governance.approvalReason ?? 'Policy requires approval before worker execution.'}</p>
               </div>
+              {!canApprove || !canReject ? (
+                <p className="mt-4 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-sm text-amber-50">
+                  {detail.permissions.reason ?? 'You do not have permission to decide this operation.'}
+                </p>
+              ) : null}
             </div>
             <div className="flex shrink-0 flex-wrap gap-2">
-              <Button type="button" onClick={() => setPendingDecision('approve')} className="rounded-full bg-emerald-400 text-slate-950 hover:bg-emerald-300">
+              <Button
+                type="button"
+                onClick={() => setPendingDecision('approve')}
+                disabled={!canApprove}
+                className="rounded-full bg-emerald-400 text-slate-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
+              >
                 Approve
               </Button>
-              <Button type="button" variant="outline" onClick={() => setPendingDecision('reject')} className="rounded-full border-rose-300/30 text-rose-100">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setPendingDecision('reject')}
+                disabled={!canReject}
+                className="rounded-full border-rose-300/30 text-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
                 Reject
               </Button>
             </div>
@@ -562,7 +593,12 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
             </p>
           </div>
           {retryAction ? (
-            <Button type="button" onClick={() => setPendingRetry(retryAction)} className="rounded-full bg-white text-slate-950 hover:bg-slate-200">
+            <Button
+              type="button"
+              onClick={() => setPendingRetry(retryAction)}
+              disabled={!canTriggerRecovery}
+              className="rounded-full bg-white text-slate-950 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+            >
               <RotateCw className="h-4 w-4" />
               {retryAction.label}
             </Button>
@@ -572,7 +608,9 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
           {isActiveOperation
             ? 'Recovery is disabled while the operation is queued, running, or pending approval.'
             : retryAction
-            ? `${retryAction.label} is available for ${retryAction.target}. Confirmation ${retryAction.token} is required.`
+            ? canTriggerRecovery
+              ? `${retryAction.label} is available for ${retryAction.target}. Confirmation ${retryAction.token} is required.`
+              : detail.permissions.reason ?? 'You do not have permission to trigger recovery for this operation.'
             : detail.retry.reason ?? 'Recovery action is not available for this operation.'}
         </div>
       </section>

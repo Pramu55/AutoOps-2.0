@@ -57,6 +57,15 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Ops Hub and operation detail expose safe policy reason, risk, confirmation label, approval status, and decision timestamps without rendering raw operation metadata.
 - AutoOps does not provide generic replay, unsafe Docker/Kubernetes controls, or fake approval records. Future RBAC can separate requester and approver responsibilities.
 
+## RBAC and Operation Authorization
+
+- Operation authorization is role-aware and enforced in the backend; frontend permission hints are UX only.
+- OWNER and ADMIN users can trigger controlled operations and approve or reject approval-required operations.
+- MEMBER users can view operations and trigger controlled operations, but cannot approve or reject approval-required operations.
+- VIEWER users can view safe operation activity, but cannot trigger, approve, or reject operations.
+- Requesters cannot approve or reject their own approval-required operation; a separate authorized approver is required.
+- Permission decisions are derived from real organization memberships and no fake roles, fake approvals, or generic unsafe execution paths are created.
+
 ## Local Verification Notes
 
 - Use disposable resources for action tests, such as `autoops-docker-smoke` or `default/autoops-k8s-smoke`.

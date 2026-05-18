@@ -11,9 +11,10 @@ import { opsService } from './ops.service.js';
 
 export class OpsController {
   activity = async (req: Request, res: Response<{ data: OperationActivityResponse }>): Promise<void> => {
-    const organizationId = this._requireOrganizationId(req);
+    const auth = this._requireAuth(req);
     const activity = await opsService.listActivity(
-      organizationId,
+      auth.organizationId,
+      auth.userId,
       req.query as unknown as OpsActivityQuery,
     );
     res.json({ data: activity });
@@ -23,14 +24,14 @@ export class OpsController {
     req: Request<{ operationId: string }>,
     res: Response<{ data: OperationDetailResponse }>,
   ): Promise<void> => {
-    const organizationId = this._requireOrganizationId(req);
-    const detail = await opsService.getActivityDetail(organizationId, req.params.operationId);
+    const auth = this._requireAuth(req);
+    const detail = await opsService.getActivityDetail(auth.organizationId, auth.userId, req.params.operationId);
     res.json({ data: detail });
   };
 
   summary = async (req: Request, res: Response<{ data: OpsSummary }>): Promise<void> => {
-    const organizationId = this._requireOrganizationId(req);
-    const summary = await opsService.getSummary(organizationId);
+    const auth = this._requireAuth(req);
+    const summary = await opsService.getSummary(auth.organizationId);
     res.json({ data: summary });
   };
 
@@ -38,12 +39,12 @@ export class OpsController {
     req: Request,
     res: Response<{ data: OpsObservabilityResponse }>,
   ): Promise<void> => {
-    const organizationId = this._requireOrganizationId(req);
-    const observability = await opsService.getObservability(organizationId);
+    const auth = this._requireAuth(req);
+    const observability = await opsService.getObservability(auth.organizationId, auth.userId);
     res.json({ data: observability });
   };
 
-  private _requireOrganizationId(req: Request): string {
+  private _requireAuth(req: Request): { organizationId: string; userId: string } {
     if (!req.auth) {
       throw new UnauthenticatedError();
     }
@@ -52,7 +53,7 @@ export class OpsController {
       throw new UnauthorizedError('Organization context is required');
     }
 
-    return req.auth.orgId;
+    return { organizationId: req.auth.orgId, userId: req.auth.userId };
   }
 }
 

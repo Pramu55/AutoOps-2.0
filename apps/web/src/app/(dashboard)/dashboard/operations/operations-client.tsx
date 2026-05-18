@@ -680,6 +680,11 @@ export function OperationsClient() {
   const pendingApprovals = useMemo(() => pendingApprovalItems, [pendingApprovalItems]);
 
   const openDecisionModal = (operation: OperationActivityItem, decision: ApprovalDecision) => {
+    const allowed = decision === 'approve' ? operation.permissions.canApprove : operation.permissions.canReject;
+    if (!allowed) {
+      setDecisionError(operation.permissions.reason ?? 'You do not have permission to decide this operation.');
+      return;
+    }
     setPendingDecision({ operation, decision });
     setDecisionConfirmation('');
     setDecisionError(null);
@@ -928,6 +933,11 @@ export function OperationsClient() {
                           {operation.governance.approvalReason}
                         </p>
                       ) : null}
+                      {!operation.permissions.canApprove || !operation.permissions.canReject ? (
+                        <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.04] p-3 text-sm text-slate-300">
+                          {operation.permissions.reason ?? 'You do not have permission to decide this operation.'}
+                        </p>
+                      ) : null}
                     </div>
                     <div className="flex shrink-0 flex-wrap gap-2">
                       <Link
@@ -936,10 +946,21 @@ export function OperationsClient() {
                       >
                         View details
                       </Link>
-                      <Button size="sm" className="rounded-full bg-emerald-400 text-slate-950 hover:bg-emerald-300" onClick={() => openDecisionModal(operation, 'approve')}>
+                      <Button
+                        size="sm"
+                        className="rounded-full bg-emerald-400 text-slate-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => openDecisionModal(operation, 'approve')}
+                        disabled={!operation.permissions.canApprove}
+                      >
                         Approve
                       </Button>
-                      <Button size="sm" variant="outline" className="rounded-full border-rose-300/30 text-rose-200" onClick={() => openDecisionModal(operation, 'reject')}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-full border-rose-300/30 text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => openDecisionModal(operation, 'reject')}
+                        disabled={!operation.permissions.canReject}
+                      >
                         Reject
                       </Button>
                     </div>

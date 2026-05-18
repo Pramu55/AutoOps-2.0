@@ -17,6 +17,8 @@ import {
   type OperationActivityResponse,
   type OperationDetailResponse,
   type OperationObservabilityItem,
+  type OperationPermissionHints,
+  type OrgRole,
   type OpsActivityQuery,
   type OpsObservabilityResponse,
   type OpsIntegrationReadiness,
@@ -38,6 +40,7 @@ import { awsService } from '../integrations/aws/aws.service.js';
 import { dockerService } from '../integrations/docker/docker.service.js';
 import { jenkinsService } from '../integrations/jenkins/jenkins.service.js';
 import { kubernetesService } from '../integrations/kubernetes/kubernetes.service.js';
+import { operationAuthorizationService } from '../operations/operation-authorization.service.js';
 
 const ACTIVE_DEPLOYMENT_STATUSES = [
   DeploymentStatus.QUEUED,
@@ -69,6 +72,7 @@ type OperationActivityRecord = {
   rejectedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  requestedByUserId: string | null;
   requestedBy: {
     id: string;
     name: string | null;
@@ -153,6 +157,7 @@ const BASE_INTEGRATIONS: OpsIntegrationReadiness[] = [
 export class OpsService {
   async listActivity(
     organizationId: string,
+    userId: string,
     query: OpsActivityQuery,
   ): Promise<OperationActivityResponse> {
     const provider = query.source ? this._providerForSource(query.source) : null;
@@ -160,6 +165,7 @@ export class OpsService {
       return { items: [] };
     }
 
+    const role = await operationAuthorizationService.getOrganizationRole({ organizationId, userId });
     const operations = await prisma.operation.findMany({
       where: {
         organizationId,
@@ -183,6 +189,7 @@ export class OpsService {
         rejectedAt: true,
         createdAt: true,
         updatedAt: true,
+        requestedByUserId: true,
         requestedBy: {
           select: {
             id: true,
@@ -194,12 +201,13 @@ export class OpsService {
     });
 
     return {
-      items: operations.map((operation) => this._toActivityItem(operation)),
+      items: operations.map((operation) => this._toActivityItem(operation, role, userId)),
     };
   }
 
   async getActivityDetail(
     organizationId: string,
+    userId: string,
     operationId: string,
   ): Promise<OperationDetailResponse> {
     const operation = await prisma.operation.findFirst({
@@ -219,6 +227,7 @@ export class OpsService {
         rejectedAt: true,
         createdAt: true,
         updatedAt: true,
+        requestedByUserId: true,
         requestedBy: {
           select: {
             id: true,
@@ -231,7 +240,8 @@ export class OpsService {
 
     if (!operation) throw new NotFoundError('Operation');
 
-    return this._toOperationDetail(operation);
+    const role = await operationAuthorizationService.getOrganizationRole({ organizationId, userId });
+    return this._toOperationDetail(operation, role, userId);
   }
 
   async getSummary(organizationId: string): Promise<OpsSummary> {
@@ -366,7 +376,7 @@ export class OpsService {
     };
   }
 
-  async getObservability(organizationId: string): Promise<OpsObservabilityResponse> {
+  async getObservability(organizationId: string, userId: string): Promise<OpsObservabilityResponse> {
     const generatedAt = new Date().toISOString();
     const [
       databaseStatus,
@@ -378,6 +388,7 @@ export class OpsService {
       jenkinsHealth,
       dockerHealth,
       kubernetesHealth,
+      role,
     ] = await Promise.all([
       this._getDatabaseStatus(),
       this._getRedisStatus(),
@@ -388,10 +399,11 @@ export class OpsService {
       this._getJenkinsHealth(),
       this._getDockerHealth(),
       this._getKubernetesHealth(),
+      operationAuthorizationService.getOrganizationRole({ organizationId, userId }),
     ]);
 
     const observableOperations = recentOperations.map((operation) =>
-      this._toObservabilityItem(operation),
+      this._toObservabilityItem(operation, role, userId),
     );
     const statusBreakdown = this._operationStatusBreakdown(recentOperations);
     const active = observableOperations
@@ -827,6 +839,7 @@ export class OpsService {
         rejectedAt: true,
         createdAt: true,
         updatedAt: true,
+        requestedByUserId: true,
         requestedBy: {
           select: {
             id: true,
@@ -838,11 +851,15 @@ export class OpsService {
     });
   }
 
-  private _toObservabilityItem(operation: OperationActivityRecord): OperationObservabilityItem {
+  private _toObservabilityItem(
+    operation: OperationActivityRecord,
+    role: OrgRole | null,
+    userId: string,
+  ): OperationObservabilityItem {
     const input = this._toRecord(operation.input);
     const result = this._toRecord(operation.result);
     return {
-      ...this._toActivityItem(operation),
+      ...this._toActivityItem(operation, role, userId),
       retry: this._retryInfo(operation.operationType, input, result),
     };
   }
@@ -992,7 +1009,11 @@ export class OpsService {
     return {};
   }
 
-  private _toActivityItem(operation: OperationActivityRecord): OperationActivityItem {
+  private _toActivityItem(
+    operation: OperationActivityRecord,
+    role: OrgRole | null,
+    userId: string,
+  ): OperationActivityItem {
     const input = this._toRecord(operation.input);
     const result = this._toRecord(operation.result);
     const error = this._toRecord(operation.error);
@@ -1031,11 +1052,16 @@ export class OpsService {
         operation.rejectedAt,
         input,
       ),
+      permissions: this._permissionHints(operation, role, userId),
     };
   }
 
-  private _toOperationDetail(operation: OperationActivityRecord): OperationDetailResponse {
-    const activity = this._toActivityItem(operation);
+  private _toOperationDetail(
+    operation: OperationActivityRecord,
+    role: OrgRole | null,
+    userId: string,
+  ): OperationDetailResponse {
+    const activity = this._toActivityItem(operation, role, userId);
     const input = this._toRecord(operation.input);
     const result = this._toRecord(operation.result);
     const error = this._toRecord(operation.error);
@@ -1047,6 +1073,28 @@ export class OpsService {
       lifecycle: this._lifecycle(operation),
       retry: this._retryInfo(operation.operationType, input, result),
       errorMessage: activity.errorMessage ?? this._stringField(error, 'reason'),
+    };
+  }
+
+  private _permissionHints(
+    operation: OperationActivityRecord,
+    role: OrgRole | null,
+    userId: string,
+  ): OperationPermissionHints {
+    const approveDecision = operationAuthorizationService.canApproveWithRole(role, userId, operation);
+    const rejectDecision = operationAuthorizationService.canRejectWithRole(role, userId, operation);
+    const triggerDecision = operationAuthorizationService.canTriggerWithRole(role);
+    const isTerminal = this._isTerminalStatus(operation.status);
+    const reason =
+      operation.status === OperationStatus.PENDING_APPROVAL
+        ? approveDecision.reason ?? rejectDecision.reason
+        : triggerDecision.reason;
+
+    return {
+      canApprove: approveDecision.allowed,
+      canReject: rejectDecision.allowed,
+      canTriggerRecovery: isTerminal && triggerDecision.allowed,
+      reason,
     };
   }
 

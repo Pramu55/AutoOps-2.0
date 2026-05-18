@@ -205,6 +205,13 @@ export interface OperationGovernance {
   rejectedAt: string | null;
 }
 
+export interface OperationPermissionHints {
+  canApprove: boolean;
+  canReject: boolean;
+  canTriggerRecovery: boolean;
+  reason: string | null;
+}
+
 export interface OperationActivityItem {
   id: string;
   type: OperationTypeValue;
@@ -221,6 +228,7 @@ export interface OperationActivityItem {
   actor: OperationActivityActor | null;
   errorMessage: string | null;
   governance: OperationGovernance;
+  permissions: OperationPermissionHints;
 }
 
 export interface OperationActivityResponse {
