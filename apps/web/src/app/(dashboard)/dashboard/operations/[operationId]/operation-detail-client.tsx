@@ -458,7 +458,9 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
               ['Policy', detail.governance.policyName ?? MISSING_VALUE],
               ['Policy reason', detail.governance.approvalReason ?? MISSING_VALUE],
               ['Approved at', formatDate(detail.governance.approvedAt)],
+              ['Approved by', actorLabel(detail.governance.approvedBy ?? null)],
               ['Rejected at', formatDate(detail.governance.rejectedAt)],
+              ['Rejected by', actorLabel(detail.governance.rejectedBy ?? null)],
             ].map(([label, value]) => (
               <div key={label} className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-slate-950/35 p-3">
                 <span className="text-slate-500">{label}</span>

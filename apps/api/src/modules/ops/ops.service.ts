@@ -78,6 +78,16 @@ type OperationActivityRecord = {
     name: string | null;
     email: string | null;
   } | null;
+  approvedBy: {
+    id: string;
+    name: string | null;
+    email: string | null;
+  } | null;
+  rejectedBy: {
+    id: string;
+    name: string | null;
+    email: string | null;
+  } | null;
 };
 
 type SafePolicyMetadata = {
@@ -197,6 +207,20 @@ export class OpsService {
             email: true,
           },
         },
+        approvedBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        rejectedBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
       },
     });
 
@@ -229,6 +253,20 @@ export class OpsService {
         updatedAt: true,
         requestedByUserId: true,
         requestedBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        approvedBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        rejectedBy: {
           select: {
             id: true,
             name: true,
@@ -847,6 +885,20 @@ export class OpsService {
             email: true,
           },
         },
+        approvedBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        rejectedBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
       },
     });
   }
@@ -1023,6 +1075,13 @@ export class OpsService {
     const durationMs = terminal
       ? Math.max(0, operation.updatedAt.getTime() - operation.createdAt.getTime())
       : null;
+    const governance = this._governanceForOperation(
+      operation.operationType,
+      operation.status,
+      operation.approvedAt,
+      operation.rejectedAt,
+      input,
+    );
 
     return {
       id: operation.id,
@@ -1045,13 +1104,23 @@ export class OpsService {
           }
         : null,
       errorMessage: this._stringField(error, 'message'),
-      governance: this._governanceForOperation(
-        operation.operationType,
-        operation.status,
-        operation.approvedAt,
-        operation.rejectedAt,
-        input,
-      ),
+      governance: {
+        ...governance,
+        approvedBy: operation.approvedBy
+          ? {
+              id: operation.approvedBy.id,
+              name: operation.approvedBy.name,
+              email: operation.approvedBy.email,
+            }
+          : null,
+        rejectedBy: operation.rejectedBy
+          ? {
+              id: operation.rejectedBy.id,
+              name: operation.rejectedBy.name,
+              email: operation.rejectedBy.email,
+            }
+          : null,
+      },
       permissions: this._permissionHints(operation, role, userId),
     };
   }

@@ -66,6 +66,16 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Requesters cannot approve or reject their own approval-required operation; a separate authorized approver is required.
 - Permission decisions are derived from real organization memberships and no fake roles, fake approvals, or generic unsafe execution paths are created.
 
+## Local Demo Accounts for Approval Testing
+
+- Operator / Requester: `pramod.local@autoops.dev`
+- Admin / Approver: `approver.local@autoops.dev`
+- Both accounts are local demo accounts created by the idempotent database seed for approval workflow testing.
+- The requester can trigger approval-required operations, but cannot approve or reject their own requested operation.
+- The admin/approver can review, approve, or reject pending operations through the real authenticated API flow.
+- Production deployments should use real organization invites and managed users, not local demo credentials.
+- RBAC remains enforced by the backend; login page account buttons only prefill credentials and do not bypass authentication.
+
 ## Local Verification Notes
 
 - Use disposable resources for action tests, such as `autoops-docker-smoke` or `default/autoops-k8s-smoke`.

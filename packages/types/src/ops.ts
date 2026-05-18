@@ -202,7 +202,9 @@ export interface OperationGovernance {
   approvalReason: string | null;
   policyName: string | null;
   approvedAt: string | null;
+  approvedBy?: OperationActivityActor | null;
   rejectedAt: string | null;
+  rejectedBy?: OperationActivityActor | null;
 }
 
 export interface OperationPermissionHints {

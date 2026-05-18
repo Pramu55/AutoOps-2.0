@@ -103,7 +103,10 @@ export class AuthService {
     const user = await prisma.user.findUnique({
       where: { email: input.email },
       include: {
-        memberships: { include: { organization: true } },
+        memberships: {
+          orderBy: { joinedAt: 'asc' },
+          include: { organization: true },
+        },
       },
     });
 

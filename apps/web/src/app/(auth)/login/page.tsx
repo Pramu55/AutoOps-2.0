@@ -14,6 +14,23 @@ type LoginResponse = {
   data: AuthSession;
 };
 
+const LOCAL_DEMO_ACCOUNTS = [
+  {
+    label: 'Operator / Requester',
+    description: 'Can trigger controlled operations and request approvals.',
+    email: 'pramod.local@autoops.dev',
+    password: 'StrongPass123',
+    buttonLabel: 'Use Operator account',
+  },
+  {
+    label: 'Admin / Approver',
+    description: 'Can review, approve, or reject pending operations.',
+    email: 'approver.local@autoops.dev',
+    password: 'StrongPass123',
+    buttonLabel: 'Use Admin account',
+  },
+] as const;
+
 function getRedirectTarget(): string {
   if (typeof window === 'undefined') return '/dashboard';
 
@@ -102,6 +119,12 @@ export default function LoginPage() {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function useDemoAccount(account: (typeof LOCAL_DEMO_ACCOUNTS)[number]) {
+    setEmail(account.email);
+    setPassword(account.password);
+    setError(null);
   }
 
   return (
@@ -212,9 +235,45 @@ export default function LoginPage() {
             </Link>
 
             <div className="mt-8 border-t border-white/20 pt-6">
-              <p className="text-xs font-semibold uppercase tracking-wide text-white/45">Demo credentials</p>
-              <p className="mt-2 break-all text-sm text-white/75">pramod.local@autoops.dev</p>
-              <p className="mt-1 text-sm text-white/75">StrongPass123</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-white/45">
+                Local demo accounts
+              </p>
+              <p className="mt-2 text-sm leading-6 text-white/70">
+                Use these accounts to test the requester and approver workflow locally. In
+                production, use real organization invites and managed users.
+              </p>
+
+              <div className="mt-4 grid gap-3">
+                {LOCAL_DEMO_ACCOUNTS.map((account) => (
+                  <div
+                    key={account.email}
+                    className="rounded border border-white/15 bg-white/[0.07] p-4"
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-white">{account.label}</p>
+                        <p className="mt-1 text-xs leading-5 text-white/60">{account.description}</p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="h-9 shrink-0 rounded bg-white/12 px-3 text-xs font-semibold text-white hover:bg-white/18"
+                        onClick={() => useDemoAccount(account)}
+                      >
+                        {account.buttonLabel}
+                      </Button>
+                    </div>
+                    <div className="mt-3 space-y-1 text-xs text-white/70">
+                      <p className="break-all">
+                        <span className="text-white/45">Email:</span> {account.email}
+                      </p>
+                      <p>
+                        <span className="text-white/45">Password:</span> {account.password}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </section>
