@@ -192,6 +192,13 @@ enum OperationStatus {
   CANCELLED
 }
 
+enum WorkerHeartbeatStatus {
+  RUNNING
+  STOPPING
+  STOPPED
+  ERROR
+}
+
 // ----- Identity ---------------------------------------------------------------
 
 model User {
@@ -633,4 +640,25 @@ model Operation {
   @@index([projectId])
   @@index([environmentId])
   @@map("operations")
+}
+
+model WorkerHeartbeat {
+  id          String                @id @default(uuid()) @db.Uuid
+  workerId    String                @unique
+  hostname    String?
+  processId   Int?
+  service     String
+  version     String?
+  environment String?
+  queues      Json
+  status      WorkerHeartbeatStatus @default(RUNNING)
+  startedAt   DateTime              @db.Timestamptz(3)
+  lastSeenAt  DateTime              @db.Timestamptz(3)
+  metadata    Json?
+  createdAt   DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime              @updatedAt @db.Timestamptz(3)
+
+  @@index([status, lastSeenAt])
+  @@index([service])
+  @@map("worker_heartbeats")
 }

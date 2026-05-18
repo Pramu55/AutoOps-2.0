@@ -38,6 +38,14 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Failed operations show safe error summaries and link to operation detail/recovery where supported.
 - Observability responses do not expose raw operation metadata, provider credentials, kubeconfig, tokens, environment values, or stack traces.
 
+## Worker Heartbeat and Runtime Registry
+
+- Workers persist safe heartbeat rows with service name, process id, queue capabilities, started time, and last seen time.
+- Worker health is derived from heartbeat age: fresh heartbeats are running, stale heartbeats are degraded, old or stopped heartbeats are offline, and missing rows are unknown.
+- Queue coverage is reported from active worker heartbeats for operations, deployments, and system queues.
+- AutoOps does not infer worker liveness from Redis alone and does not fake worker health.
+- Heartbeat metadata stores only safe runtime facts and does not store environment dumps, URLs, credentials, tokens, kubeconfig, or host secrets.
+
 ## Local Verification Notes
 
 - Use disposable resources for action tests, such as `autoops-docker-smoke` or `default/autoops-k8s-smoke`.

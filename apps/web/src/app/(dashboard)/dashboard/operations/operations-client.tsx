@@ -97,6 +97,16 @@ function formatTimelineDuration(value: number | null): string {
   return value === null ? MISSING_VALUE : formatDuration(value);
 }
 
+function formatHeartbeatAge(value: number | null): string {
+  if (value === null) return MISSING_VALUE;
+  if (value < 1_000) return `${value} ms`;
+  const seconds = Math.round(value / 1_000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.round(minutes / 60)}h ago`;
+}
+
 function shortOperationId(value: string): string {
   return value.length > 12 ? value.slice(0, 8) : value;
 }
@@ -110,7 +120,7 @@ function statusTone(status: string): string {
     return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
   }
   if (status === 'UNKNOWN' || status === 'DEGRADED') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
-  if (status === 'UNREACHABLE' || status === 'UNAVAILABLE') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
+  if (status === 'UNREACHABLE' || status === 'UNAVAILABLE' || status === 'OFFLINE') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
   if (status === 'NOT_CONFIGURED') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
   if (status === 'FAILED') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
   if (status === 'NOT_CONNECTED') return 'border-slate-500/25 bg-slate-500/10 text-slate-300';
@@ -292,6 +302,92 @@ function HealthCheckCard({
         <div className="rounded-xl bg-cyan-300/10 p-2 text-cyan-300">{icon}</div>
       </div>
       <p className="mt-4 text-sm leading-6 text-slate-400">{message}</p>
+    </section>
+  );
+}
+
+function WorkerRuntimeCard({
+  worker,
+}: {
+  worker: OpsObservabilityResponse['workerRuntime'] | undefined;
+}) {
+  const queueCoverage = worker?.queueCoverage;
+  const workers = worker?.workers ?? [];
+
+  return (
+    <section className="rounded-2xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10 xl:col-span-2">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-white">Worker Runtime</h3>
+          <span className={`mt-3 inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusTone(worker?.status ?? 'UNKNOWN')}`}>
+            {worker?.status ?? 'UNKNOWN'}
+          </span>
+        </div>
+        <div className="rounded-xl bg-cyan-300/10 p-2 text-cyan-300">
+          <Wrench className="h-5 w-5" />
+        </div>
+      </div>
+      <p className="mt-4 text-sm leading-6 text-slate-400">
+        {worker?.message ?? 'Worker heartbeat status unavailable.'}
+      </p>
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[
+          ['Active', worker?.activeCount ?? 0],
+          ['Stale', worker?.staleCount ?? 0],
+          ['Offline', worker?.offlineCount ?? 0],
+          ['Last seen', worker?.lastSeenAt ? formatDate(worker.lastSeenAt) : 'Never'],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-xl border border-white/10 bg-slate-950/35 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
+            <p className="mt-1 text-sm font-semibold text-white">{value}</p>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        {([
+          ['Operations', queueCoverage?.operations ?? 'UNKNOWN'],
+          ['Deployments', queueCoverage?.deployments ?? 'UNKNOWN'],
+          ['System', queueCoverage?.system ?? 'UNKNOWN'],
+        ] satisfies Array<[string, string]>).map(([label, value]) => (
+          <div key={label} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.035] px-3 py-2">
+            <span className="text-xs text-slate-400">{label}</span>
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusTone(value)}`}>
+              {value}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-5">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Runtime registry</h4>
+        <div className="mt-3 space-y-2">
+          {workers.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-white/15 bg-slate-950/35 p-4 text-sm text-slate-400">
+              No worker heartbeat rows have been received.
+            </div>
+          ) : (
+            workers.map((item) => (
+              <div key={item.workerId} className="rounded-xl border border-white/10 bg-slate-950/35 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-white">{item.service}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      PID {item.runtime.processId ?? MISSING_VALUE} | {item.runtime.environment ?? MISSING_VALUE}
+                    </p>
+                  </div>
+                  <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(item.status)}`}>
+                    {item.status}
+                  </span>
+                </div>
+                <div className="mt-3 grid gap-2 text-xs text-slate-400 sm:grid-cols-3">
+                  <p>Queues: {item.queues.length > 0 ? item.queues.join(', ') : MISSING_VALUE}</p>
+                  <p>Last seen: {formatHeartbeatAge(item.heartbeatAgeMs)}</p>
+                  <p>Started: {formatTimelineDate(item.startedAt)}</p>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
     </section>
   );
 }
@@ -613,18 +709,18 @@ export function OperationsClient() {
           <div>
             <h2 className="text-base font-semibold text-white">Platform Health</h2>
             <p className="mt-1 text-sm text-slate-400">
-              Real readiness signals from API, PostgreSQL, Redis, and queue reachability.
+              Real readiness signals from API, PostgreSQL, Redis, and persisted worker heartbeats.
             </p>
           </div>
           <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-200">
             Generated {formatTime(observability?.generatedAt ?? null)}
           </span>
         </div>
-        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
           <HealthCheckCard title="API" status={platform?.api.status ?? 'UNKNOWN'} message={platform?.api.message ?? 'API health unavailable.'} icon={<Server className="h-5 w-5" />} />
           <HealthCheckCard title="PostgreSQL" status={platform?.database.status ?? 'UNKNOWN'} message={platform?.database.message ?? 'Database health unavailable.'} icon={<Database className="h-5 w-5" />} />
           <HealthCheckCard title="Redis" status={platform?.redis.status ?? 'UNKNOWN'} message={platform?.redis.message ?? 'Redis health unavailable.'} icon={<RadioTower className="h-5 w-5" />} />
-          <HealthCheckCard title="Worker" status={platform?.worker.status ?? 'UNKNOWN'} message={platform?.worker.message ?? 'Worker health unavailable.'} icon={<Wrench className="h-5 w-5" />} />
+          <WorkerRuntimeCard worker={observability?.workerRuntime} />
         </div>
       </section>
 

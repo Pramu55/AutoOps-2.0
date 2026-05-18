@@ -23,6 +23,12 @@ import {
   type OpsProviderHealthSummary,
   type OpsQueueHealthSummary,
   type OpsSummary,
+  type PlatformHealthStatus,
+  type WorkerHeartbeatSummary,
+  type WorkerQueueCoverage,
+  type WorkerQueueCoverageStatus,
+  type WorkerRuntimeItem,
+  type WorkerRuntimeStatus,
 } from '@autoops/types';
 import { NotFoundError } from '@autoops/utils';
 import { redis } from '../../lib/redis.js';
@@ -47,6 +53,9 @@ const ACTIVE_OPERATION_STATUSES = [
 ] as const;
 
 const OBSERVABILITY_RECENT_LIMIT = 50;
+const WORKER_STALE_THRESHOLD_MS = 30_000;
+const WORKER_OFFLINE_THRESHOLD_MS = 90_000;
+const REQUIRED_WORKER_QUEUES = ['operations', 'deployments', 'system'] as const;
 
 type OperationActivityRecord = {
   id: string;
@@ -356,6 +365,7 @@ export class OpsService {
       redisStatus,
       deploymentQueue,
       operationQueue,
+      workerRuntime,
       recentOperations,
       jenkinsHealth,
       dockerHealth,
@@ -365,6 +375,7 @@ export class OpsService {
       this._getRedisStatus(),
       this._getQueueHealth(deploymentsQueue, 'Deployments queue'),
       this._getQueueHealth(operationsQueue, 'Operations queue'),
+      this._getWorkerRuntime(),
       this._getRecentOperationRecords(organizationId),
       this._getJenkinsHealth(),
       this._getDockerHealth(),
@@ -408,11 +419,8 @@ export class OpsService {
           checkedAt: generatedAt,
         },
         worker: {
-          status: operationQueue.status === RuntimeStatus.READY ? 'UNKNOWN' : 'UNAVAILABLE',
-          message:
-            operationQueue.status === RuntimeStatus.READY
-              ? 'Operations queue is reachable; direct worker heartbeat is not exposed to the API.'
-              : 'Operations queue is unavailable, so worker execution may be impacted.',
+          status: this._platformStatusForWorker(workerRuntime.status),
+          message: workerRuntime.message,
           checkedAt: generatedAt,
         },
       },
@@ -420,6 +428,7 @@ export class OpsService {
         deployments: deploymentQueue,
         operations: operationQueue,
       },
+      workerRuntime,
       providers: {
         jenkins: jenkinsHealth,
         docker: dockerHealth,
@@ -616,6 +625,177 @@ export class OpsService {
         message: `${label} counts are unavailable.`,
       };
     }
+  }
+
+  private async _getWorkerRuntime(): Promise<WorkerHeartbeatSummary> {
+    try {
+      const now = Date.now();
+      const heartbeats = await prisma.workerHeartbeat.findMany({
+        where: {
+          service: 'autoops-worker',
+        },
+        orderBy: {
+          lastSeenAt: 'desc',
+        },
+        take: 20,
+        select: {
+          workerId: true,
+          service: true,
+          status: true,
+          queues: true,
+          startedAt: true,
+          lastSeenAt: true,
+          processId: true,
+          environment: true,
+          version: true,
+        },
+      });
+
+      if (heartbeats.length === 0) return this._emptyWorkerRuntime();
+
+      const workers: WorkerRuntimeItem[] = heartbeats.map((heartbeat) => ({
+        workerId: heartbeat.workerId,
+        service: heartbeat.service,
+        status: heartbeat.status,
+        queues: this._stringArray(heartbeat.queues),
+        startedAt: heartbeat.startedAt.toISOString(),
+        lastSeenAt: heartbeat.lastSeenAt.toISOString(),
+        heartbeatAgeMs: Math.max(0, now - heartbeat.lastSeenAt.getTime()),
+        runtime: {
+          ...(heartbeat.processId ? { processId: heartbeat.processId } : {}),
+          ...(heartbeat.environment ? { environment: heartbeat.environment } : {}),
+          version: heartbeat.version,
+        },
+      }));
+
+      const activeWorkers = workers.filter(
+        (worker) =>
+          worker.status === 'RUNNING' && worker.heartbeatAgeMs <= WORKER_STALE_THRESHOLD_MS,
+      );
+      const staleWorkers = workers.filter(
+        (worker) =>
+          worker.status === 'RUNNING' &&
+          worker.heartbeatAgeMs > WORKER_STALE_THRESHOLD_MS &&
+          worker.heartbeatAgeMs <= WORKER_OFFLINE_THRESHOLD_MS,
+      );
+      const offlineWorkers = workers.filter(
+        (worker) =>
+          worker.status !== 'RUNNING' || worker.heartbeatAgeMs > WORKER_OFFLINE_THRESHOLD_MS,
+      );
+      const queueCoverage = this._queueCoverage(activeWorkers);
+      const missingQueues = REQUIRED_WORKER_QUEUES.filter(
+        (queueName) => queueCoverage[queueName] !== 'COVERED',
+      );
+      const status = this._workerRuntimeStatus(
+        activeWorkers.length,
+        staleWorkers.length,
+        missingQueues.length,
+      );
+
+      return {
+        status,
+        message: this._workerRuntimeMessage(status, activeWorkers.length, missingQueues),
+        activeCount: activeWorkers.length,
+        staleCount: staleWorkers.length,
+        offlineCount: offlineWorkers.length,
+        lastSeenAt: workers[0]?.lastSeenAt ?? null,
+        staleThresholdMs: WORKER_STALE_THRESHOLD_MS,
+        offlineThresholdMs: WORKER_OFFLINE_THRESHOLD_MS,
+        queueCoverage,
+        workers,
+      };
+    } catch {
+      return {
+        status: 'UNKNOWN',
+        message: 'Worker heartbeat registry is unavailable.',
+        activeCount: 0,
+        staleCount: 0,
+        offlineCount: 0,
+        lastSeenAt: null,
+        staleThresholdMs: WORKER_STALE_THRESHOLD_MS,
+        offlineThresholdMs: WORKER_OFFLINE_THRESHOLD_MS,
+        queueCoverage: this._unknownQueueCoverage(),
+        workers: [],
+      };
+    }
+  }
+
+  private _emptyWorkerRuntime(): WorkerHeartbeatSummary {
+    return {
+      status: 'UNKNOWN',
+      message: 'No worker heartbeat has been received yet.',
+      activeCount: 0,
+      staleCount: 0,
+      offlineCount: 0,
+      lastSeenAt: null,
+      staleThresholdMs: WORKER_STALE_THRESHOLD_MS,
+      offlineThresholdMs: WORKER_OFFLINE_THRESHOLD_MS,
+      queueCoverage: this._unknownQueueCoverage(),
+      workers: [],
+    };
+  }
+
+  private _queueCoverage(activeWorkers: WorkerRuntimeItem[]): WorkerQueueCoverage {
+    return {
+      operations: this._coverageForQueue(activeWorkers, 'operations'),
+      deployments: this._coverageForQueue(activeWorkers, 'deployments'),
+      system: this._coverageForQueue(activeWorkers, 'system'),
+    };
+  }
+
+  private _coverageForQueue(
+    workers: WorkerRuntimeItem[],
+    queueName: keyof WorkerQueueCoverage,
+  ): WorkerQueueCoverageStatus {
+    return workers.some((worker) => worker.queues.includes(queueName)) ? 'COVERED' : 'UNCOVERED';
+  }
+
+  private _unknownQueueCoverage(): WorkerQueueCoverage {
+    return {
+      operations: 'UNKNOWN',
+      deployments: 'UNKNOWN',
+      system: 'UNKNOWN',
+    };
+  }
+
+  private _workerRuntimeStatus(
+    activeCount: number,
+    staleCount: number,
+    missingQueueCount: number,
+  ): WorkerRuntimeStatus {
+    if (activeCount > 0 && missingQueueCount === 0) return 'RUNNING';
+    if (activeCount > 0 || staleCount > 0) return 'DEGRADED';
+    return 'OFFLINE';
+  }
+
+  private _workerRuntimeMessage(
+    status: WorkerRuntimeStatus,
+    activeCount: number,
+    missingQueues: readonly string[],
+  ): string {
+    if (status === 'RUNNING') {
+      return `${activeCount} active worker heartbeat(s). Queue coverage is fresh.`;
+    }
+    if (activeCount > 0 && missingQueues.length > 0) {
+      return `Worker heartbeat is fresh, but queue coverage is missing for ${missingQueues.join(', ')}.`;
+    }
+    if (status === 'DEGRADED') {
+      return 'Only stale worker heartbeat data is available. Operations may be delayed.';
+    }
+    return 'No fresh worker heartbeat detected. Operations may remain queued until a worker is available.';
+  }
+
+  private _platformStatusForWorker(status: WorkerRuntimeStatus): PlatformHealthStatus {
+    if (status === 'RUNNING') return 'RUNNING';
+    if (status === 'DEGRADED') return 'DEGRADED';
+    if (status === 'OFFLINE') return 'OFFLINE';
+    return 'UNKNOWN';
+  }
+
+  private _stringArray(value: unknown): string[] {
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : [];
   }
 
   private async _getRecentOperationRecords(organizationId: string): Promise<OperationActivityRecord[]> {

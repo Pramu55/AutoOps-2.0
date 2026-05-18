@@ -209,6 +209,7 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
   const [providerHealth, setProviderHealth] = useState<
     OpsObservabilityResponse['providers'][keyof OpsObservabilityResponse['providers']] | null
   >(null);
+  const [workerRuntime, setWorkerRuntime] = useState<OpsObservabilityResponse['workerRuntime'] | null>(null);
 
   const loadDetail = useCallback(
     async (mode: 'initial' | 'refresh' = 'refresh') => {
@@ -218,19 +219,21 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
       try {
         const response = await api.get<DetailApiResponse>(`/v1/ops/activity/${encodeURIComponent(operationId)}`);
         setDetail(response.data);
-        if (
-          response.data.source === 'jenkins' ||
-          response.data.source === 'docker' ||
-          response.data.source === 'kubernetes'
-        ) {
-          try {
-            const observability = await api.get<ObservabilityApiResponse>('/v1/ops/observability');
+        try {
+          const observability = await api.get<ObservabilityApiResponse>('/v1/ops/observability');
+          setWorkerRuntime(observability.data.workerRuntime);
+          if (
+            response.data.source === 'jenkins' ||
+            response.data.source === 'docker' ||
+            response.data.source === 'kubernetes'
+          ) {
             setProviderHealth(observability.data.providers[response.data.source]);
-          } catch {
+          } else {
             setProviderHealth(null);
           }
-        } else {
+        } catch {
           setProviderHealth(null);
+          setWorkerRuntime(null);
         }
       } catch (loadError) {
         setError(getErrorMessage(loadError));
@@ -247,6 +250,8 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
   }, [loadDetail]);
 
   const isActiveOperation = detail ? ACTIVE_OPERATION_STATUSES.has(detail.status) : false;
+  const workerUnavailableForActiveOperation =
+    isActiveOperation && workerRuntime !== null && workerRuntime.status !== 'RUNNING';
 
   useEffect(() => {
     if (!isActiveOperation || pendingRetry) return;
@@ -368,6 +373,13 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
       {isActiveOperation ? (
         <section className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100">
           This operation is still active. AutoOps is refreshing this detail view every {DETAIL_POLL_INTERVAL_MS / 1_000} seconds until it reaches a terminal state.
+        </section>
+      ) : null}
+
+      {workerUnavailableForActiveOperation ? (
+        <section className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-100">
+          No fresh worker heartbeat detected. This operation may remain queued until a worker is available.
+          <span className="mt-2 block text-rose-200/80">Worker status: {workerRuntime.status}. {workerRuntime.message}</span>
         </section>
       ) : null}
 

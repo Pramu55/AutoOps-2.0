@@ -71,8 +71,13 @@ export type PlatformHealthStatus =
   | 'READY'
   | 'RUNNING'
   | 'DEGRADED'
+  | 'OFFLINE'
   | 'UNAVAILABLE'
   | 'UNKNOWN';
+
+export type WorkerRuntimeStatus = 'RUNNING' | 'DEGRADED' | 'OFFLINE' | 'UNKNOWN';
+export type WorkerHeartbeatState = 'RUNNING' | 'STOPPING' | 'STOPPED' | 'ERROR';
+export type WorkerQueueCoverageStatus = 'COVERED' | 'UNCOVERED' | 'UNKNOWN';
 
 export interface OpsHealthCheck {
   status: PlatformHealthStatus;
@@ -82,6 +87,40 @@ export interface OpsHealthCheck {
 
 export interface OpsQueueHealthSummary extends OpsQueueSummary {
   message: string;
+}
+
+export interface WorkerRuntimeItem {
+  workerId: string;
+  service: string;
+  status: WorkerHeartbeatState;
+  queues: string[];
+  startedAt: string;
+  lastSeenAt: string;
+  heartbeatAgeMs: number;
+  runtime: {
+    processId?: number;
+    environment?: string;
+    version?: string | null;
+  };
+}
+
+export interface WorkerQueueCoverage {
+  operations: WorkerQueueCoverageStatus;
+  deployments: WorkerQueueCoverageStatus;
+  system: WorkerQueueCoverageStatus;
+}
+
+export interface WorkerHeartbeatSummary {
+  status: WorkerRuntimeStatus;
+  message: string;
+  activeCount: number;
+  staleCount: number;
+  offlineCount: number;
+  lastSeenAt: string | null;
+  staleThresholdMs: number;
+  offlineThresholdMs: number;
+  queueCoverage: WorkerQueueCoverage;
+  workers: WorkerRuntimeItem[];
 }
 
 export interface OpsIntegrationReadiness {
@@ -255,6 +294,7 @@ export interface OpsObservabilityResponse {
     deployments: OpsQueueHealthSummary;
     operations: OpsQueueHealthSummary;
   };
+  workerRuntime: WorkerHeartbeatSummary;
   providers: {
     jenkins: OpsProviderHealthSummary;
     docker: OpsProviderHealthSummary;

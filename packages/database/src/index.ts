@@ -20,5 +20,6 @@ export {
   OperationProvider,
   OperationStatus,
   OperationType,
+  WorkerHeartbeatStatus,
   LogLevel,
 } from '@prisma/client';

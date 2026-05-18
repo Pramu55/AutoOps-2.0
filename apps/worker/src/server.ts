@@ -2,12 +2,13 @@ import 'dotenv/config';
 import { prisma as db } from '@autoops/database';
 import { logger } from './lib/logger.js';
 import { closeRedis } from './lib/redis.js';
-import { createDeploymentsWorker } from './queues/deployments.queue.js';
+import { createDeploymentsWorker, DEPLOYMENTS_QUEUE } from './queues/deployments.queue.js';
 import { createHealthServer } from './http/health.js';
 import type { Worker } from 'bullmq';
 import type http from 'node:http';
-import { createOperationsWorker } from './queues/operations.queue.js';
-import { createSystemWorker } from './queues/system.queue.js';
+import { createOperationsWorker, OPERATIONS_QUEUE } from './queues/operations.queue.js';
+import { createSystemWorker, SYSTEM_QUEUE } from './queues/system.queue.js';
+import { createWorkerHeartbeatRegistry } from './runtime/worker-heartbeat.js';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
@@ -20,16 +21,20 @@ async function main(): Promise<void> {
 
   // Start BullMQ workers
   const workers: Worker[] = [
-  createSystemWorker(),
-  createDeploymentsWorker(),
-  createOperationsWorker(),
-  // Phase 2: createBuildsWorker()
-  // Phase 4: createAIWorker()
-];
+    createSystemWorker(),
+    createDeploymentsWorker(),
+    createOperationsWorker(),
+    // Phase 2: createBuildsWorker()
+    // Phase 4: createAIWorker()
+  ];
   logger.info(`Started ${workers.length} queue worker(s)`);
 
   // Start health/metrics HTTP server
   const healthServer: http.Server = createHealthServer();
+  const heartbeat = createWorkerHeartbeatRegistry({
+    queues: [SYSTEM_QUEUE, DEPLOYMENTS_QUEUE, OPERATIONS_QUEUE],
+  });
+  await heartbeat.start();
 
   // ── Graceful shutdown ─────────────────────────────────────────────────────
   let shuttingDown = false;
@@ -39,6 +44,8 @@ async function main(): Promise<void> {
     shuttingDown = true;
 
     logger.info({ signal }, 'Shutdown signal received — draining workers…');
+
+    await heartbeat.markStopping();
 
     // Close all BullMQ workers (wait for in-flight jobs)
     await Promise.all(workers.map((w) => w.close()));
@@ -51,6 +58,7 @@ async function main(): Promise<void> {
 
     // Close Redis + DB
     await closeRedis();
+    await heartbeat.markStopped();
     await db.$disconnect();
 
     logger.info('Worker shut down cleanly');
