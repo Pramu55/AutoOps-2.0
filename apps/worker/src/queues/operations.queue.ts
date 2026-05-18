@@ -8,6 +8,7 @@ import { createBullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
 import { jobsProcessedTotal, jobDurationSeconds } from '../lib/metrics.js';
+import { createIncidentForFailedOperation } from '../runtime/operation-incidents.js';
 
 export interface OperationJobData {
   operationId: string;
@@ -94,15 +95,20 @@ async function processOperation(job: Job<OperationJobData>): Promise<void> {
     jobLog.info({ status: OperationStatus.SUCCEEDED }, 'Operation completed');
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Operation failed';
-    await db.operation.update({
+    const failedOperation = await db.operation.update({
       where: { id: operation.id },
       data: {
         status: OperationStatus.FAILED,
-          error: {
-            message,
-          } as Prisma.InputJsonObject,
+        error: {
+          message,
+        } as Prisma.InputJsonObject,
       },
     });
+    try {
+      await createIncidentForFailedOperation(db, failedOperation);
+    } catch (incidentError) {
+      jobLog.warn({ err: incidentError }, 'Failed to create incident for failed operation');
+    }
     jobLog.error({ err: error }, 'Operation failed');
     throw error;
   }

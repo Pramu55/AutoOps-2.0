@@ -87,6 +87,10 @@ enum PipelineStepKind {
 }
 
 enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
   SEV1
   SEV2
   SEV3
@@ -94,6 +98,7 @@ enum IncidentSeverity {
 }
 
 enum IncidentStatus {
+  OPEN
   TRIGGERED
   ACKNOWLEDGED
   MITIGATED
@@ -222,6 +227,8 @@ model User {
   requestedOps    Operation[]     @relation("requestedOperations")
   approvedOps     Operation[]     @relation("approvedOperations")
   rejectedOps     Operation[]     @relation("rejectedOperations")
+  acknowledgedIncidents Incident[] @relation("IncidentAcknowledgedBy")
+  resolvedIncidents     Incident[] @relation("IncidentResolvedBy")
   aiMessages      AIMessage[]
 
   @@index([deletedAt])
@@ -259,6 +266,7 @@ model Organization {
   projects        Project[]
   auditLogs       AuditLog[]
   operations      Operation[]
+  incidents       Incident[]
   aiConversations AIConversation[]
 
   @@map("organizations")
@@ -477,21 +485,39 @@ model PipelineStep {
 // ----- Observability ----------------------------------------------------------
 
 model Incident {
-  id             String           @id @default(uuid()) @db.Uuid
-  projectId      String           @db.Uuid
-  project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  title          String
-  description    String?
-  severity       IncidentSeverity @default(SEV3)
-  status         IncidentStatus   @default(TRIGGERED)
-  detectedAt     DateTime         @default(now()) @db.Timestamptz(3)
-  acknowledgedAt DateTime?        @db.Timestamptz(3)
-  resolvedAt     DateTime?        @db.Timestamptz(3)
-  rootCause      String?
+  id                   String           @id @default(uuid()) @db.Uuid
+  organizationId       String?          @db.Uuid
+  organization         Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId            String?          @db.Uuid
+  project              Project?         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  operationId          String?          @unique @db.Uuid
+  operation            Operation?       @relation(fields: [operationId], references: [id], onDelete: SetNull)
+  title                String
+  description          String?
+  severity             IncidentSeverity @default(MEDIUM)
+  status               IncidentStatus   @default(OPEN)
+  source               String           @default("operation")
+  provider             OperationProvider?
+  targetKind           String?
+  targetName           String?
+  safeErrorMessage     String?
+  runbookKey           String?
+  detectedAt           DateTime         @default(now()) @db.Timestamptz(3)
+  acknowledgedByUserId String?          @db.Uuid
+  acknowledgedBy       User?            @relation("IncidentAcknowledgedBy", fields: [acknowledgedByUserId], references: [id], onDelete: SetNull)
+  acknowledgedAt       DateTime?        @db.Timestamptz(3)
+  resolvedByUserId     String?          @db.Uuid
+  resolvedBy           User?            @relation("IncidentResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+  resolvedAt           DateTime?        @db.Timestamptz(3)
+  resolutionNote       String?
+  rootCause            String?
+  updatedAt            DateTime         @updatedAt @db.Timestamptz(3)
 
   events IncidentEvent[]
 
+  @@index([organizationId, status, detectedAt(sort: Desc)])
   @@index([projectId, status, detectedAt(sort: Desc)])
+  @@index([operationId])
   @@index([severity])
   @@map("incidents")
 }
@@ -633,6 +659,7 @@ model Operation {
   updatedAt         DateTime          @updatedAt @db.Timestamptz(3)
 
   auditLogs AuditLog[]
+  incident  Incident?
 
   @@unique([organizationId, idempotencyKey])
   @@index([organizationId, status, createdAt(sort: Desc)])

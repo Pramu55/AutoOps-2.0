@@ -66,6 +66,15 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Requesters cannot approve or reject their own approval-required operation; a separate authorized approver is required.
 - Permission decisions are derived from real organization memberships and no fake roles, fake approvals, or generic unsafe execution paths are created.
 
+## Incidents and Runbooks
+
+- Failed worker-executed operations create tenant-scoped incident records linked to the failed operation.
+- Incidents use an `OPEN` -> `ACKNOWLEDGED` -> `RESOLVED` response lifecycle with safe acknowledger, resolver, and timestamp fields.
+- Incident severity and runbook keys are deterministic from the provider and operation type; no fake impact metrics are generated.
+- Runbooks are fixed, safe guidance for observe, verify, recover, and escalate steps. AutoOps does not use AI-generated runbooks yet.
+- Incident views show safe error summaries only and never expose raw operation input, result, error metadata, stack traces, credentials, or provider secrets.
+- Recovery remains controlled by existing confirmation, policy, RBAC, and worker execution. AutoOps does not perform automatic remediation or unsafe shell/exec/apply/delete actions.
+
 ## Local Demo Accounts for Approval Testing
 
 - Operator / Requester: `pramod.local@autoops.dev`

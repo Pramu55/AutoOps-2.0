@@ -127,7 +127,8 @@ function statusTone(status: string): string {
   if (status === 'UNKNOWN' || status === 'DEGRADED') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
   if (status === 'UNREACHABLE' || status === 'UNAVAILABLE' || status === 'OFFLINE') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
   if (status === 'NOT_CONFIGURED') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
-  if (status === 'FAILED') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
+  if (status === 'FAILED' || status === 'OPEN' || status === 'TRIGGERED') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
+  if (status === 'ACKNOWLEDGED' || status === 'MITIGATED') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
   if (status === 'NOT_CONNECTED') return 'border-slate-500/25 bg-slate-500/10 text-slate-300';
   return 'border-cyan-300/25 bg-cyan-300/10 text-cyan-200';
 }
@@ -152,9 +153,9 @@ function actorLabel(actor: OperationActivityItem['actor']): string {
 }
 
 function riskTone(riskLevel: string): string {
-  if (riskLevel === 'LOW') return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
-  if (riskLevel === 'MEDIUM') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
-  if (riskLevel === 'HIGH') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
+  if (riskLevel === 'LOW' || riskLevel === 'SEV4') return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
+  if (riskLevel === 'MEDIUM' || riskLevel === 'SEV3') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
+  if (riskLevel === 'HIGH' || riskLevel === 'CRITICAL' || riskLevel === 'SEV1' || riskLevel === 'SEV2') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
   return 'border-slate-500/25 bg-slate-500/10 text-slate-300';
 }
 
@@ -674,6 +675,7 @@ export function OperationsClient() {
   const queueHealth = observability?.queues;
   const providerHealth = observability?.providers;
   const operationObservability = observability?.operations;
+  const incidentSummary = observability?.incidents;
   const resources = summary?.resources;
   const deployments = summary?.deployments;
   const latestDeployments = useMemo(() => deployments?.latest ?? [], [deployments]);
@@ -824,6 +826,83 @@ export function OperationsClient() {
               <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-white">Incidents</h2>
+            <p className="mt-1 text-sm text-slate-400">
+              Failed operations are tracked as tenant-scoped incidents with safe runbooks.
+            </p>
+          </div>
+          <Button asChild variant="outline" size="sm" className="rounded-full border-white/10 bg-white/[0.04]">
+            <Link href="/dashboard/incidents">View incident register</Link>
+          </Button>
+        </div>
+        <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[
+            ['Open incidents', incidentSummary?.open ?? 0],
+            ['Acknowledged', incidentSummary?.acknowledged ?? 0],
+            ['High/Critical', incidentSummary?.criticalOpen ?? 0],
+            ['Resolved 24h', incidentSummary?.resolvedRecent ?? 0],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
+              <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
+              <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-5 space-y-3">
+          {(incidentSummary?.latest ?? []).length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-white/15 bg-slate-950/35 p-6 text-center text-sm text-slate-400">
+              No incidents recorded.
+            </div>
+          ) : (
+            incidentSummary?.latest.map((incident) => (
+              <div key={incident.id} className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${riskTone(incident.severity)}`}>
+                        {incident.severity}
+                      </span>
+                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(incident.status)}`}>
+                        {incident.status}
+                      </span>
+                      <span className="rounded-full border border-white/10 bg-white/[0.045] px-2.5 py-1 text-[11px] font-semibold text-slate-300">
+                        {incident.provider ?? 'AutoOps'}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-sm font-semibold text-white">{incident.title}</p>
+                    <p className="mt-1 text-sm text-slate-400">{incident.targetLabel ?? MISSING_VALUE}</p>
+                    {incident.safeErrorMessage ? (
+                      <p className="mt-3 rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-100">
+                        {incident.safeErrorMessage}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <Link
+                      href={`/dashboard/incidents/${incident.id}`}
+                      className="inline-flex items-center rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/45 hover:bg-cyan-300/15"
+                    >
+                      View incident
+                    </Link>
+                    {incident.linkedOperationId ? (
+                      <Link
+                        href={`/dashboard/operations/${incident.linkedOperationId}`}
+                        className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-white/[0.08]"
+                      >
+                        View operation
+                      </Link>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </section>
 

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Deployment } from './deployment.js';
+import type { IncidentListItem, IncidentSummary } from './incident.js';
 import { OperationStatus, OperationType, type OperationStatus as OperationStatusValue, type OperationType as OperationTypeValue } from './operation.js';
 
 export const RuntimeStatus = {
@@ -272,6 +273,7 @@ export interface OperationDetailResponse extends OperationActivityItem {
   providerDetails: OperationProviderDetails;
   lifecycle: OperationLifecycleItem[];
   retry: OperationRetryInfo;
+  incident: Pick<IncidentListItem, 'id' | 'title' | 'severity' | 'status'> | null;
 }
 
 export interface OpsProviderHealthSummary {
@@ -322,5 +324,6 @@ export interface OpsObservabilityResponse {
     recentFailures: OperationObservabilityItem[];
     latest: OperationObservabilityItem[];
   };
+  incidents: IncidentSummary;
   generatedAt: string;
 }

@@ -74,6 +74,10 @@ export const PipelineRunStatus = {
 export type PipelineRunStatus = (typeof PipelineRunStatus)[keyof typeof PipelineRunStatus];
 
 export const IncidentSeverity = {
+  LOW: 'LOW',
+  MEDIUM: 'MEDIUM',
+  HIGH: 'HIGH',
+  CRITICAL: 'CRITICAL',
   SEV1: 'SEV1',
   SEV2: 'SEV2',
   SEV3: 'SEV3',
@@ -82,6 +86,7 @@ export const IncidentSeverity = {
 export type IncidentSeverity = (typeof IncidentSeverity)[keyof typeof IncidentSeverity];
 
 export const IncidentStatus = {
+  OPEN: 'OPEN',
   TRIGGERED: 'TRIGGERED',
   ACKNOWLEDGED: 'ACKNOWLEDGED',
   MITIGATED: 'MITIGATED',

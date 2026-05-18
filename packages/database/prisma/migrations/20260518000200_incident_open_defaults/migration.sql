@@ -1,0 +1,3 @@
+ALTER TABLE "incidents"
+  ALTER COLUMN "severity" SET DEFAULT 'MEDIUM',
+  ALTER COLUMN "status" SET DEFAULT 'OPEN';

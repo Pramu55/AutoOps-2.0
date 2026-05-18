@@ -58,19 +58,19 @@ function statusTone(status: string): string {
   if (status === 'SUCCEEDED' || status === 'CONNECTED' || status === 'completed') {
     return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
   }
-  if (status === 'FAILED' || status === 'REJECTED' || status === 'CANCELLED' || status === 'failed') {
+  if (status === 'FAILED' || status === 'REJECTED' || status === 'CANCELLED' || status === 'OPEN' || status === 'TRIGGERED' || status === 'failed') {
     return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
   }
-  if (status === 'RUNNING' || status === 'QUEUED' || status === 'PENDING_APPROVAL' || status === 'active') {
+  if (status === 'RUNNING' || status === 'QUEUED' || status === 'PENDING_APPROVAL' || status === 'ACKNOWLEDGED' || status === 'MITIGATED' || status === 'active') {
     return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
   }
   return 'border-slate-500/25 bg-slate-500/10 text-slate-300';
 }
 
 function riskTone(riskLevel: string): string {
-  if (riskLevel === 'LOW') return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
-  if (riskLevel === 'MEDIUM') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
-  if (riskLevel === 'HIGH') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
+  if (riskLevel === 'LOW' || riskLevel === 'SEV4') return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
+  if (riskLevel === 'MEDIUM' || riskLevel === 'SEV3') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
+  if (riskLevel === 'HIGH' || riskLevel === 'CRITICAL' || riskLevel === 'SEV1' || riskLevel === 'SEV2') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
   return 'border-slate-500/25 bg-slate-500/10 text-slate-300';
 }
 
@@ -585,6 +585,39 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
           </div>
         </section>
       </div>
+
+      {detail.status === 'FAILED' ? (
+        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-white">Linked incident</h2>
+              {detail.incident ? (
+                <>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${riskTone(detail.incident.severity)}`}>
+                      {detail.incident.severity}
+                    </span>
+                    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(detail.incident.status)}`}>
+                      {detail.incident.status}
+                    </span>
+                  </div>
+                  <p className="mt-3 text-sm font-semibold text-white">{detail.incident.title}</p>
+                  <p className="mt-1 text-sm text-slate-400">
+                    This failed operation has an incident record with deterministic runbook guidance.
+                  </p>
+                </>
+              ) : (
+                <p className="mt-2 text-sm text-slate-400">No incident record found for this failed operation.</p>
+              )}
+            </div>
+            {detail.incident ? (
+              <Button asChild variant="outline" className="rounded-full border-cyan-300/25 bg-cyan-300/10 text-cyan-100">
+                <Link href={`/dashboard/incidents/${detail.incident.id}`}>View incident</Link>
+              </Button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">

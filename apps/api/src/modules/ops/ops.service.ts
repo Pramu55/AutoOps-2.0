@@ -3,6 +3,7 @@ import {
   DeploymentStatus,
   IntegrationCategory,
   IntegrationStatus,
+  IncidentStatus,
   KubernetesConnectionStatus,
   OperationApprovalStatus,
   OperationActivitySource,
@@ -13,6 +14,7 @@ import {
   ProviderConnectionStatus,
   RuntimeStatus,
   type Deployment,
+  type IncidentSeverity,
   type OperationActivityItem,
   type OperationActivityResponse,
   type OperationDetailResponse,
@@ -40,6 +42,7 @@ import { awsService } from '../integrations/aws/aws.service.js';
 import { dockerService } from '../integrations/docker/docker.service.js';
 import { jenkinsService } from '../integrations/jenkins/jenkins.service.js';
 import { kubernetesService } from '../integrations/kubernetes/kubernetes.service.js';
+import { incidentService } from '../incidents/incident.service.js';
 import { operationAuthorizationService } from '../operations/operation-authorization.service.js';
 
 const ACTIVE_DEPLOYMENT_STATUSES = [
@@ -87,6 +90,12 @@ type OperationActivityRecord = {
     id: string;
     name: string | null;
     email: string | null;
+  } | null;
+  incident?: {
+    id: string;
+    title: string;
+    severity: string;
+    status: string;
   } | null;
 };
 
@@ -221,6 +230,14 @@ export class OpsService {
             email: true,
           },
         },
+        incident: {
+          select: {
+            id: true,
+            title: true,
+            severity: true,
+            status: true,
+          },
+        },
       },
     });
 
@@ -234,52 +251,66 @@ export class OpsService {
     userId: string,
     operationId: string,
   ): Promise<OperationDetailResponse> {
-    const operation = await prisma.operation.findFirst({
-      where: {
-        id: operationId,
-        organizationId,
-      },
-      select: {
-        id: true,
-        provider: true,
-        operationType: true,
-        status: true,
-        input: true,
-        result: true,
-        error: true,
-        approvedAt: true,
-        rejectedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        requestedByUserId: true,
-        requestedBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
+    const [operation, incident] = await Promise.all([
+      prisma.operation.findFirst({
+        where: {
+          id: operationId,
+          organizationId,
+        },
+        select: {
+          id: true,
+          provider: true,
+          operationType: true,
+          status: true,
+          input: true,
+          result: true,
+          error: true,
+          approvedAt: true,
+          rejectedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          requestedByUserId: true,
+          requestedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          approvedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          rejectedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
           },
         },
-        approvedBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
+      }),
+      prisma.incident.findFirst({
+        where: {
+          operationId,
+          organizationId,
         },
-        rejectedBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
+        select: {
+          id: true,
+          title: true,
+          severity: true,
+          status: true,
         },
-      },
-    });
+      }),
+    ]);
 
     if (!operation) throw new NotFoundError('Operation');
 
     const role = await operationAuthorizationService.getOrganizationRole({ organizationId, userId });
-    return this._toOperationDetail(operation, role, userId);
+    return this._toOperationDetail({ ...operation, incident }, role, userId);
   }
 
   async getSummary(organizationId: string): Promise<OpsSummary> {
@@ -427,6 +458,7 @@ export class OpsService {
       dockerHealth,
       kubernetesHealth,
       role,
+      incidentSummary,
     ] = await Promise.all([
       this._getDatabaseStatus(),
       this._getRedisStatus(),
@@ -438,6 +470,7 @@ export class OpsService {
       this._getDockerHealth(),
       this._getKubernetesHealth(),
       operationAuthorizationService.getOrganizationRole({ organizationId, userId }),
+      incidentService.getSummary(organizationId, userId),
     ]);
 
     const observableOperations = recentOperations.map((operation) =>
@@ -500,6 +533,7 @@ export class OpsService {
         recentFailures,
         latest: observableOperations.slice(0, 10),
       },
+      incidents: incidentSummary,
       generatedAt,
     };
   }
@@ -1141,6 +1175,19 @@ export class OpsService {
       providerDetails: this._providerDetails(operation.provider, operation.operationType, input, result),
       lifecycle: this._lifecycle(operation),
       retry: this._retryInfo(operation.operationType, input, result),
+      incident: operation.incident
+        ? {
+            id: operation.incident.id,
+            title: operation.incident.title,
+            severity: operation.incident.severity as IncidentSeverity,
+            status:
+              operation.incident.status === 'TRIGGERED'
+                ? IncidentStatus.OPEN
+                : operation.incident.status === 'MITIGATED'
+                  ? IncidentStatus.ACKNOWLEDGED
+                  : (operation.incident.status as NonNullable<OperationDetailResponse['incident']>['status']),
+          }
+        : null,
       errorMessage: activity.errorMessage ?? this._stringField(error, 'reason'),
     };
   }
