@@ -27,7 +27,7 @@ function HealthCard({
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-          <p className="mt-2 text-lg font-semibold text-emerald-300">{status}</p>
+          <p className="mt-2 text-lg font-semibold text-emerald-700">{status}</p>
         </div>
         <div className="rounded-lg bg-primary/10 p-2 text-primary">{icon}</div>
       </div>

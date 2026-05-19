@@ -48,7 +48,7 @@ export default function AlertsPage() {
             <h2 className="text-sm font-semibold text-foreground">Alert Rules</h2>
             <p className="mt-1 text-sm text-muted-foreground">Rules staged for future evaluator and notification wiring.</p>
           </div>
-          <Siren className="h-5 w-5 text-amber-300" />
+          <Siren className="h-5 w-5 text-amber-700" />
         </div>
         <div className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-2">
           {rules.map(({ name, trigger, icon: Icon }) => (

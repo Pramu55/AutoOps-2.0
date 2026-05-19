@@ -57,18 +57,18 @@ function shortSha(value: string | null): string {
 }
 
 function statusClass(status: string): string {
-  if (status === 'SUCCEEDED') return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300';
+  if (status === 'SUCCEEDED') return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700';
   if (status === 'FAILED') return 'border-destructive/40 bg-destructive/10 text-destructive';
   if (status === 'RUNNING' || status === 'DEPLOYING' || status === 'BUILDING') {
     return 'border-primary/25 bg-primary/10 text-primary';
   }
-  if (status === 'QUEUED') return 'border-amber-500/25 bg-amber-500/10 text-amber-300';
+  if (status === 'QUEUED') return 'border-amber-500/25 bg-amber-500/10 text-amber-700';
   return 'border-border bg-muted text-muted-foreground';
 }
 
 function eventLevelClass(level: string): string {
   if (level === 'ERROR' || level === 'FATAL') return 'border-destructive/40 bg-destructive/10 text-destructive';
-  if (level === 'WARN') return 'border-amber-500/25 bg-amber-500/10 text-amber-300';
+  if (level === 'WARN') return 'border-amber-500/25 bg-amber-500/10 text-amber-700';
   return 'border-primary/25 bg-primary/10 text-primary';
 }
 
@@ -98,7 +98,7 @@ function SummaryTile({
   icon: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4 shadow-sm">
+    <div className="rounded-xl border border-slate-200 bg-slate-100 p-4 shadow-sm">
       <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
         {icon}
         {label}
@@ -188,8 +188,8 @@ export function DeploymentDetailClient({ deploymentId }: { deploymentId: string 
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.18),transparent_30%),linear-gradient(135deg,rgba(255,255,255,0.09),rgba(255,255,255,0.025))] p-6 shadow-2xl shadow-black/20">
-        <div className="absolute inset-0 bg-grid opacity-40" />
+      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="pointer-events-none absolute inset-0 bg-grid opacity-40" />
         <div className="relative flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <Button asChild type="button" variant="ghost" className="-ml-3 mb-3">
@@ -214,7 +214,7 @@ export function DeploymentDetailClient({ deploymentId }: { deploymentId: string 
             variant="outline"
             onClick={() => void loadDeployment()}
             disabled={isRefreshing}
-            className="border-white/10 bg-white/5 hover:bg-white/10"
+            className="border-slate-200 bg-white hover:bg-slate-50"
           >
             <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
             Refresh
@@ -222,7 +222,7 @@ export function DeploymentDetailClient({ deploymentId }: { deploymentId: string 
         </div>
       </section>
 
-      <section className="rounded-2xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
           <SummaryTile label="Trigger" value={deployment.trigger} icon={<CheckCircle2 className="h-4 w-4" />} />
           <SummaryTile label="Commit" value={shortSha(deployment.commitSha)} icon={<GitCommit className="h-4 w-4" />} />
@@ -241,14 +241,14 @@ export function DeploymentDetailClient({ deploymentId }: { deploymentId: string 
         ) : null}
       </section>
 
-      <section className="rounded-2xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-sm font-semibold text-foreground">Deployment Metadata</h2>
         <div className="mt-4">
           <MetadataBlock metadata={deployment.metadata} />
         </div>
       </section>
 
-      <section className="rounded-2xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-4">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Event Timeline</h2>
@@ -271,7 +271,7 @@ export function DeploymentDetailClient({ deploymentId }: { deploymentId: string 
             </div>
           ) : (
             events.map((event, index) => (
-              <article key={event.id} className="relative rounded-2xl border border-white/10 bg-background/35 p-4 pl-12 transition hover:border-primary/30 hover:bg-white/[0.035]">
+              <article key={event.id} className="relative rounded-md border border-slate-200 bg-background/35 p-4 pl-12 transition hover:border-primary/30 hover:bg-slate-50">
                 <div className="absolute left-5 top-5 flex h-5 w-5 items-center justify-center rounded-full border border-primary/30 bg-primary/15">
                   <span className="h-2 w-2 rounded-full bg-primary" />
                 </div>

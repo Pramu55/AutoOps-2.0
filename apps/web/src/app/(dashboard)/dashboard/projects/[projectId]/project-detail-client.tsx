@@ -702,7 +702,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           </div>
 
           {successMessage ? (
-            <div className="flex items-center gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+            <div className="flex items-center gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700">
               <CheckCircle2 className="h-4 w-4" />
               {successMessage}
             </div>

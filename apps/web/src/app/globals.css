@@ -4,33 +4,33 @@
 
 @layer base {
   :root {
-    /* Dark glassmorphism — base palette */
-    --background:   224 14% 8%;
-    --foreground:   210 20% 92%;
+    /* Cloud console palette: dark chrome, light workspace */
+    --background:   210 40% 98%;
+    --foreground:   222 47% 11%;
 
-    --card:         224 14% 11%;
-    --card-foreground: 210 20% 92%;
+    --card:         0 0% 100%;
+    --card-foreground: 222 47% 11%;
 
-    --popover:      224 14% 10%;
-    --popover-foreground: 210 20% 92%;
+    --popover:      0 0% 100%;
+    --popover-foreground: 222 47% 11%;
 
     --primary:      217 91% 60%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary:    224 14% 16%;
-    --secondary-foreground: 210 20% 80%;
+    --secondary:    214 32% 91%;
+    --secondary-foreground: 222 47% 11%;
 
-    --muted:        224 14% 14%;
-    --muted-foreground: 215 15% 55%;
+    --muted:        210 40% 96%;
+    --muted-foreground: 215 16% 47%;
 
-    --accent:       224 14% 18%;
-    --accent-foreground: 210 20% 92%;
+    --accent:       214 95% 93%;
+    --accent-foreground: 217 91% 32%;
 
     --destructive:  0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
-    --border:       224 14% 18%;
-    --input:        224 14% 16%;
+    --border:       214 32% 88%;
+    --input:        0 0% 100%;
     --ring:         217 91% 60%;
 
     --radius: 0.625rem;
@@ -42,7 +42,7 @@
 
   html {
     @apply antialiased;
-    color-scheme: dark;
+    color-scheme: light;
   }
 
   body {
@@ -60,16 +60,16 @@
 }
 
 @layer utilities {
-  /* Glass card surface */
+  /* Console card surface */
   .glass {
-    @apply bg-glass backdrop-blur-md border border-white/10 shadow-xl shadow-black/10;
+    @apply border border-slate-200 bg-white shadow-sm;
   }
 
-  /* Grid dot background */
+  /* Subtle cloud-console grid background */
   .bg-grid {
     background-image:
-      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+      linear-gradient(rgba(37,99,235,0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(37,99,235,0.06) 1px, transparent 1px);
     background-size: 32px 32px;
   }
 

@@ -134,33 +134,32 @@ export default function RegisterPage() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#17182e] text-white">
-      <div className="absolute inset-0 bg-[linear-gradient(120deg,rgba(28,36,76,0.92),rgba(52,40,88,0.76)_48%,rgba(102,22,76,0.78))]" />
-      <div className="absolute inset-0 opacity-45 [background-image:linear-gradient(30deg,rgba(255,255,255,0.10)_1px,transparent_1px),linear-gradient(150deg,rgba(255,255,255,0.08)_1px,transparent_1px)] [background-size:96px_96px]" />
+    <main className="min-h-screen bg-[linear-gradient(120deg,#f7fff0_0%,#d9ffd9_36%,#f7fbff_72%,#ffffff_100%)] text-[#16191f]">
+      <div className="border-b border-[#d5dbdb] bg-white"><div className="mx-auto flex h-20 max-w-[1280px] items-center justify-between px-6"><a href="/" className="flex items-end gap-2 text-3xl font-bold tracking-tight text-[#111827]"><span>autoops</span><span className="mb-1.5 h-1.5 w-10 rounded-full bg-[#ff9900]" /></a><span className="text-sm font-semibold text-[#5f6b7a]">Create local workspace</span></div></div>
 
-      <div className="relative mx-auto grid min-h-screen w-full max-w-[1120px] grid-cols-1 gap-10 px-5 py-8 md:grid-cols-[0.9fr_1.1fr] md:items-center md:px-8 lg:gap-16">
+      <div className="mx-auto grid min-h-[calc(100vh-5rem)] w-full max-w-[1280px] grid-cols-1 gap-10 px-6 py-12 md:grid-cols-[0.9fr_1.1fr] md:items-center lg:gap-16">
         <section className="hidden md:block">
-          <Link href="/" className="mb-12 inline-flex items-center gap-3 text-lg font-semibold">
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-violet-500 shadow-xl shadow-blue-950/40">
-              <Zap className="h-7 w-7" />
+          <Link href="/" className="mb-12 inline-flex items-center gap-3 text-lg font-bold">
+            <span className="flex h-12 w-12 items-center justify-center rounded bg-[#16191f]">
+              <Zap className="h-7 w-7 text-white" />
             </span>
             AutoOps
           </Link>
-          <h1 className="max-w-md text-5xl font-semibold tracking-tight">Create your control-plane workspace.</h1>
-          <p className="mt-6 max-w-sm text-base leading-7 text-white/75">
+          <h1 className="max-w-md text-5xl font-bold tracking-tight text-[#16191f]">Create your control-plane workspace.</h1>
+          <p className="mt-6 max-w-sm text-base leading-7 text-[#414d5c]">
             Register a user, create an organization workspace, and start operating projects,
             environments, and simulation deployments.
           </p>
         </section>
 
         <section className="w-full md:justify-self-end">
-          <div className="mx-auto w-full max-w-[520px] rounded-2xl border border-white/15 bg-slate-950/50 p-6 shadow-2xl backdrop-blur-xl sm:p-8">
-            <Link href="/login" className="mb-6 inline-flex items-center gap-2 text-sm text-white/65 hover:text-white">
+          <div className="mx-auto w-full max-w-[520px] rounded-2xl border border-[#d5dbdb] bg-white p-6 shadow-[0_4px_20px_rgba(22,25,31,0.08)] sm:p-8">
+            <Link href="/login" className="mb-6 inline-flex items-center gap-2 text-sm text-[#0972d3] hover:underline">
               <ArrowLeft className="h-4 w-4" />
               Back to login
             </Link>
-            <h2 className="text-3xl font-light tracking-tight">Create an AutoOps account</h2>
-            <p className="mt-2 text-sm text-white/65">Use real registration backed by the AutoOps auth API.</p>
+            <h2 className="text-4xl font-bold tracking-tight text-[#16191f]">Create an AutoOps account</h2>
+            <p className="mt-2 text-sm text-[#5f6b7a]">Use real registration backed by the AutoOps auth API.</p>
 
             <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
               <div className="space-y-2">
@@ -168,8 +167,8 @@ export default function RegisterPage() {
                 <Input id="name" value={name} onChange={(event) => {
                   setName(event.target.value);
                   setErrors((current) => ({ ...current, name: undefined, form: undefined }));
-                }} placeholder="Pramod S S" className="h-11 rounded border-white/20 bg-[#11131f]/90" />
-                {errors.name ? <p className="text-xs text-rose-200">{errors.name}</p> : null}
+                }} placeholder="Pramod S S" className="h-11 rounded border-[#879596] bg-white text-[#16191f]" />
+                {errors.name ? <p className="text-xs text-rose-700">{errors.name}</p> : null}
               </div>
 
               <div className="space-y-2">
@@ -177,8 +176,8 @@ export default function RegisterPage() {
                 <Input id="register-email" type="email" value={email} onChange={(event) => {
                   setEmail(event.target.value);
                   setErrors((current) => ({ ...current, email: undefined, form: undefined }));
-                }} placeholder="you@example.com" className="h-11 rounded border-white/20 bg-[#11131f]/90" />
-                {errors.email ? <p className="text-xs text-rose-200">{errors.email}</p> : null}
+                }} placeholder="you@example.com" className="h-11 rounded border-[#879596] bg-white text-[#16191f]" />
+                {errors.email ? <p className="text-xs text-rose-700">{errors.email}</p> : null}
               </div>
 
               <div className="space-y-2">
@@ -186,8 +185,8 @@ export default function RegisterPage() {
                 <Input id="organization" value={organizationName} onChange={(event) => {
                   setOrganizationName(event.target.value);
                   setErrors((current) => ({ ...current, organizationName: undefined, form: undefined }));
-                }} placeholder="AutoOps Workspace" className="h-11 rounded border-white/20 bg-[#11131f]/90" />
-                {errors.organizationName ? <p className="text-xs text-rose-200">{errors.organizationName}</p> : null}
+                }} placeholder="AutoOps Workspace" className="h-11 rounded border-[#879596] bg-white text-[#16191f]" />
+                {errors.organizationName ? <p className="text-xs text-rose-700">{errors.organizationName}</p> : null}
               </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -196,41 +195,41 @@ export default function RegisterPage() {
                   <Input id="register-password" type="password" value={password} onChange={(event) => {
                     setPassword(event.target.value);
                     setErrors((current) => ({ ...current, password: undefined, form: undefined }));
-                  }} className="h-11 rounded border-white/20 bg-[#11131f]/90" />
-                  {errors.password ? <p className="text-xs text-rose-200">{errors.password}</p> : null}
+                  }} className="h-11 rounded border-[#879596] bg-white text-[#16191f]" />
+                  {errors.password ? <p className="text-xs text-rose-700">{errors.password}</p> : null}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="confirm-password">Confirm</Label>
                   <Input id="confirm-password" type="password" value={confirmPassword} onChange={(event) => {
                     setConfirmPassword(event.target.value);
                     setErrors((current) => ({ ...current, confirmPassword: undefined, form: undefined }));
-                  }} className="h-11 rounded border-white/20 bg-[#11131f]/90" />
-                  {errors.confirmPassword ? <p className="text-xs text-rose-200">{errors.confirmPassword}</p> : null}
+                  }} className="h-11 rounded border-[#879596] bg-white text-[#16191f]" />
+                  {errors.confirmPassword ? <p className="text-xs text-rose-700">{errors.confirmPassword}</p> : null}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 {passwordChecks.map((check) => (
-                  <div key={check.label} className="flex items-center gap-2 text-xs text-white/65">
-                    <CheckCircle2 className={check.passed ? 'h-3.5 w-3.5 text-emerald-300' : 'h-3.5 w-3.5 text-white/25'} />
+                  <div key={check.label} className="flex items-center gap-2 text-xs text-[#5f6b7a]">
+                    <CheckCircle2 className={check.passed ? 'h-3.5 w-3.5 text-emerald-700' : 'h-3.5 w-3.5 text-slate-300'} />
                     {check.label}
                   </div>
                 ))}
               </div>
 
               {successMessage ? (
-                <div className="rounded border border-emerald-300/40 bg-emerald-400/15 px-4 py-3 text-sm text-emerald-50">
+                <div className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
                   {successMessage}
                 </div>
               ) : null}
 
               {errors.form ? (
-                <div className="rounded border border-rose-400/40 bg-rose-500/15 px-4 py-3 text-sm text-rose-100">
+                <div className="rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
                   {errors.form}
                 </div>
               ) : null}
 
-              <Button className="h-12 w-full rounded bg-blue-500 text-base font-semibold text-white hover:bg-blue-400" disabled={isSubmitting}>
+              <Button className="h-12 w-full rounded-full bg-[#16191f] text-base font-bold text-white hover:bg-[#31465f]" disabled={isSubmitting}>
                 {isSubmitting ? 'Creating account...' : 'Create account'}
               </Button>
             </form>

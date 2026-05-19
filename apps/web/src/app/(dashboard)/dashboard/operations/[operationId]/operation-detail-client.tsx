@@ -56,22 +56,22 @@ function getErrorMessage(error: unknown): string {
 
 function statusTone(status: string): string {
   if (status === 'SUCCEEDED' || status === 'CONNECTED' || status === 'completed') {
-    return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
+    return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-700';
   }
   if (status === 'FAILED' || status === 'REJECTED' || status === 'CANCELLED' || status === 'OPEN' || status === 'TRIGGERED' || status === 'failed') {
-    return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
+    return 'border-rose-400/30 bg-rose-500/10 text-rose-700';
   }
   if (status === 'RUNNING' || status === 'QUEUED' || status === 'PENDING_APPROVAL' || status === 'ACKNOWLEDGED' || status === 'MITIGATED' || status === 'active') {
-    return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
+    return 'border-amber-400/25 bg-amber-400/10 text-amber-700';
   }
-  return 'border-slate-500/25 bg-slate-500/10 text-slate-300';
+  return 'border-slate-500/25 bg-slate-500/10 text-slate-700';
 }
 
 function riskTone(riskLevel: string): string {
-  if (riskLevel === 'LOW' || riskLevel === 'SEV4') return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
-  if (riskLevel === 'MEDIUM' || riskLevel === 'SEV3') return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
-  if (riskLevel === 'HIGH' || riskLevel === 'CRITICAL' || riskLevel === 'SEV1' || riskLevel === 'SEV2') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
-  return 'border-slate-500/25 bg-slate-500/10 text-slate-300';
+  if (riskLevel === 'LOW' || riskLevel === 'SEV4') return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-700';
+  if (riskLevel === 'MEDIUM' || riskLevel === 'SEV3') return 'border-amber-400/25 bg-amber-400/10 text-amber-700';
+  if (riskLevel === 'HIGH' || riskLevel === 'CRITICAL' || riskLevel === 'SEV1' || riskLevel === 'SEV2') return 'border-rose-400/30 bg-rose-500/10 text-rose-700';
+  return 'border-slate-500/25 bg-slate-500/10 text-slate-700';
 }
 
 function formatDate(value: string | null): string {
@@ -185,13 +185,13 @@ function buildRetryAction(detail: OperationDetailResponse): RetryAction | null {
 
 function SummaryCard({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
   return (
-    <section className="rounded-2xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+    <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-          <p className="mt-2 truncate text-sm font-semibold text-white">{value}</p>
+          <p className="mt-2 truncate text-sm font-semibold text-slate-900">{value}</p>
         </div>
-        <div className="rounded-xl bg-cyan-300/10 p-2 text-cyan-300">{icon}</div>
+        <div className="rounded-xl bg-cyan-300/10 p-2 text-blue-600">{icon}</div>
       </div>
     </section>
   );
@@ -350,7 +350,7 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
 
   if (isLoading) {
     return (
-      <div className="rounded-3xl border border-white/10 bg-white/[0.055] p-8 text-sm text-slate-300">
+      <div className="rounded-lg border border-slate-200 bg-white p-8 text-sm text-slate-700">
         Loading operation detail...
       </div>
     );
@@ -359,13 +359,13 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
   if (error || !detail) {
     return (
       <div className="space-y-6 animate-fade-in">
-        <Button asChild variant="outline" size="sm" className="rounded-full border-white/10 bg-white/[0.04]">
+        <Button asChild variant="outline" size="sm" className="rounded-full border-slate-200 bg-slate-50">
           <Link href="/dashboard/operations">
             <ArrowLeft className="h-4 w-4" />
             Back to Ops Hub
           </Link>
         </Button>
-        <section className="rounded-3xl border border-rose-400/30 bg-rose-500/10 p-6 text-sm text-rose-100">
+        <section className="rounded-lg border border-rose-400/30 bg-rose-500/10 p-6 text-sm text-rose-800">
           {error ?? 'Operation detail was not found.'}
         </section>
       </div>
@@ -374,29 +374,29 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <Button asChild variant="outline" size="sm" className="rounded-full border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.08]">
+      <Button asChild variant="outline" size="sm" className="rounded-full border-slate-200 bg-slate-50 text-slate-700 hover:bg-blue-50">
         <Link href="/dashboard/operations">
           <ArrowLeft className="h-4 w-4" />
           Back to Ops Hub
         </Link>
       </Button>
 
-      <section className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.24),transparent_34%),radial-gradient(circle_at_88%_8%,rgba(124,58,237,0.18),transparent_32%),linear-gradient(135deg,rgba(255,255,255,0.11),rgba(255,255,255,0.025))] p-6 shadow-2xl shadow-black/25 lg:p-8">
-        <div className="relative flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${statusTone(detail.status)}`}>
                 {detail.status}
               </span>
-              <span className="rounded-full border border-white/10 bg-white/[0.045] px-3 py-1.5 text-xs font-semibold text-slate-300">
+              <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">
                 {detail.source}
               </span>
               <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${riskTone(detail.governance.riskLevel)}`}>
                 {detail.governance.riskLevel} risk
               </span>
             </div>
-            <h1 className="mt-4 text-4xl font-semibold tracking-tight text-white lg:text-5xl">{detail.title}</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400">
+            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900 lg:text-3xl">{detail.title}</h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
               Safe operation detail for {detail.targetLabel ?? 'an AutoOps operation'}. Raw provider input, result, and error blobs are not exposed.
             </p>
           </div>
@@ -408,7 +408,7 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
       </section>
 
       {queuedOperationId ? (
-        <section className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-4 text-sm text-cyan-100">
+        <section className="rounded-md border border-cyan-300/20 bg-cyan-300/10 p-4 text-sm text-blue-700">
           Operation queued successfully.{' '}
           <Link className="font-semibold underline decoration-cyan-200/50 underline-offset-4" href={`/dashboard/operations/${queuedOperationId}`}>
             View new operation {shortId(queuedOperationId)}
@@ -417,20 +417,20 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
       ) : null}
 
       {isActiveOperation ? (
-        <section className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100">
+        <section className="rounded-md border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-800">
           This operation is still active. AutoOps is refreshing this detail view every {DETAIL_POLL_INTERVAL_MS / 1_000} seconds until it reaches a terminal state.
         </section>
       ) : null}
 
       {workerUnavailableForActiveOperation ? (
-        <section className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-100">
+        <section className="rounded-md border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-800">
           No fresh worker heartbeat detected. This operation may remain queued until a worker is available.
-          <span className="mt-2 block text-rose-200/80">Worker status: {workerRuntime.status}. {workerRuntime.message}</span>
+          <span className="mt-2 block text-rose-700">Worker status: {workerRuntime.status}. {workerRuntime.message}</span>
         </section>
       ) : null}
 
       {providerHealth && providerHealth.status !== 'CONNECTED' ? (
-        <section className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100">
+        <section className="rounded-md border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-800">
           Current provider health: {providerHealth.status}. {providerHealth.message}
         </section>
       ) : null}
@@ -445,8 +445,8 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.75fr_1.25fr]">
-        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
-          <h2 className="text-base font-semibold text-white">Governance</h2>
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Governance</h2>
           <div className="mt-5 grid gap-3 text-sm">
             {[
               ['Risk level', detail.governance.riskLevel],
@@ -462,26 +462,26 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
               ['Rejected at', formatDate(detail.governance.rejectedAt)],
               ['Rejected by', actorLabel(detail.governance.rejectedBy ?? null)],
             ].map(([label, value]) => (
-              <div key={label} className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-slate-950/35 p-3">
+              <div key={label} className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <span className="text-slate-500">{label}</span>
-                <span className="text-right font-medium text-slate-200">{value}</span>
+                <span className="text-right font-medium text-slate-700">{value}</span>
               </div>
             ))}
           </div>
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
-          <h2 className="text-base font-semibold text-white">Lifecycle</h2>
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Lifecycle</h2>
           <div className="mt-5 space-y-3">
             {detail.lifecycle.map((item) => (
-              <div key={item.label} className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
+              <div key={item.label} className="rounded-md border border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-white">{item.label}</p>
+                  <p className="text-sm font-semibold text-slate-900">{item.label}</p>
                   <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(item.status)}`}>
                     {item.status}
                   </span>
                 </div>
-                <p className="mt-2 text-sm text-slate-400">{item.description}</p>
+                <p className="mt-2 text-sm text-slate-600">{item.description}</p>
                 <p className="mt-2 text-xs text-slate-500">{formatDate(item.timestamp)}</p>
               </div>
             ))}
@@ -490,11 +490,11 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
       </div>
 
       {isPendingApproval ? (
-        <section className="rounded-3xl border border-amber-300/20 bg-amber-300/10 p-5 shadow-xl shadow-black/10">
+        <section className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-5 shadow-sm">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
-              <h2 className="text-base font-semibold text-white">Approval decision</h2>
-              <p className="mt-1 text-sm text-amber-100">
+              <h2 className="text-base font-semibold text-slate-900">Approval decision</h2>
+              <p className="mt-1 text-sm text-amber-800">
                 This operation will not execute until an authenticated approver approves it.
               </p>
               <div className="mt-4 grid gap-2 text-sm text-amber-50">
@@ -504,7 +504,7 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
                 <p>Reason: {detail.governance.approvalReason ?? 'Policy requires approval before worker execution.'}</p>
               </div>
               {!canApprove || !canReject ? (
-                <p className="mt-4 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-sm text-amber-50">
+                <p className="mt-4 rounded-xl border border-slate-200 bg-white/[0.05] p-3 text-sm text-amber-50">
                   {detail.permissions.reason ?? 'You do not have permission to decide this operation.'}
                 </p>
               ) : null}
@@ -523,7 +523,7 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
                 variant="outline"
                 onClick={() => setPendingDecision('reject')}
                 disabled={!canReject}
-                className="rounded-full border-rose-300/30 text-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-full border-rose-300/30 text-rose-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Reject
               </Button>
@@ -533,11 +533,11 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
       ) : null}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between gap-4">
-            <h2 className="text-base font-semibold text-white">Provider details</h2>
+            <h2 className="text-base font-semibold text-slate-900">Provider details</h2>
             {detail.externalUrl ? (
-              <Button asChild size="sm" variant="outline" className="rounded-full border-white/10 bg-white/[0.04]">
+              <Button asChild size="sm" variant="outline" className="rounded-full border-slate-200 bg-slate-50">
                 <a href={detail.externalUrl} target="_blank" rel="noreferrer noopener">
                   <ExternalLink className="h-4 w-4" />
                   Open related resource
@@ -547,50 +547,50 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
           </div>
           <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
             {detailRows(detail).map(([label, value]) => (
-              <div key={label} className="rounded-xl border border-white/10 bg-slate-950/35 p-3">
+              <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-                <p className="mt-1 break-words text-slate-300">{value ?? MISSING_VALUE}</p>
+                <p className="mt-1 break-words text-slate-700">{value ?? MISSING_VALUE}</p>
               </div>
             ))}
           </div>
           <div className="mt-5 space-y-2">
             {detail.providerDetails.safeSummary.map((item) => (
-              <p key={item} className="rounded-xl border border-white/10 bg-white/[0.035] p-3 text-sm text-slate-300">
+              <p key={item} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
                 {item}
               </p>
             ))}
           </div>
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
-          <h2 className="text-base font-semibold text-white">Safe result</h2>
-          <div className="mt-5 rounded-2xl border border-white/10 bg-slate-950/35 p-4">
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Safe result</h2>
+          <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-4">
             {detail.errorMessage ? (
-              <div className="flex gap-3 text-sm text-rose-100">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
+              <div className="flex gap-3 text-sm text-rose-800">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-700" />
                 <p>{detail.errorMessage}</p>
               </div>
             ) : detail.result ? (
-              <p className="text-sm text-slate-300">{detail.result}</p>
+              <p className="text-sm text-slate-700">{detail.result}</p>
             ) : (
-              <p className="text-sm text-slate-400">
+              <p className="text-sm text-slate-600">
                 {isActiveOperation
                   ? 'Operation is still in progress. This view will refresh while the operation remains active.'
                   : 'No safe result summary is available yet.'}
               </p>
             )}
           </div>
-          <div className="mt-5 rounded-2xl border border-cyan-300/15 bg-cyan-300/10 p-4 text-sm text-cyan-100">
+          <div className="mt-5 rounded-md border border-cyan-300/15 bg-cyan-300/10 p-4 text-sm text-blue-700">
             Raw operation input, result, and error metadata are intentionally hidden from this view.
           </div>
         </section>
       </div>
 
       {detail.status === 'FAILED' ? (
-        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
-              <h2 className="text-base font-semibold text-white">Linked incident</h2>
+              <h2 className="text-base font-semibold text-slate-900">Linked incident</h2>
               {detail.incident ? (
                 <>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -601,17 +601,17 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
                       {detail.incident.status}
                     </span>
                   </div>
-                  <p className="mt-3 text-sm font-semibold text-white">{detail.incident.title}</p>
-                  <p className="mt-1 text-sm text-slate-400">
+                  <p className="mt-3 text-sm font-semibold text-slate-900">{detail.incident.title}</p>
+                  <p className="mt-1 text-sm text-slate-600">
                     This failed operation has an incident record with deterministic runbook guidance.
                   </p>
                 </>
               ) : (
-                <p className="mt-2 text-sm text-slate-400">No incident record found for this failed operation.</p>
+                <p className="mt-2 text-sm text-slate-600">No incident record found for this failed operation.</p>
               )}
             </div>
             {detail.incident ? (
-              <Button asChild variant="outline" className="rounded-full border-cyan-300/25 bg-cyan-300/10 text-cyan-100">
+              <Button asChild variant="outline" className="rounded-full border-cyan-300/25 bg-cyan-300/10 text-blue-700">
                 <Link href={`/dashboard/incidents/${detail.incident.id}`}>View incident</Link>
               </Button>
             ) : null}
@@ -619,11 +619,11 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
         </section>
       ) : null}
 
-      <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
-            <h2 className="text-base font-semibold text-white">Recovery</h2>
-            <p className="mt-1 text-sm text-slate-400">
+            <h2 className="text-base font-semibold text-slate-900">Recovery</h2>
+            <p className="mt-1 text-sm text-slate-600">
               Recovery uses provider-specific controlled endpoints with the same confirmation model.
             </p>
           </div>
@@ -639,7 +639,7 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
             </Button>
           ) : null}
         </div>
-        <div className="mt-5 rounded-2xl border border-white/10 bg-slate-950/35 p-4 text-sm text-slate-300">
+        <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
           {isActiveOperation
             ? 'Recovery is disabled while the operation is queued, running, or pending approval.'
             : retryAction
@@ -657,13 +657,13 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
           aria-modal="true"
           aria-labelledby="operation-retry-title"
         >
-          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-slate-950 p-6 shadow-2xl shadow-black/40">
+          <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-2xl shadow-slate-900/20">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
                   {detail.governance.riskLevel} risk | {approvalLabel(detail.governance.approvalStatus)}
                 </p>
-                <h2 id="operation-retry-title" className="mt-2 text-xl font-semibold text-white">
+                <h2 id="operation-retry-title" className="mt-2 text-xl font-semibold text-slate-900">
                   {pendingRetry.label}
                 </h2>
               </div>
@@ -675,33 +675,33 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
                   setRetryError(null);
                 }}
                 disabled={isSubmitting}
-                className="rounded-full border border-white/10 bg-white/[0.04] p-2 text-slate-300 transition hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-full border border-slate-200 bg-slate-50 p-2 text-slate-700 transition hover:bg-blue-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="Close recovery confirmation"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="mt-5 space-y-3 text-sm leading-6 text-slate-300">
+            <div className="mt-5 space-y-3 text-sm leading-6 text-slate-700">
               <p>
-                You are about to queue <span className="font-semibold text-white">{pendingRetry.label}</span> for{' '}
-                <span className="font-semibold text-white">{pendingRetry.target}</span>.
+                You are about to queue <span className="font-semibold text-slate-900">{pendingRetry.label}</span> for{' '}
+                <span className="font-semibold text-slate-900">{pendingRetry.target}</span>.
               </p>
               {pendingRetry.scaleReplicas !== null ? (
                 <p>Replica target: {pendingRetry.scaleReplicas}</p>
               ) : null}
               <p>
-                Type <span className="font-semibold text-amber-200">{pendingRetry.token}</span> to queue the worker-executed recovery operation.
+                Type <span className="font-semibold text-amber-800">{pendingRetry.token}</span> to queue the worker-executed recovery operation.
               </p>
             </div>
 
             {retryError ? (
-              <div className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-100">
+              <div className="mt-4 rounded-md border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-800">
                 {retryError}
               </div>
             ) : null}
 
-            <label className="mt-5 block text-sm font-medium text-slate-200" htmlFor="operation-retry-token">
+            <label className="mt-5 block text-sm font-medium text-slate-700" htmlFor="operation-retry-token">
               Required confirmation token
             </label>
             <Input
@@ -709,7 +709,7 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
               value={confirmationValue}
               onChange={(event) => setConfirmationValue(event.target.value)}
               placeholder={`Type ${pendingRetry.token} to confirm`}
-              className="mt-2 border-white/10 bg-slate-900/80"
+              className="mt-2 border-slate-200 bg-white"
               autoFocus
             />
 
@@ -723,7 +723,7 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
                   setRetryError(null);
                 }}
                 disabled={isSubmitting}
-                className="rounded-full border-white/10 bg-white/[0.04]"
+                className="rounded-full border-slate-200 bg-slate-50"
               >
                 Cancel
               </Button>
@@ -747,13 +747,13 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
           aria-modal="true"
           aria-labelledby="operation-approval-title"
         >
-          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-slate-950 p-6 shadow-2xl shadow-black/40">
+          <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-2xl shadow-slate-900/20">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
                   {detail.governance.riskLevel} risk | {approvalLabel(detail.governance.approvalStatus)}
                 </p>
-                <h2 id="operation-approval-title" className="mt-2 text-xl font-semibold text-white">
+                <h2 id="operation-approval-title" className="mt-2 text-xl font-semibold text-slate-900">
                   {pendingDecision === 'approve' ? 'Approve operation' : 'Reject operation'}
                 </h2>
               </div>
@@ -765,14 +765,14 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
                   setDecisionError(null);
                 }}
                 disabled={isSubmitting}
-                className="rounded-full border border-white/10 bg-white/[0.04] p-2 text-slate-300 transition hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-full border border-slate-200 bg-slate-50 p-2 text-slate-700 transition hover:bg-blue-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="Close approval decision"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="mt-5 space-y-3 text-sm leading-6 text-slate-300">
+            <div className="mt-5 space-y-3 text-sm leading-6 text-slate-700">
               <p>
                 {pendingDecision === 'approve'
                   ? 'Approving this operation will queue it for worker execution.'
@@ -780,13 +780,13 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
               </p>
               <p>Target: {detail.targetLabel ?? MISSING_VALUE}</p>
               {detail.governance.approvalReason ? (
-                <p className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-3 text-amber-100">
+                <p className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-3 text-amber-800">
                   {detail.governance.approvalReason}
                 </p>
               ) : null}
               <p>
                 Type{' '}
-                <span className="font-semibold text-amber-200">
+                <span className="font-semibold text-amber-800">
                   {pendingDecision === 'approve' ? 'APPROVE' : 'REJECT'}
                 </span>{' '}
                 to continue.
@@ -794,12 +794,12 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
             </div>
 
             {decisionError ? (
-              <div className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-100">
+              <div className="mt-4 rounded-md border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-800">
                 {decisionError}
               </div>
             ) : null}
 
-            <label className="mt-5 block text-sm font-medium text-slate-200" htmlFor="operation-approval-token">
+            <label className="mt-5 block text-sm font-medium text-slate-700" htmlFor="operation-approval-token">
               Required decision token
             </label>
             <Input
@@ -807,7 +807,7 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
               value={decisionConfirmationValue}
               onChange={(event) => setDecisionConfirmationValue(event.target.value)}
               placeholder={`Type ${pendingDecision === 'approve' ? 'APPROVE' : 'REJECT'} to confirm`}
-              className="mt-2 border-white/10 bg-slate-900/80"
+              className="mt-2 border-slate-200 bg-white"
               autoFocus
             />
 
@@ -821,7 +821,7 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
                   setDecisionError(null);
                 }}
                 disabled={isSubmitting}
-                className="rounded-full border-white/10 bg-white/[0.04]"
+                className="rounded-full border-slate-200 bg-slate-50"
               >
                 Cancel
               </Button>

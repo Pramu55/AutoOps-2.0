@@ -4,78 +4,32 @@ import {
   Activity,
   ArrowRight,
   Boxes,
-  BrainCircuit,
   CheckCircle2,
   Cloud,
-  Database,
+  Container,
   GitMerge,
+  Hammer,
   Layers,
-  Network,
-  RadioTower,
+  Search,
   ShieldCheck,
-  Sparkles,
-  Workflow,
-  Zap,
 } from 'lucide-react';
 
-const productAreas = [
-  {
-    title: 'Project Operations',
-    description: 'Model deployable services, repositories, ownership, and operational metadata.',
-    icon: Boxes,
-  },
-  {
-    title: 'Environment Management',
-    description: 'Define development, staging, production, preview, and custom deployment targets.',
-    icon: Layers,
-  },
-  {
-    title: 'Deployment Orchestration',
-    description: 'Create deployment records, emit lifecycle events, and route execution through workers.',
-    icon: GitMerge,
-  },
-  {
-    title: 'Worker and Queue Runtime',
-    description: 'Coordinate background execution with Redis-backed BullMQ workers and safe retries.',
-    icon: RadioTower,
-  },
-  {
-    title: 'Observability and Health',
-    description: 'Track readiness surfaces, events, runtime state, and future metrics integrations.',
-    icon: Activity,
-  },
-  {
-    title: 'Future Cloud Control',
-    description: 'Architecture prepared for Docker, Terraform, Kubernetes, and provider workflows.',
-    icon: Cloud,
-  },
+const services = [
+  { title: 'Operations Hub', href: '/dashboard/operations', description: 'Health, approvals, incidents, activity', icon: Activity, accent: 'text-blue-700' },
+  { title: 'Projects', href: '/dashboard/projects', description: 'Service and repository inventory', icon: Layers, accent: 'text-amber-600' },
+  { title: 'Deployments', href: '/dashboard/deployments', description: 'Release records and worker status', icon: GitMerge, accent: 'text-blue-700' },
+  { title: 'Jenkins', href: '/dashboard/integrations/jenkins', description: 'Governed build triggers', icon: Hammer, accent: 'text-amber-600' },
+  { title: 'Docker', href: '/dashboard/integrations/docker', description: 'Container inventory and safe controls', icon: Container, accent: 'text-blue-700' },
+  { title: 'Kubernetes', href: '/dashboard/integrations/kubernetes', description: 'Workloads, pods, services, rollout controls', icon: Boxes, accent: 'text-amber-600' },
 ];
 
-const workflowSteps = [
-  'Connect project',
-  'Define environment',
-  'Trigger deployment',
-  'Worker runs simulation',
-  'Timeline records events',
-  'Observe health',
-];
-
-const features = [
-  'Multi-tenant platform foundation',
-  'Strict deployment lifecycle',
-  'BullMQ worker orchestration',
-  'PostgreSQL and Prisma persistence',
-  'Redis-backed queue runtime',
-  'Safe simulation executor now',
-  'Future Docker executor path',
-  'Terraform and Kubernetes-ready architecture',
-];
-
-const platformPreviewCards = [
-  { title: 'Project inventory', description: 'Real CRUD-backed records', icon: Boxes },
-  { title: 'Environment targets', description: 'Project-scoped deploy targets', icon: Network },
-  { title: 'Deployment timeline', description: 'Queued, enqueued, started, simulated', icon: Workflow },
-  { title: 'Runtime readiness', description: 'API, worker, Redis, Postgres surfaces', icon: Database },
+const pillars = [
+  'Real operation status monitoring',
+  'RBAC approval separation',
+  'Worker-backed execution',
+  'Incident runbooks',
+  'Safe recovery paths',
+  'No fake metrics or secrets',
 ];
 
 export default async function HomePage() {
@@ -83,167 +37,110 @@ export default async function HomePage() {
   const isAuthenticated = cookieStore.has('refresh_token');
 
   return (
-    <main className="min-h-screen bg-white text-slate-950">
-      <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 lg:px-8">
-          <Link href="/" className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-950 text-white shadow-sm">
-              <Zap className="h-5 w-5 text-cyan-300" />
-            </div>
-            <span className="text-base font-semibold tracking-tight">AutoOps</span>
+    <main className="min-h-screen bg-white text-[#16191f]">
+      <div className="bg-[#232f3e] text-white">
+        <div className="mx-auto flex h-11 max-w-[1700px] items-center justify-end gap-8 px-6 text-sm font-semibold">
+          <span>Local runtime</span>
+          <span>Support</span>
+          <span>My account</span>
+          <span className="flex h-7 w-7 items-center justify-center rounded-full border border-white/70">AO</span>
+        </div>
+      </div>
+
+      <header className="sticky top-0 z-40 border-b border-[#d5dbdb] bg-white">
+        <div className="mx-auto flex h-[86px] max-w-[1700px] items-center gap-9 px-6">
+          <Link href="/" className="flex items-end gap-2 text-4xl font-bold tracking-tight text-[#111827]">
+            <span>autoops</span>
+            <span className="mb-2 h-1.5 w-12 rounded-full bg-[#ff9900]" />
           </Link>
-
-          <nav className="hidden items-center gap-7 text-sm font-medium text-slate-600 lg:flex">
-            {['Product', 'Solutions', 'Platform', 'Pricing', 'Docs'].map((item) => (
-              <a key={item} href={`#${item.toLowerCase()}`} className="transition hover:text-slate-950">
-                {item}
-              </a>
-            ))}
+          <nav className="hidden items-center gap-8 text-base font-semibold text-[#16191f] lg:flex">
+            <a href="#services" className="hover:text-[#0972d3]">Services</a>
+            <a href="#solutions" className="hover:text-[#0972d3]">Solutions</a>
+            <a href="#governance" className="hover:text-[#0972d3]">Governance</a>
+            <a href="#resources" className="hover:text-[#0972d3]">Resources</a>
           </nav>
-
-          <div className="flex items-center gap-2">
-            <Link
-              href="/login"
-              className="hidden rounded-md px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 hover:text-slate-950 sm:inline-flex"
-            >
-              Login
-            </Link>
-            <Link
-              href={isAuthenticated ? '/dashboard' : '/login'}
-              className="inline-flex items-center gap-2 rounded-md bg-gradient-to-r from-blue-600 to-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:scale-[1.01] hover:shadow-blue-600/30"
-            >
-              {isAuthenticated ? 'Go to Dashboard' : 'Get Started'}
-              <ArrowRight className="h-4 w-4" />
-            </Link>
+          <div className="ml-auto hidden items-center gap-8 text-base font-semibold lg:flex">
+            <button className="inline-flex items-center gap-2 text-[#16191f]"><Search className="h-5 w-5" /> Search</button>
+            <Link href="/login" className="text-[#16191f] hover:text-[#0972d3]">Sign in to console</Link>
+            <Link href="/register" className="rounded-full bg-[#16191f] px-8 py-4 text-white hover:bg-[#31465f]">Create account</Link>
           </div>
         </div>
       </header>
 
-      <section className="relative overflow-hidden border-b border-slate-200 bg-[radial-gradient(circle_at_15%_20%,rgba(37,99,235,0.16),transparent_28%),radial-gradient(circle_at_85%_0%,rgba(124,58,237,0.18),transparent_30%),linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)]">
-        <div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-7xl grid-cols-1 items-center gap-12 px-5 py-16 lg:grid-cols-[1fr_0.92fr] lg:px-8">
-          <div>
-            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">
-              <Sparkles className="h-4 w-4" />
-              AI-native DevOps control plane
-            </div>
-            <h1 className="max-w-4xl text-5xl font-semibold tracking-tight text-slate-950 sm:text-6xl lg:text-7xl">
-              Operate projects, environments, and deployments from one control plane.
-            </h1>
-            <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-              AutoOps helps modern teams manage deployment workflows, queue-backed workers,
-              simulation execution, and operational timelines without pretending unfinished
-              infrastructure integrations are live.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Link
-                href={isAuthenticated ? '/dashboard' : '/login'}
-                className="inline-flex h-11 items-center gap-2 rounded-md bg-gradient-to-r from-blue-600 to-violet-600 px-5 text-sm font-semibold text-white shadow-xl shadow-blue-700/20 transition hover:scale-[1.01]"
-              >
-                {isAuthenticated ? 'Open Dashboard' : 'Get Started'}
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-              <Link
-                href="/login"
-                className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-5 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-slate-400 hover:bg-slate-50"
-              >
-                View Demo / Login
-              </Link>
-            </div>
+      <section className="bg-[linear-gradient(120deg,#f7fff0_0%,#d9ffd9_36%,#f7fbff_72%,#ffffff_100%)]">
+        <div className="mx-auto max-w-[1650px] px-6 py-7">
+          <div className="rounded-2xl border border-[#d5dbdb] bg-white px-10 py-7 shadow-[0_4px_20px_rgba(22,25,31,0.08)]">
+            <nav className="flex flex-wrap items-center gap-x-12 gap-y-4 text-lg font-semibold text-[#232f3e]">
+              <span>AutoOps Console</span>
+              <a href="#overview" className="hover:text-[#0972d3]">Overview</a>
+              <a href="#services" className="hover:text-[#0972d3]">Service categories</a>
+              <a href="#governance" className="hover:text-[#0972d3]">Governed operations</a>
+              <a href="#resources" className="hover:text-[#0972d3]">Runbooks</a>
+            </nav>
           </div>
 
-          <div className="relative">
-            <div className="absolute -inset-6 rounded-[2rem] bg-gradient-to-br from-blue-500/20 via-cyan-400/10 to-violet-500/20 blur-2xl" />
-            <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
-                <div className="flex items-center gap-2">
-                  <span className="h-3 w-3 rounded-full bg-rose-400" />
-                  <span className="h-3 w-3 rounded-full bg-amber-400" />
-                  <span className="h-3 w-3 rounded-full bg-emerald-400" />
-                </div>
-                <span className="text-xs font-medium text-slate-400">AutoOps Control Plane</span>
-              </div>
-              <div className="grid gap-4 p-5">
-                <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-cyan-300">Deployment</p>
-                      <p className="mt-2 text-lg font-semibold text-white">payments-api to staging</p>
-                    </div>
-                    <span className="rounded-md border border-emerald-400/25 bg-emerald-400/10 px-2 py-1 text-xs font-semibold text-emerald-300">
-                      SUCCEEDED
-                    </span>
-                  </div>
-                  <div className="mt-5 grid grid-cols-5 gap-2">
-                    {['Queued', 'Enqueued', 'Started', 'Simulated', 'Succeeded'].map((item) => (
-                      <div key={item} className="rounded-lg bg-gradient-to-b from-white/10 to-white/[0.03] p-3">
-                        <CheckCircle2 className="h-4 w-4 text-cyan-300" />
-                        <p className="mt-3 text-xs font-medium text-slate-300">{item}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    ['Projects', 'Real API'],
-                    ['Queues', 'BullMQ'],
-                    ['Events', 'Timeline'],
-                  ].map(([label, value]) => (
-                    <div key={label} className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-                      <p className="text-xs text-slate-400">{label}</p>
-                      <p className="mt-2 text-sm font-semibold text-white">{value}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
+          <div id="overview" className="px-0 py-20 lg:px-16">
+            <p className="text-lg font-semibold text-[#0972d3]">AutoOps</p>
+            <h1 className="mt-8 max-w-4xl text-6xl font-bold leading-tight tracking-tight text-[#16191f] lg:text-7xl">
+              Operate DevOps control workflows from one clean console.
+            </h1>
+            <p className="mt-7 max-w-4xl text-2xl leading-10 text-[#232f3e]">
+              Discover services, observe health, approve risky actions, respond to incidents, and recover failed operations with real backend data and safe controls.
+            </p>
+            <div className="mt-10 flex flex-wrap gap-4">
+              <Link href={isAuthenticated ? '/dashboard' : '/login'} className="rounded-full bg-[#16191f] px-9 py-4 text-lg font-bold text-white hover:bg-[#31465f]">
+                {isAuthenticated ? 'Open console' : 'Sign in to console'}
+              </Link>
+              <Link href="/register" className="rounded-full border-2 border-[#16191f] bg-white px-9 py-4 text-lg font-bold text-[#16191f] hover:bg-[#f2f3f3]">
+                Create account
+              </Link>
             </div>
           </div>
         </div>
       </section>
 
-      <section id="product" className="bg-slate-950 py-20 text-white">
-        <div className="mx-auto max-w-7xl px-5 lg:px-8">
-          <div className="max-w-3xl">
-            <p className="text-sm font-semibold uppercase tracking-wide text-cyan-300">Product Surface</p>
-            <h2 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
-              A control plane for the parts of DevOps teams operate every day.
-            </h2>
+      <section id="services" className="bg-white py-16">
+        <div className="mx-auto max-w-[1500px] px-6">
+          <div className="mb-8 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+              <p className="text-sm font-bold uppercase tracking-wide text-[#0972d3]">Console services</p>
+              <h2 className="mt-2 text-4xl font-bold text-[#16191f]">Find every AutoOps module quickly</h2>
+            </div>
+            <Link href="/login" className="text-base font-bold text-[#0972d3] hover:underline">View all services</Link>
           </div>
-          <div className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {productAreas.map(({ title, description, icon: Icon }) => (
-              <div
-                key={title}
-                className="group rounded-xl border border-white/10 bg-white/[0.04] p-5 transition hover:-translate-y-1 hover:border-cyan-300/40 hover:bg-white/[0.07]"
-              >
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500/25 to-violet-500/25 text-cyan-300">
-                  <Icon className="h-5 w-5" />
+          <div className="grid grid-cols-1 overflow-hidden rounded border border-[#d5dbdb] md:grid-cols-2 xl:grid-cols-3">
+            {services.map(({ title, href, description, icon: Icon, accent }) => (
+              <Link key={title} href={isAuthenticated ? href : '/login'} className="group border-b border-r border-[#eaeded] bg-white p-6 transition hover:bg-[#f2f8fd]">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-11 w-11 items-center justify-center rounded bg-[#f1f3f3]">
+                    <Icon className={`h-5 w-5 ${accent}`} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-[#0972d3] group-hover:underline">{title}</h3>
+                    <p className="mt-1 text-sm leading-6 text-[#5f6b7a]">{description}</p>
+                  </div>
                 </div>
-                <h3 className="mt-5 text-base font-semibold">{title}</h3>
-                <p className="mt-2 text-sm leading-6 text-slate-400">{description}</p>
-              </div>
+              </Link>
             ))}
           </div>
         </div>
       </section>
 
-      <section id="platform" className="bg-white py-20">
-        <div className="mx-auto max-w-7xl px-5 lg:px-8">
-          <div className="grid grid-cols-1 gap-12 lg:grid-cols-[0.85fr_1fr] lg:items-center">
+      <section id="governance" className="bg-[#f7f8f8] py-16">
+        <div className="mx-auto max-w-[1500px] px-6">
+          <div className="grid gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">Platform Preview</p>
-              <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
-                Designed for real read models, honest empty states, and future execution depth.
-              </h2>
-              <p className="mt-5 text-base leading-7 text-slate-600">
-                The authenticated app already reads real projects, environments, deployments,
-                deployment events, and simulation executor outcomes where APIs exist.
+              <p className="text-sm font-bold uppercase tracking-wide text-[#ff9900]">Governance built in</p>
+              <h2 className="mt-3 text-4xl font-bold text-[#16191f]">Clear actions, fewer boxes, safer decisions.</h2>
+              <p className="mt-5 text-lg leading-8 text-[#414d5c]">
+                AutoOps keeps the console focused on what an operator needs next: status, action required, recent failures, incidents, and approved recovery.
               </p>
             </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {platformPreviewCards.map(({ title, description, icon: Icon }) => (
-                <div key={title} className="rounded-xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
-                  <Icon className="h-5 w-5 text-blue-700" />
-                  <h3 className="mt-4 text-sm font-semibold text-slate-950">{title}</h3>
-                  <p className="mt-2 text-sm text-slate-600">{description}</p>
+            <div className="grid grid-cols-1 gap-px overflow-hidden rounded border border-[#d5dbdb] bg-[#d5dbdb] md:grid-cols-2">
+              {pillars.map((item) => (
+                <div key={item} className="flex items-center gap-3 bg-white p-5">
+                  <CheckCircle2 className="h-5 w-5 text-[#037f0c]" />
+                  <span className="font-semibold text-[#232f3e]">{item}</span>
                 </div>
               ))}
             </div>
@@ -251,83 +148,28 @@ export default async function HomePage() {
         </div>
       </section>
 
-      <section id="solutions" className="bg-slate-100 py-20">
-        <div className="mx-auto max-w-7xl px-5 lg:px-8">
-          <div className="max-w-3xl">
-            <p className="text-sm font-semibold uppercase tracking-wide text-violet-700">How AutoOps Works</p>
-            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
-              From project metadata to deployment timeline in one operational flow.
-            </h2>
-          </div>
-          <div className="mt-10 grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            {workflowSteps.map((step, index) => (
-              <div key={step} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-950 text-sm font-semibold text-white">
-                  {index + 1}
-                </span>
-                <p className="mt-5 text-sm font-semibold text-slate-950">{step}</p>
+      <section id="resources" className="bg-white py-16">
+        <div className="mx-auto max-w-[1500px] px-6">
+          <div className="rounded-2xl bg-[#16191f] p-8 text-white lg:p-12">
+            <div className="grid gap-10 lg:grid-cols-[1fr_0.8fr] lg:items-center">
+              <div>
+                <Cloud className="h-9 w-9 text-[#ff9900]" />
+                <h2 className="mt-6 text-4xl font-bold">Company-grade operations without fake control.</h2>
+                <p className="mt-5 text-lg leading-8 text-slate-300">
+                  The console shows only real resources, real health, real incidents, and governed actions. No demo-only execution path, no secret exposure, and no unsafe shell controls.
+                </p>
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section id="docs" className="bg-white py-20">
-        <div className="mx-auto max-w-7xl px-5 lg:px-8">
-          <div className="grid grid-cols-1 gap-10 lg:grid-cols-[0.8fr_1fr]">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">Architecture</p>
-              <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
-                Built for the execution layers that come next.
-              </h2>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {features.map((feature) => (
-                <div key={feature} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                  <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                  <span className="text-sm font-medium text-slate-700">{feature}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section id="pricing" className="bg-slate-950 px-5 py-20 text-white lg:px-8">
-        <div className="mx-auto max-w-5xl rounded-2xl border border-white/10 bg-gradient-to-br from-blue-600/20 via-white/[0.04] to-violet-600/20 p-8 text-center shadow-2xl">
-          <BrainCircuit className="mx-auto h-10 w-10 text-cyan-300" />
-          <h2 className="mt-5 text-3xl font-semibold tracking-tight">Start operating with AutoOps</h2>
-          <p className="mx-auto mt-4 max-w-2xl text-sm leading-6 text-slate-300">
-            Use the authenticated control plane to manage real projects, environments, deployments,
-            simulation events, and readiness surfaces.
-          </p>
-          <div className="mt-7 flex flex-wrap justify-center gap-3">
-            <Link href="/login" className="inline-flex h-11 items-center rounded-md bg-white px-5 text-sm font-semibold text-slate-950 transition hover:bg-slate-100">
-              Login
-            </Link>
-            <Link href="/login" className="inline-flex h-11 items-center rounded-md border border-white/15 px-5 text-sm font-semibold text-white transition hover:bg-white/10">
-              Get Started
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      <footer className="border-t border-slate-200 bg-white">
-        <div className="mx-auto grid max-w-7xl grid-cols-2 gap-8 px-5 py-10 text-sm text-slate-600 md:grid-cols-4 lg:px-8">
-          {['Product', 'Platform', 'Resources', 'Company'].map((group) => (
-            <div key={group}>
-              <p className="font-semibold text-slate-950">{group}</p>
-              <div className="mt-3 space-y-2">
-                {['Overview', 'Docs', 'Security'].map((item) => (
-                  <a key={item} href="#" className="block transition hover:text-slate-950">
-                    {item}
-                  </a>
-                ))}
+              <div className="rounded-xl border border-white/15 bg-white/10 p-6">
+                <ShieldCheck className="h-8 w-8 text-[#7dceff]" />
+                <p className="mt-4 text-xl font-bold">Ready for controlled pilot workflows</p>
+                <Link href="/login" className="mt-6 inline-flex items-center gap-2 rounded-full bg-[#ff9900] px-6 py-3 font-bold text-[#16191f] hover:bg-[#ffb84d]">
+                  Start local demo <ArrowRight className="h-4 w-4" />
+                </Link>
               </div>
             </div>
-          ))}
+          </div>
         </div>
-      </footer>
+      </section>
     </main>
   );
 }

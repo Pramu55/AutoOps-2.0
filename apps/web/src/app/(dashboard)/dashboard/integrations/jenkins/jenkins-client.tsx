@@ -36,7 +36,7 @@ type JobsResponse = { data: JenkinsListResponse<JenkinsJob> };
 type BuildsResponse = { data: JenkinsListResponse<JenkinsBuild> };
 type OperationsResponse = { data: JenkinsOperationListResponse };
 type TriggerResponse = { data: JenkinsTriggerBuildResponse };
-const MISSING_VALUE = '—';
+const MISSING_VALUE = 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â';
 
 type PendingJenkinsAction = {
   jobName: string;
@@ -53,15 +53,15 @@ function getErrorMessage(error: unknown): string {
 
 function statusTone(status: string): string {
   if (status === 'CONNECTED' || status === 'SUCCESS' || status === 'SUCCEEDED') {
-    return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
+    return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-700';
   }
   if (status === 'AUTH_FAILED' || status === 'FORBIDDEN' || status === 'FAILED') {
-    return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
+    return 'border-rose-400/30 bg-rose-500/10 text-rose-700';
   }
   if (status === 'UNREACHABLE' || status === 'UNKNOWN_ERROR') {
-    return 'border-amber-400/25 bg-amber-400/10 text-amber-300';
+    return 'border-amber-400/25 bg-amber-400/10 text-amber-700';
   }
-  return 'border-slate-400/25 bg-slate-500/10 text-slate-300';
+  return 'border-slate-400/25 bg-slate-500/10 text-slate-700';
 }
 
 function formatTime(value?: string | null): string {
@@ -103,13 +103,13 @@ function SummaryCard({
   icon: React.ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+    <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-          <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
         </div>
-        <div className="rounded-xl bg-cyan-300/10 p-2 text-cyan-300">{icon}</div>
+        <div className="rounded-xl bg-cyan-300/10 p-2 text-blue-600">{icon}</div>
       </div>
     </section>
   );
@@ -248,7 +248,7 @@ export function JenkinsClient() {
         asChild
         variant="outline"
         size="sm"
-        className="rounded-full border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.08]"
+        className="rounded-full border-slate-200 bg-slate-50 text-slate-700 hover:bg-blue-50"
       >
         <Link href="/dashboard/operations">
           <ArrowLeft className="h-4 w-4" />
@@ -256,14 +256,14 @@ export function JenkinsClient() {
         </Link>
       </Button>
 
-      <section className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.24),transparent_34%),radial-gradient(circle_at_88%_8%,rgba(245,158,11,0.18),transparent_32%),linear-gradient(135deg,rgba(255,255,255,0.11),rgba(255,255,255,0.025))] p-6 shadow-2xl shadow-black/25 lg:p-8">
-        <div className="relative flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <span className={`inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold ${statusTone(currentStatus)}`}>
               {currentStatus}
             </span>
-            <h1 className="mt-4 text-4xl font-semibold tracking-tight text-white lg:text-5xl">Jenkins CI/CD Connector</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400">
+            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900 lg:text-3xl">Jenkins Control Connector</h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
               Real Jenkins status, jobs, builds, queue visibility, and controlled build triggers through the Jenkins Remote Access API.
             </p>
           </div>
@@ -280,21 +280,21 @@ export function JenkinsClient() {
       </section>
 
       {error ? (
-        <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
           {error}
         </div>
       ) : null}
 
       {currentStatus !== 'CONNECTED' ? (
-        <section className="rounded-3xl border border-amber-300/20 bg-amber-300/10 p-6">
+        <section className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-6">
           <div className="flex gap-4">
-            <AlertTriangle className="mt-1 h-5 w-5 shrink-0 text-amber-300" />
+            <AlertTriangle className="mt-1 h-5 w-5 shrink-0 text-amber-700" />
             <div>
-              <h2 className="text-base font-semibold text-white">Jenkins is not connected</h2>
-              <p className="mt-2 text-sm leading-6 text-amber-100/80">
+              <h2 className="text-base font-semibold text-slate-900">Jenkins is not connected</h2>
+              <p className="mt-2 text-sm leading-6 text-amber-800/80">
                 {status?.message ?? 'Set JENKINS_URL, JENKINS_USERNAME, and JENKINS_API_TOKEN for the API and worker containers.'}
               </p>
-              <p className="mt-3 text-sm text-slate-300">
+              <p className="mt-3 text-sm text-slate-700">
                 AutoOps never exposes Jenkins API tokens and does not use Jenkins CLI, script console, or job configuration mutation.
               </p>
             </div>
@@ -302,8 +302,8 @@ export function JenkinsClient() {
         </section>
       ) : null}
 
-      <section className="rounded-3xl border border-emerald-300/15 bg-emerald-300/10 p-4">
-        <div className="flex items-center gap-3 text-sm font-medium text-emerald-200">
+      <section className="rounded-lg border border-emerald-300/15 bg-emerald-300/10 p-4">
+        <div className="flex items-center gap-3 text-sm font-medium text-emerald-700">
           <ShieldCheck className="h-4 w-4" />
           Controlled mode active. Build triggers require confirmation, audit logging, and approval when linked to production environments.
         </div>
@@ -316,18 +316,18 @@ export function JenkinsClient() {
         <SummaryCard label="Queue" value={summary?.queueCount ?? 0} icon={<Clock className="h-5 w-5" />} />
       </div>
 
-      <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
-        <h2 className="text-base font-semibold text-white">Trigger Jenkins build</h2>
-        <p className="mt-1 text-sm text-slate-400">
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">Trigger Jenkins build</h2>
+        <p className="mt-1 text-sm text-slate-600">
           Queues a real Jenkins build trigger operation through BullMQ. Only jobs in JENKINS_ALLOWED_JOBS can be triggered.
         </p>
         {currentStatus === 'CONNECTED' && allowedJobs.length === 0 ? (
-          <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
+          <div className="mt-4 rounded-md border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-800">
             No jobs are allowlisted. Set JENKINS_ALLOWED_JOBS to enable controlled build triggering.
           </div>
         ) : null}
         {message ? (
-          <div className="mt-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm text-cyan-100">
+          <div className="mt-4 rounded-md border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm text-blue-700">
             {message}
           </div>
         ) : null}
@@ -336,7 +336,7 @@ export function JenkinsClient() {
             <select
               value={jobName}
               onChange={(event) => setJobName(event.target.value)}
-              className="min-h-11 flex-1 rounded-xl border border-white/10 bg-slate-950/55 px-3 text-sm text-white outline-none transition focus:border-cyan-300/50"
+              className="min-h-11 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-cyan-300/50"
             >
               <option value="">Select allowlisted job</option>
               {allowedJobs.map((allowedJob) => (
@@ -350,7 +350,7 @@ export function JenkinsClient() {
               value=""
               readOnly
               placeholder="No Jenkins jobs allowlisted"
-              className="border-white/10 bg-slate-950/55"
+              className="border-slate-200 bg-white"
             />
           )}
           <Button
@@ -366,27 +366,27 @@ export function JenkinsClient() {
       </section>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10 xl:col-span-2">
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
-              <h2 className="text-base font-semibold text-white">Recent Jenkins Operations</h2>
-              <p className="mt-1 text-sm text-slate-400">
+              <h2 className="text-base font-semibold text-slate-900">Recent Jenkins Operations</h2>
+              <p className="mt-1 text-sm text-slate-600">
                 Real AutoOps worker operations for allowlisted Jenkins build triggers.
               </p>
             </div>
-            <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-200">
+            <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-blue-700">
               {operations.length} shown
             </span>
           </div>
           <div className="mt-5 space-y-3">
             {isLoading ? (
-              <div className="rounded-2xl border border-white/10 bg-slate-950/35 p-6 text-sm text-slate-400">
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
                 Loading Jenkins operations...
               </div>
             ) : operationsError ? (
-              <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-5">
-                <p className="text-sm font-medium text-rose-100">Unable to load Jenkins operations.</p>
-                <p className="mt-2 text-sm text-rose-100/80">{operationsError}</p>
+              <div className="rounded-md border border-rose-400/30 bg-rose-500/10 p-5">
+                <p className="text-sm font-medium text-rose-800">Unable to load Jenkins operations.</p>
+                <p className="mt-2 text-sm text-rose-700">{operationsError}</p>
                 <Button
                   type="button"
                   size="sm"
@@ -399,8 +399,8 @@ export function JenkinsClient() {
                 </Button>
               </div>
             ) : operations.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-white/15 bg-slate-950/35 p-6 text-center">
-                <p className="text-sm font-medium text-white">No Jenkins operations triggered from AutoOps yet.</p>
+              <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+                <p className="text-sm font-medium text-slate-900">No Jenkins operations triggered from AutoOps yet.</p>
                 <p className="mt-2 text-sm text-slate-500">
                   Trigger an allowed Jenkins job from AutoOps to see operation history.
                 </p>
@@ -417,30 +417,30 @@ export function JenkinsClient() {
                 return (
                   <div
                     key={operation.id}
-                    className="grid gap-4 rounded-2xl border border-white/10 bg-slate-950/35 p-4 xl:grid-cols-[1.1fr_0.55fr_0.55fr_0.55fr_auto]"
+                    className="grid gap-4 rounded-md border border-slate-200 bg-slate-50 p-4 xl:grid-cols-[1.1fr_0.55fr_0.55fr_0.55fr_auto]"
                   >
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(operation.status)}`}>
                           {operation.status}
                         </span>
-                        <span className="rounded-full border border-white/10 bg-white/[0.045] px-2.5 py-1 text-[11px] text-slate-400">
+                        <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[11px] text-slate-600">
                           {operation.type}
                         </span>
                       </div>
-                      <p className="mt-3 truncate text-sm font-semibold text-white">
+                      <p className="mt-3 truncate text-sm font-semibold text-slate-900">
                         {operation.jobName ?? 'Unknown Jenkins job'}
                       </p>
                       <p className="mt-1 font-mono text-xs text-slate-500">
                         op {shortId(operation.id)} | created {formatTime(operation.createdAt)}
                       </p>
                       {operation.errorMessage ? (
-                        <p className="mt-2 text-xs text-rose-200">{operation.errorMessage}</p>
+                        <p className="mt-2 text-xs text-rose-700">{operation.errorMessage}</p>
                       ) : null}
                     </div>
                     <div>
                       <p className="text-xs uppercase tracking-wide text-slate-500">Build</p>
-                      <p className="mt-1 text-sm text-slate-200">
+                      <p className="mt-1 text-sm text-slate-700">
                         {operation.buildNumber ? `#${operation.buildNumber}` : MISSING_VALUE}
                       </p>
                     </div>
@@ -452,17 +452,17 @@ export function JenkinsClient() {
                     </div>
                     <div>
                       <p className="text-xs uppercase tracking-wide text-slate-500">Duration</p>
-                      <p className="mt-1 text-sm text-slate-200">{formatDuration(operation.durationMs)}</p>
+                      <p className="mt-1 text-sm text-slate-700">{formatDuration(operation.durationMs)}</p>
                       <p className="mt-1 text-xs text-slate-500">Done {operation.completedAt ? formatTime(operation.completedAt) : MISSING_VALUE}</p>
                     </div>
                     <div className="flex flex-col gap-2 xl:items-end">
-                      <Button asChild size="sm" variant="outline" className="rounded-full border-cyan-300/25 bg-cyan-300/10 text-cyan-100">
+                      <Button asChild size="sm" variant="outline" className="rounded-full border-cyan-300/25 bg-cyan-300/10 text-blue-700">
                         <Link href={`/dashboard/operations/${operation.id}`}>
                           View details
                         </Link>
                       </Button>
                       {displayBuildUrl ? (
-                        <Button asChild size="sm" variant="outline" className="rounded-full border-white/10 bg-white/[0.04]">
+                        <Button asChild size="sm" variant="outline" className="rounded-full border-slate-200 bg-slate-50">
                           <a href={displayBuildUrl} target="_blank" rel="noreferrer noopener">
                             <ExternalLink className="h-4 w-4" />
                             Jenkins
@@ -495,19 +495,19 @@ export function JenkinsClient() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
-          <h2 className="text-base font-semibold text-white">Jobs</h2>
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Jobs</h2>
           <div className="mt-5 space-y-3">
             {jobs.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-white/15 bg-slate-950/35 p-6 text-center text-sm text-slate-400">
+              <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-600">
                 {currentStatus === 'CONNECTED' ? 'No Jenkins jobs returned by the connected server.' : 'No jobs shown while Jenkins is disconnected.'}
               </div>
             ) : (
               jobs.map((job) => (
-                <div key={job.fullName ?? job.name} className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
+                <div key={job.fullName ?? job.name} className="rounded-md border border-slate-200 bg-slate-50 p-4">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <p className="text-sm font-semibold text-white">{job.fullName ?? job.name}</p>
+                      <p className="text-sm font-semibold text-slate-900">{job.fullName ?? job.name}</p>
                       <p className="mt-1 text-xs text-slate-500">{job.url}</p>
                     </div>
                     <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(job.status)}`}>
@@ -520,24 +520,24 @@ export function JenkinsClient() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
-          <h2 className="text-base font-semibold text-white">Recent builds</h2>
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Recent builds</h2>
           <div className="mt-5 space-y-3">
             {recentBuilds.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-white/15 bg-slate-950/35 p-6 text-center text-sm text-slate-400">
+              <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-600">
                 {currentStatus === 'CONNECTED' ? 'No Jenkins builds returned by the connected server.' : 'No builds shown while Jenkins is disconnected.'}
               </div>
             ) : (
               recentBuilds.map((build) => (
-                <div key={`${build.jobName}-${build.buildNumber}`} className="grid gap-3 rounded-2xl border border-white/10 bg-slate-950/35 p-4 md:grid-cols-[1fr_0.45fr_0.45fr]">
+                <div key={`${build.jobName}-${build.buildNumber}`} className="grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 md:grid-cols-[1fr_0.45fr_0.45fr]">
                   <div>
-                    <p className="text-sm font-semibold text-white">{build.fullDisplayName ?? build.jobName}</p>
+                    <p className="text-sm font-semibold text-slate-900">{build.fullDisplayName ?? build.jobName}</p>
                     <p className="mt-1 text-xs text-slate-500">#{build.buildNumber} | {formatTime(build.timestamp)}</p>
                   </div>
                   <span className={`w-fit rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(build.result ?? (build.building ? 'BUILDING' : 'UNKNOWN'))}`}>
                     {build.result ?? (build.building ? 'BUILDING' : 'UNKNOWN')}
                   </span>
-                  <p className="text-sm text-slate-400">{build.duration ?? 0} ms</p>
+                  <p className="text-sm text-slate-600">{build.duration ?? 0} ms</p>
                 </div>
               ))
             )}
@@ -552,13 +552,13 @@ export function JenkinsClient() {
           aria-modal="true"
           aria-labelledby="jenkins-confirmation-title"
         >
-          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-slate-950 p-6 shadow-2xl shadow-black/40">
+          <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-2xl shadow-slate-900/20">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-300">
+                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
                   LOW risk | Approval not required
                 </p>
-                <h2 id="jenkins-confirmation-title" className="mt-2 text-xl font-semibold text-white">
+                <h2 id="jenkins-confirmation-title" className="mt-2 text-xl font-semibold text-slate-900">
                   {pendingAction.mode === 'rerun' ? 'Confirm Jenkins re-run' : 'Confirm Jenkins build'}
                 </h2>
               </div>
@@ -569,20 +569,20 @@ export function JenkinsClient() {
                   setConfirmationValue('');
                 }}
                 disabled={isSubmitting}
-                className="rounded-full border border-white/10 bg-white/[0.04] p-2 text-slate-300 transition hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-full border border-slate-200 bg-slate-50 p-2 text-slate-700 transition hover:bg-blue-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="Close confirmation"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="mt-5 space-y-3 text-sm leading-6 text-slate-300">
+            <div className="mt-5 space-y-3 text-sm leading-6 text-slate-700">
               <p>
                 You are about to trigger allowlisted Jenkins job{' '}
-                <span className="font-semibold text-white">{pendingAction.jobName}</span>.
+                <span className="font-semibold text-slate-900">{pendingAction.jobName}</span>.
               </p>
               <p>
-                Type <span className="font-semibold text-emerald-200">BUILD</span> to queue the
+                Type <span className="font-semibold text-emerald-700">BUILD</span> to queue the
                 worker-executed and audited operation.
               </p>
               {pendingAction.operationId ? (
@@ -592,7 +592,7 @@ export function JenkinsClient() {
               ) : null}
             </div>
 
-            <label className="mt-5 block text-sm font-medium text-slate-200" htmlFor="jenkins-confirmation-token">
+            <label className="mt-5 block text-sm font-medium text-slate-700" htmlFor="jenkins-confirmation-token">
               Required confirmation token
             </label>
             <Input
@@ -600,7 +600,7 @@ export function JenkinsClient() {
               value={confirmationValue}
               onChange={(event) => setConfirmationValue(event.target.value)}
               placeholder="Type BUILD to confirm"
-              className="mt-2 border-white/10 bg-slate-900/80"
+              className="mt-2 border-slate-200 bg-white"
               autoFocus
             />
 
@@ -613,7 +613,7 @@ export function JenkinsClient() {
                   setConfirmationValue('');
                 }}
                 disabled={isSubmitting}
-                className="rounded-full border-white/10 bg-white/[0.04]"
+                className="rounded-full border-slate-200 bg-slate-50"
               >
                 Cancel
               </Button>

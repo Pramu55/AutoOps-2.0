@@ -6,7 +6,6 @@ import type { Deployment, Environment, Project, TriggerDeploymentInput } from '@
 import { DeploymentTrigger } from '@autoops/types';
 import {
   AlertCircle,
-  CheckCircle2,
   Clock3,
   GitBranch,
   GitCommit,
@@ -16,7 +15,6 @@ import {
   RefreshCw,
   Rocket,
   Timer,
-  Zap,
 } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -73,27 +71,13 @@ function shortSha(value: string | null): string {
 }
 
 function statusClass(status: string): string {
-  if (status === 'SUCCEEDED') return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300';
+  if (status === 'SUCCEEDED') return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700';
   if (status === 'FAILED') return 'border-destructive/40 bg-destructive/10 text-destructive';
   if (status === 'RUNNING' || status === 'DEPLOYING' || status === 'BUILDING') {
     return 'border-primary/25 bg-primary/10 text-primary';
   }
-  if (status === 'QUEUED') return 'border-amber-500/25 bg-amber-500/10 text-amber-300';
+  if (status === 'QUEUED') return 'border-amber-500/25 bg-amber-500/10 text-amber-700';
   return 'border-border bg-muted text-muted-foreground';
-}
-
-function StatCard({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
-  return (
-    <section className="glass rounded-xl p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-          <p className="mt-3 text-2xl font-semibold text-foreground">{value}</p>
-        </div>
-        <div className="rounded-lg bg-primary/10 p-2 text-primary">{icon}</div>
-      </div>
-    </section>
-  );
 }
 
 export function DeploymentsClient() {
@@ -249,8 +233,8 @@ export function DeploymentsClient() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.20),transparent_30%),linear-gradient(135deg,rgba(255,255,255,0.09),rgba(255,255,255,0.025))] p-6 shadow-2xl shadow-black/20">
-        <div className="absolute inset-0 bg-grid opacity-50" />
+      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="pointer-events-none absolute inset-0 bg-grid opacity-50" />
         <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-primary">Release Operations</p>
@@ -266,7 +250,7 @@ export function DeploymentsClient() {
               variant="outline"
               onClick={() => void loadDeployments()}
               disabled={isLoading || isRefreshing}
-              className="border-white/10 bg-white/5 hover:bg-white/10"
+              className="border-slate-200 bg-white hover:bg-slate-50"
             >
               <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
               Refresh
@@ -283,15 +267,14 @@ export function DeploymentsClient() {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Records" value={String(stats.total)} icon={<History className="h-5 w-5" />} />
-        <StatCard label="Active" value={String(stats.active)} icon={<Zap className="h-5 w-5" />} />
-        <StatCard label="Succeeded" value={String(stats.succeeded)} icon={<CheckCircle2 className="h-5 w-5" />} />
-        <StatCard label="Failed" value={String(stats.failed)} icon={<AlertCircle className="h-5 w-5" />} />
+      <div className="grid overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm md:grid-cols-4">
+        <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r"><p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Total records</p><p className="mt-2 text-2xl font-bold text-[#16191f]">{stats.total}</p></div>
+        <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r"><p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Active</p><p className="mt-2 text-2xl font-bold text-[#16191f]">{stats.active}</p></div>
+        <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r"><p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Succeeded</p><p className="mt-2 text-2xl font-bold text-[#037f0c]">{stats.succeeded}</p></div>
+        <div className="p-4"><p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Failed</p><p className="mt-2 text-2xl font-bold text-[#b42318]">{stats.failed}</p></div>
       </div>
-
       {showTriggerForm ? (
-        <section className="rounded-2xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+        <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <h2 className="text-sm font-semibold text-foreground">Trigger Deployment</h2>
@@ -303,7 +286,7 @@ export function DeploymentsClient() {
             <Rocket className="h-5 w-5 text-primary" />
           </div>
 
-          <div className="mt-5 rounded-xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-200">
+          <div className="mt-5 rounded-xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-sm text-blue-700">
             Deployments currently run through the safe simulation executor. No real Docker,
             Terraform, Kubernetes, or cloud execution is active.
           </div>
@@ -399,7 +382,7 @@ export function DeploymentsClient() {
             </div>
 
             {triggerSuccess ? (
-              <div className="flex flex-col gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 sm:flex-row sm:items-center sm:justify-between">
                 <span>Deployment created and queued for simulation.</span>
                 <Button asChild type="button" variant="outline" size="sm">
                   <Link href={`/dashboard/deployments/${triggerSuccess.id}`}>View Details</Link>
@@ -435,7 +418,7 @@ export function DeploymentsClient() {
         </section>
       ) : null}
 
-      <section className="rounded-2xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-4">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Deployment Records</h2>
@@ -469,8 +452,8 @@ export function DeploymentsClient() {
               </p>
             </div>
           ) : (
-            <div className="overflow-hidden rounded-2xl border border-white/10">
-              <div className="hidden grid-cols-[1.1fr_1fr_1fr_1fr_0.9fr_0.8fr] gap-4 border-b border-white/10 bg-white/[0.045] px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground xl:grid">
+            <div className="overflow-hidden rounded-md border border-slate-200">
+              <div className="hidden grid-cols-[1.1fr_1fr_1fr_1fr_0.9fr_0.8fr] gap-4 border-b border-slate-200 bg-slate-100 px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground xl:grid">
                 <span>Status</span>
                 <span>Project / Environment</span>
                 <span>Source</span>
@@ -482,7 +465,7 @@ export function DeploymentsClient() {
                 {deployments.map((deployment) => (
                   <article
                     key={deployment.id}
-                    className="grid grid-cols-1 gap-4 bg-background/25 p-4 transition hover:bg-white/[0.035] xl:grid-cols-[1.1fr_1fr_1fr_1fr_0.9fr_0.8fr] xl:items-center"
+                    className="grid grid-cols-1 gap-4 bg-background/25 p-4 transition hover:bg-slate-50 xl:grid-cols-[1.1fr_1fr_1fr_1fr_0.9fr_0.8fr] xl:items-center"
                   >
                     <div>
                       <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-medium ${statusClass(deployment.status)}`}>

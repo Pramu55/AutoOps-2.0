@@ -128,33 +128,31 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#17182e] text-white">
-      <div className="absolute inset-0 bg-[linear-gradient(120deg,rgba(28,36,76,0.92),rgba(52,40,88,0.76)_48%,rgba(102,22,76,0.78))]" />
-      <div className="absolute inset-0 opacity-45 [background-image:linear-gradient(30deg,rgba(255,255,255,0.10)_1px,transparent_1px),linear-gradient(150deg,rgba(255,255,255,0.08)_1px,transparent_1px)] [background-size:96px_96px]" />
-      <div className="absolute inset-y-0 left-0 w-[26vw] bg-slate-950/35 [clip-path:polygon(0_0,62%_0,100%_100%,0_100%)]" />
+    <main className="min-h-screen bg-[linear-gradient(120deg,#f7fff0_0%,#d9ffd9_36%,#f7fbff_72%,#ffffff_100%)] text-[#16191f]">
+      <div className="border-b border-[#d5dbdb] bg-white"><div className="mx-auto flex h-20 max-w-[1280px] items-center justify-between px-6"><a href="/" className="flex items-end gap-2 text-3xl font-bold tracking-tight text-[#111827]"><span>autoops</span><span className="mb-1.5 h-1.5 w-10 rounded-full bg-[#ff9900]" /></a><span className="text-sm font-semibold text-[#5f6b7a]">Local demo console</span></div></div>
 
-      <div className="relative mx-auto grid min-h-screen w-full max-w-[1120px] grid-cols-1 gap-10 px-5 py-8 md:grid-cols-[0.95fr_1fr] md:items-center md:px-8 lg:gap-16">
+      <div className="mx-auto grid min-h-[calc(100vh-5rem)] w-full max-w-[1280px] grid-cols-1 gap-10 px-6 py-12 md:grid-cols-[0.95fr_1fr] md:items-center lg:gap-16">
         <section className="flex min-h-[280px] flex-col justify-center md:min-h-0">
-          <Link href="/" className="mb-10 inline-flex items-center gap-3 text-lg font-semibold">
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-violet-500 shadow-xl shadow-blue-950/40">
-              <Zap className="h-7 w-7" />
+          <Link href="/" className="mb-10 inline-flex items-center gap-3 text-lg font-bold">
+            <span className="flex h-12 w-12 items-center justify-center rounded bg-[#16191f]">
+              <Zap className="h-7 w-7 text-white" />
             </span>
             AutoOps
           </Link>
 
           <div className="max-w-[420px]">
-            <div className="mb-7 flex h-28 w-28 items-center justify-center rounded-[2rem] border border-white/15 bg-white/10 shadow-2xl backdrop-blur">
-              <Zap className="h-16 w-16 text-white" />
+            <div className="mb-7 flex h-28 w-28 items-center justify-center rounded-[2rem] border border-[#d5dbdb] bg-white shadow-2xl backdrop-blur">
+              <Zap className="h-16 w-16 text-[#0972d3]" />
             </div>
-            <h1 className="text-5xl font-semibold tracking-tight sm:text-6xl">AUTOOPS</h1>
-            <p className="mt-6 max-w-sm text-base leading-7 text-white/75">
+            <h1 className="text-5xl font-bold tracking-tight text-[#16191f] sm:text-6xl">AUTOOPS</h1>
+            <p className="mt-6 max-w-sm text-base leading-7 text-[#414d5c]">
               AI-native DevOps control plane for projects, environments, deployments, worker queues,
               and simulation timelines.
             </p>
             <div className="mt-8 grid max-w-sm grid-cols-1 gap-2 sm:grid-cols-2">
               {['API ready', 'Worker healthy', 'Queue-backed', 'Simulation active'].map((item) => (
-                <div key={item} className="flex items-center gap-2 rounded-md border border-white/15 bg-white/10 px-3 py-2 text-xs font-medium text-white/85">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-cyan-300" />
+                <div key={item} className="flex items-center gap-2 rounded-md border border-[#d5dbdb] bg-white px-3 py-2 text-xs font-medium text-[#232f3e]">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-[#0972d3]" />
                   {item}
                 </div>
               ))}
@@ -165,22 +163,22 @@ export default function LoginPage() {
         <section className="w-full md:justify-self-end">
           <div className="mx-auto w-full max-w-[460px]">
             <div className="mb-8 flex items-center justify-between gap-4">
-              <h2 className="text-3xl font-light tracking-tight text-white">Log in to AutoOps</h2>
-              <button type="button" className="inline-flex items-center gap-2 text-sm font-medium text-white/75">
+              <h2 className="text-4xl font-bold tracking-tight text-[#16191f]">Log in to AutoOps</h2>
+              <button type="button" className="inline-flex items-center gap-2 text-sm font-medium text-[#414d5c]">
                 AutoOps Cloud
                 <ChevronDown className="h-4 w-4" />
               </button>
             </div>
 
             <div className="mb-8 flex items-center gap-4 text-sm">
-              <span className="font-semibold text-white">New user?</span>
-              <Link href="/register" className="inline-flex items-center gap-2 font-semibold text-blue-300 hover:text-blue-200">
+              <span className="font-bold text-[#16191f]">New user?</span>
+              <Link href="/register" className="inline-flex items-center gap-2 font-semibold text-[#0972d3] hover:underline">
                 Create account <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
 
             {registeredUser ? (
-              <div className="mb-5 rounded border border-emerald-300/40 bg-emerald-400/15 px-4 py-3 text-sm text-emerald-50">
+              <div className="mb-5 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
                 <span className="font-semibold">{registeredUser.name}</span> registered successfully.
                 Please log in with <span className="font-semibold">{registeredUser.email}</span>.
               </div>
@@ -198,7 +196,7 @@ export default function LoginPage() {
                   setEmail(event.target.value);
                   setError(null);
                 }}
-                className="h-12 rounded border-white/20 bg-[#11131f]/90 text-base text-white placeholder:text-white/45 focus-visible:ring-blue-400"
+                className="h-12 rounded border-[#879596] bg-white text-base text-[#16191f] placeholder:text-[#697586] focus-visible:ring-[#0972d3]"
               />
 
               <Input
@@ -212,17 +210,17 @@ export default function LoginPage() {
                   setPassword(event.target.value);
                   setError(null);
                 }}
-                className="h-12 rounded border-white/20 bg-[#11131f]/90 text-base text-white placeholder:text-white/45 focus-visible:ring-blue-400"
+                className="h-12 rounded border-[#879596] bg-white text-base text-[#16191f] placeholder:text-[#697586] focus-visible:ring-[#0972d3]"
               />
 
               {error ? (
-                <div className="rounded border border-rose-400/40 bg-rose-500/15 px-4 py-3 text-sm text-rose-100">
+                <div className="rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
                   {error}
                 </div>
               ) : null}
 
               <Button
-                className="h-12 w-full rounded bg-blue-500 text-base font-semibold text-white hover:bg-blue-400"
+                className="h-12 w-full rounded bg-blue-500 text-base font-bold text-[#16191f] hover:bg-blue-400"
                 type="submit"
                 disabled={isSubmitting}
               >
@@ -230,15 +228,15 @@ export default function LoginPage() {
               </Button>
             </form>
 
-            <Link href="/" className="mt-5 inline-block text-sm font-medium text-blue-300 hover:text-blue-200">
+            <Link href="/" className="mt-5 inline-block text-sm font-medium text-[#0972d3] hover:underline">
               Back to site
             </Link>
 
-            <div className="mt-8 border-t border-white/20 pt-6">
-              <p className="text-xs font-semibold uppercase tracking-wide text-white/45">
+            <div className="mt-8 border-t border-[#d5dbdb] pt-6">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#5f6b7a]">
                 Local demo accounts
               </p>
-              <p className="mt-2 text-sm leading-6 text-white/70">
+              <p className="mt-2 text-sm leading-6 text-[#414d5c]">
                 Use these accounts to test the requester and approver workflow locally. In
                 production, use real organization invites and managed users.
               </p>
@@ -247,28 +245,28 @@ export default function LoginPage() {
                 {LOCAL_DEMO_ACCOUNTS.map((account) => (
                   <div
                     key={account.email}
-                    className="rounded border border-white/15 bg-white/[0.07] p-4"
+                    className="rounded border border-[#d5dbdb] bg-white p-4 shadow-sm"
                   >
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
-                        <p className="text-sm font-semibold text-white">{account.label}</p>
-                        <p className="mt-1 text-xs leading-5 text-white/60">{account.description}</p>
+                        <p className="text-sm font-bold text-[#16191f]">{account.label}</p>
+                        <p className="mt-1 text-xs leading-5 text-[#5f6b7a]">{account.description}</p>
                       </div>
                       <Button
                         type="button"
                         variant="secondary"
-                        className="h-9 shrink-0 rounded bg-white/12 px-3 text-xs font-semibold text-white hover:bg-white/18"
+                        className="h-9 shrink-0 rounded bg-white/12 px-3 text-xs font-bold text-[#16191f] hover:bg-white/18"
                         onClick={() => useDemoAccount(account)}
                       >
                         {account.buttonLabel}
                       </Button>
                     </div>
-                    <div className="mt-3 space-y-1 text-xs text-white/70">
+                    <div className="mt-3 space-y-1 text-xs text-[#414d5c]">
                       <p className="break-all">
-                        <span className="text-white/45">Email:</span> {account.email}
+                        <span className="text-[#5f6b7a]">Email:</span> {account.email}
                       </p>
                       <p>
-                        <span className="text-white/45">Password:</span> {account.password}
+                        <span className="text-[#5f6b7a]">Password:</span> {account.password}
                       </p>
                     </div>
                   </div>
@@ -279,7 +277,7 @@ export default function LoginPage() {
         </section>
       </div>
 
-      <footer className="pointer-events-none absolute bottom-5 left-0 right-0 hidden text-center text-xs text-white/45 md:block">
+      <footer className="pointer-events-none absolute bottom-5 left-0 right-0 hidden text-center text-xs text-[#5f6b7a] md:block">
         AutoOps Control Plane 2026 - Simulation executor enabled - Real infrastructure execution is not active
       </footer>
     </main>

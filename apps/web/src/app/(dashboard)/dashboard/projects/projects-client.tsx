@@ -6,12 +6,10 @@ import type { CreateProjectInput, Project } from '@autoops/types';
 import { ProjectVisibility } from '@autoops/types';
 import {
   AlertCircle,
-  Archive,
   Boxes,
   CalendarClock,
   CheckCircle2,
   Code2,
-  Database,
   ExternalLink,
   GitBranch,
   Loader2,
@@ -74,31 +72,6 @@ function getErrorMessage(error: unknown): string {
   return 'Something went wrong while loading projects.';
 }
 
-function StatCard({
-  label,
-  value,
-  caption,
-  icon,
-}: {
-  label: string;
-  value: string;
-  caption: string;
-  icon: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-2xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10 transition hover:-translate-y-0.5 hover:border-white/15">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-          <p className="mt-2 text-2xl font-semibold text-foreground">{value}</p>
-          <p className="mt-2 text-sm text-muted-foreground">{caption}</p>
-        </div>
-        <div className="rounded-lg bg-primary/10 p-2 text-primary">{icon}</div>
-      </div>
-    </section>
-  );
-}
-
 function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="rounded-lg border border-dashed border-border bg-background/30 p-8 text-center">
@@ -120,7 +93,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
 
 function ProjectCard({ project }: { project: Project }) {
   return (
-    <article className="rounded-2xl border border-white/10 bg-background/35 p-5 shadow-sm transition hover:border-primary/30 hover:bg-white/[0.035]">
+    <article className="rounded-md border border-slate-200 bg-white px-4 py-3 shadow-sm transition hover:border-[#0972d3]/40 hover:bg-[#f2f8fd]">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -137,49 +110,22 @@ function ProjectCard({ project }: { project: Project }) {
           )}
         </div>
 
-        <Button asChild type="button" variant="outline" className="border-white/10 bg-white/5 hover:bg-white/10">
+        <Button asChild type="button" variant="outline" className="border-slate-200 bg-white hover:bg-slate-50">
           <Link href={`/dashboard/projects/${project.id}`}>View Details</Link>
         </Button>
       </div>
 
-      <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-3">
-        <div className="rounded-xl border border-white/10 bg-card/40 p-3">
-          <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
-            <GitBranch className="h-3.5 w-3.5" />
-            Repository
-          </div>
-          {project.repositoryUrl ? (
-            <a
-              href={project.repositoryUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-2 flex min-w-0 items-center gap-2 text-sm text-primary hover:underline"
-            >
-              <span className="truncate">{project.repositoryUrl}</span>
-              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-            </a>
-          ) : (
-            <p className="mt-2 text-sm text-muted-foreground">Not connected</p>
-          )}
-        </div>
-
-        <div className="rounded-xl border border-white/10 bg-card/40 p-3">
-          <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
-            <Code2 className="h-3.5 w-3.5" />
-            Default Branch
-          </div>
-          <p className="mt-2 text-sm font-medium text-foreground">{project.defaultBranch}</p>
-        </div>
-
-        <div className="rounded-xl border border-white/10 bg-card/40 p-3">
-          <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
-            <CalendarClock className="h-3.5 w-3.5" />
-            Created
-          </div>
-          <p className="mt-2 text-sm font-medium text-foreground">{formatDate(project.createdAt)}</p>
-        </div>
+      <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-[#5f6b7a]">
+        <span className="inline-flex items-center gap-1.5"><GitBranch className="h-3.5 w-3.5" />{project.repositoryUrl ? 'Repository connected' : 'Repository not connected'}</span>
+        <span className="inline-flex items-center gap-1.5"><Code2 className="h-3.5 w-3.5" />Branch {project.defaultBranch}</span>
+        <span className="inline-flex items-center gap-1.5"><CalendarClock className="h-3.5 w-3.5" />Created {formatDate(project.createdAt)}</span>
       </div>
-    </article>
+      {project.repositoryUrl ? (
+        <a href={project.repositoryUrl} target="_blank" rel="noreferrer" className="mt-3 flex min-w-0 items-center gap-2 text-xs font-semibold text-[#0972d3] hover:underline">
+          <span className="truncate">{project.repositoryUrl}</span>
+          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+        </a>
+      ) : null}    </article>
   );
 }
 
@@ -269,8 +215,8 @@ export function ProjectsClient() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.18),transparent_30%),linear-gradient(135deg,rgba(255,255,255,0.09),rgba(255,255,255,0.025))] p-6 shadow-2xl shadow-black/20">
-        <div className="absolute inset-0 bg-grid opacity-40" />
+      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="pointer-events-none absolute inset-0 bg-grid opacity-40" />
         <div className="relative flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-primary">Project Inventory</p>
@@ -286,7 +232,7 @@ export function ProjectsClient() {
               variant="outline"
               onClick={() => void loadProjects()}
               disabled={isLoading || isRefreshing}
-              className="border-white/10 bg-white/5 hover:bg-white/10"
+              className="border-slate-200 bg-white hover:bg-slate-50"
             >
               <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
               Refresh
@@ -304,41 +250,26 @@ export function ProjectsClient() {
       </section>
 
       {successMessage ? (
-        <div className="flex items-center gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+        <div className="flex items-center gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700">
           <CheckCircle2 className="h-4 w-4" />
           {successMessage}
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label="Active Projects"
-          value={isLoading ? '...' : String(projects.length)}
-          caption="Count from GET /api/v1/projects."
-          icon={<Boxes className="h-5 w-5" />}
-        />
-        <StatCard
-          label="Archived Projects"
-          value="Not exposed"
-          caption="archivedAt is not returned by the current DTO."
-          icon={<Archive className="h-5 w-5" />}
-        />
-        <StatCard
-          label="Connected Repos"
-          value={isLoading ? '...' : String(repositoryCount)}
-          caption="Projects with repositoryUrl present."
-          icon={<GitBranch className="h-5 w-5" />}
-        />
-        <StatCard
-          label="Environments"
-          value="Pending"
-          caption="Environment integration is not part of this API response."
-          icon={<Database className="h-5 w-5" />}
-        />
+      <div className="grid overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm md:grid-cols-2">
+        <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r">
+          <p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Active projects</p>
+          <p className="mt-2 text-2xl font-bold text-[#16191f]">{isLoading ? '...' : String(projects.length)}</p>
+          <p className="mt-1 text-sm text-[#5f6b7a]">Real project records from the API.</p>
+        </div>
+        <div className="p-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Connected repositories</p>
+          <p className="mt-2 text-2xl font-bold text-[#16191f]">{isLoading ? '...' : String(repositoryCount)}</p>
+          <p className="mt-1 text-sm text-[#5f6b7a]">Projects with repository metadata present.</p>
+        </div>
       </div>
-
       {showCreateForm ? (
-        <section className="rounded-2xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+        <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="text-sm font-semibold text-foreground">Create Project</h2>
@@ -440,7 +371,7 @@ export function ProjectsClient() {
         </section>
       ) : null}
 
-      <section className="rounded-2xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-4">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Project List</h2>

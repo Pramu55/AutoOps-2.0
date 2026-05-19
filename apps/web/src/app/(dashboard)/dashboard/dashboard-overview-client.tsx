@@ -88,20 +88,20 @@ function shortSha(value: string | null): string {
 }
 
 function statusClass(status: string): string {
-  if (status === 'SUCCEEDED') return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
-  if (status === 'FAILED') return 'border-rose-400/30 bg-rose-500/10 text-rose-300';
-  if (ACTIVE_STATUSES.has(status)) return 'border-cyan-300/25 bg-cyan-300/10 text-cyan-200';
-  return 'border-slate-500/25 bg-slate-500/10 text-slate-300';
+  if (status === 'SUCCEEDED') return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-700';
+  if (status === 'FAILED') return 'border-rose-400/30 bg-rose-500/10 text-rose-700';
+  if (ACTIVE_STATUSES.has(status)) return 'border-cyan-300/25 bg-cyan-300/10 text-blue-700';
+  return 'border-slate-500/25 bg-slate-500/10 text-slate-700';
 }
 
 function MetricCard({ label, value, caption, icon, active = false, tone = 'blue', onClick }: MetricCardProps) {
   const toneClass = {
     blue: 'from-blue-500/18 to-cyan-400/8 text-blue-300',
-    emerald: 'from-emerald-500/18 to-cyan-400/8 text-emerald-300',
-    amber: 'from-amber-500/18 to-orange-400/8 text-amber-300',
-    rose: 'from-rose-500/18 to-red-400/8 text-rose-300',
+    emerald: 'from-emerald-500/18 to-cyan-400/8 text-emerald-700',
+    amber: 'from-amber-500/18 to-orange-400/8 text-amber-700',
+    rose: 'from-rose-500/18 to-red-400/8 text-rose-700',
     violet: 'from-violet-500/18 to-blue-400/8 text-violet-300',
-    cyan: 'from-cyan-500/18 to-blue-400/8 text-cyan-300',
+    cyan: 'from-cyan-500/18 to-blue-400/8 text-blue-600',
   }[tone];
 
   return (
@@ -109,19 +109,19 @@ function MetricCard({ label, value, caption, icon, active = false, tone = 'blue'
       type="button"
       onClick={onClick}
       className={cn(
-        'group rounded-2xl border bg-gradient-to-br p-5 text-left shadow-xl shadow-black/10 transition hover:-translate-y-0.5 hover:border-cyan-300/30',
-        active ? 'border-cyan-300/45 from-cyan-300/12 to-violet-500/10' : 'border-white/10 from-white/[0.08] to-white/[0.025]',
+        'group rounded-md border bg-gradient-to-br p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-cyan-300/30',
+        active ? 'border-cyan-300/45 from-cyan-300/12 to-violet-500/10' : 'border-slate-200 from-white/[0.08] to-white/[0.025]',
       )}
     >
       <div className="flex items-start justify-between">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-          <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
-          <p className="mt-2 text-sm text-slate-400">{caption}</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
+          <p className="mt-2 text-sm text-slate-600">{caption}</p>
         </div>
         <div className={`rounded-xl bg-gradient-to-br p-2 ${toneClass}`}>{icon}</div>
       </div>
-      <p className="mt-4 flex items-center gap-1 text-xs font-medium text-cyan-300 opacity-0 transition group-hover:opacity-100">
+      <p className="mt-4 flex items-center gap-1 text-xs font-medium text-blue-600 opacity-0 transition group-hover:opacity-100">
         Filter stream <ArrowRight className="h-3 w-3" />
       </p>
     </button>
@@ -130,15 +130,15 @@ function MetricCard({ label, value, caption, icon, active = false, tone = 'blue'
 
 function ReadinessRow({ label, value, tone }: { label: string; value: string; tone: 'green' | 'amber' | 'rose' | 'blue' }) {
   const toneClass = {
-    green: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300',
-    amber: 'border-amber-400/25 bg-amber-400/10 text-amber-300',
-    rose: 'border-rose-400/25 bg-rose-400/10 text-rose-300',
-    blue: 'border-cyan-400/25 bg-cyan-400/10 text-cyan-200',
+    green: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-700',
+    amber: 'border-amber-400/25 bg-amber-400/10 text-amber-700',
+    rose: 'border-rose-400/25 bg-rose-400/10 text-rose-700',
+    blue: 'border-cyan-400/25 bg-cyan-400/10 text-blue-700',
   }[tone];
 
   return (
-    <div className="flex items-center justify-between gap-4 border-t border-white/10 py-3 first:border-t-0 first:pt-0 last:pb-0">
-      <span className="text-sm text-slate-200">{label}</span>
+    <div className="flex items-center justify-between gap-4 border-t border-slate-200 py-3 first:border-t-0 first:pt-0 last:pb-0">
+      <span className="text-sm text-slate-700">{label}</span>
       <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${toneClass}`}>{value}</span>
     </div>
   );
@@ -268,24 +268,24 @@ export function DashboardOverviewClient() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <section className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.28),transparent_34%),radial-gradient(circle_at_90%_10%,rgba(124,58,237,0.24),transparent_32%),linear-gradient(135deg,rgba(255,255,255,0.11),rgba(255,255,255,0.025))] p-6 shadow-2xl shadow-black/25 lg:p-8">
-        <div className="absolute inset-0 bg-grid opacity-50" />
+      <section className="relative overflow-hidden rounded-[2rem] border border-slate-200 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.28),transparent_34%),radial-gradient(circle_at_90%_10%,rgba(124,58,237,0.24),transparent_32%),linear-gradient(135deg,rgba(255,255,255,0.11),rgba(255,255,255,0.025))] p-6 shadow-sm lg:p-8">
+        <div className="pointer-events-none absolute inset-0 bg-grid opacity-50" />
         <div className="relative grid grid-cols-1 gap-8 xl:grid-cols-[0.88fr_1.12fr] xl:items-stretch">
           <div className="flex flex-col justify-between">
             <div>
               <div className="mb-4 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300">
+                <span className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-700">
                   <span className={cn('h-2 w-2 rounded-full', isLive ? 'animate-pulse bg-emerald-300' : 'bg-slate-500')} />
                   {isLive ? 'Live API polling' : 'Live polling paused'}
                 </span>
-                <span className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-medium text-slate-300">
+                <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700">
                   Updated {formatTime(lastUpdated)}
                 </span>
               </div>
-              <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-white lg:text-5xl">
+              <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-slate-900 lg:text-5xl">
                 AutoOps command overview
               </h1>
-              <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400">
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
                 A live operator workspace backed by real projects, real environments, real
                 deployment records, and API health checks. No fabricated operational records.
               </p>
@@ -305,12 +305,12 @@ export function DashboardOverviewClient() {
                 type="button"
                 variant="outline"
                 onClick={() => setIsLive((value) => !value)}
-                className="rounded-full border-white/10 bg-white/5 hover:bg-white/10"
+                className="rounded-full border-slate-200 bg-white hover:bg-slate-50"
               >
                 {isLive ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                 {isLive ? 'Pause live mode' : 'Resume live mode'}
               </Button>
-              <Button asChild variant="outline" className="rounded-full border-cyan-300/20 bg-cyan-300/10 text-cyan-200 hover:bg-cyan-300/15">
+              <Button asChild variant="outline" className="rounded-full border-cyan-300/20 bg-cyan-300/10 text-blue-700 hover:bg-cyan-300/15">
                 <Link href="/dashboard/deployments">
                   Deployment console <ArrowRight className="h-4 w-4" />
                 </Link>
@@ -318,13 +318,13 @@ export function DashboardOverviewClient() {
             </div>
           </div>
 
-          <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-4 shadow-2xl backdrop-blur">
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Live control graph</p>
-                <p className="mt-1 text-sm font-medium text-white">Project inventory to deployment timeline</p>
+                <p className="mt-1 text-sm font-medium text-slate-900">Project inventory to deployment timeline</p>
               </div>
-              <div className="rounded-full border border-white/10 bg-white/[0.055] px-3 py-1.5 text-xs text-slate-300">
+              <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700">
                 Polls every {POLL_INTERVAL_MS / 1_000}s
               </div>
             </div>
@@ -335,11 +335,11 @@ export function DashboardOverviewClient() {
                 { href: '/dashboard/deployments', label: 'Deployments', value: deploymentStats.total, caption: 'real records', icon: GitMerge },
                 { href: '/dashboard/deployments', label: 'Active queue', value: deploymentStats.active, caption: 'current work', icon: RadioTower },
               ].map(({ href, label, value, caption, icon: Icon }, index) => (
-                <Link key={label} href={href} className="group relative rounded-2xl border border-white/10 bg-white/[0.055] p-4 transition hover:-translate-y-0.5 hover:border-cyan-300/35 hover:bg-white/[0.075]">
+                <Link key={label} href={href} className="group relative rounded-md border border-slate-200 bg-white p-4 transition hover:-translate-y-0.5 hover:border-cyan-300/35 hover:bg-blue-50">
                   {index < 3 ? <span className="absolute -right-3 top-1/2 hidden h-px w-3 bg-cyan-300/40 lg:block" /> : null}
-                  <Icon className="h-4 w-4 text-cyan-300" />
-                  <p className="mt-4 text-2xl font-semibold text-white">{isLoading ? '...' : value}</p>
-                  <p className="mt-1 text-xs font-medium text-slate-300">{label}</p>
+                  <Icon className="h-4 w-4 text-blue-600" />
+                  <p className="mt-4 text-2xl font-semibold text-slate-900">{isLoading ? '...' : value}</p>
+                  <p className="mt-1 text-xs font-medium text-slate-700">{label}</p>
                   <p className="mt-1 text-[11px] text-slate-500">{caption}</p>
                 </Link>
               ))}
@@ -349,7 +349,7 @@ export function DashboardOverviewClient() {
       </section>
 
       {error ? (
-        <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
           {error}
         </div>
       ) : null}
@@ -402,11 +402,11 @@ export function DashboardOverviewClient() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[1.45fr_0.95fr]">
-        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h2 className="text-base font-semibold text-white">Deployment operations stream</h2>
-              <p className="mt-1 text-sm text-slate-400">
+              <h2 className="text-base font-semibold text-slate-900">Deployment operations stream</h2>
+              <p className="mt-1 text-sm text-slate-600">
                 Filtered from real deployment records. Click any row for its event timeline.
               </p>
             </div>
@@ -417,10 +417,10 @@ export function DashboardOverviewClient() {
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Search status, SHA, project..."
-                  className="h-10 w-full rounded-full border-white/10 bg-slate-950/55 pl-9 sm:w-72"
+                  className="h-10 w-full rounded-full border-slate-200 bg-white pl-9 sm:w-72"
                 />
               </div>
-              <Button asChild className="rounded-full bg-gradient-to-r from-blue-500 to-violet-500 text-white hover:opacity-90">
+              <Button asChild className="rounded-full bg-gradient-to-r from-blue-500 to-violet-500 text-slate-900 hover:opacity-90">
                 <Link href="/dashboard/deployments">
                   Open release ops <ArrowRight className="h-4 w-4" />
                 </Link>
@@ -442,8 +442,8 @@ export function DashboardOverviewClient() {
                 className={cn(
                   'rounded-full border px-3 py-2 text-xs font-medium transition',
                   filter === item.value
-                    ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200'
-                    : 'border-white/10 bg-white/[0.035] text-slate-400 hover:bg-white/[0.07] hover:text-white',
+                    ? 'border-cyan-300/40 bg-cyan-300/10 text-blue-700'
+                    : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-blue-50 hover:text-slate-900',
                 )}
               >
                 {item.label}
@@ -453,8 +453,8 @@ export function DashboardOverviewClient() {
 
           <div className="mt-5 space-y-3">
             {filteredDeployments.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-white/15 bg-slate-950/35 p-8 text-center">
-                <p className="text-sm font-medium text-white">No matching deployment records</p>
+              <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+                <p className="text-sm font-medium text-slate-900">No matching deployment records</p>
                 <p className="mt-2 text-sm text-slate-500">Adjust the filter/search, or trigger a deployment from Release Ops.</p>
               </div>
             ) : (
@@ -466,18 +466,18 @@ export function DashboardOverviewClient() {
                   <Link
                     key={deployment.id}
                     href={`/dashboard/deployments/${deployment.id}`}
-                    className="group grid gap-4 rounded-2xl border border-white/10 bg-slate-950/35 p-4 transition hover:border-cyan-300/35 hover:bg-white/[0.06] lg:grid-cols-[1.15fr_0.9fr_0.7fr_0.45fr]"
+                    className="group grid gap-4 rounded-md border border-slate-200 bg-slate-50 p-4 transition hover:border-cyan-300/35 hover:bg-slate-100 lg:grid-cols-[1.15fr_0.9fr_0.7fr_0.45fr]"
                   >
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(deployment.status)}`}>
                           {deployment.status}
                         </span>
-                        <span className="rounded-full border border-white/10 bg-white/[0.045] px-2.5 py-1 text-[11px] text-slate-400">
+                        <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[11px] text-slate-600">
                           {deployment.trigger}
                         </span>
                       </div>
-                      <p className="mt-3 truncate text-sm font-medium text-white">{project?.name ?? `Project ${deployment.projectId}`}</p>
+                      <p className="mt-3 truncate text-sm font-medium text-slate-900">{project?.name ?? `Project ${deployment.projectId}`}</p>
                       <p className="mt-1 truncate text-xs text-slate-500">{environment?.name ?? `Environment ${deployment.environmentId}`}</p>
                     </div>
 
@@ -486,7 +486,7 @@ export function DashboardOverviewClient() {
                         <GitCommit className="h-3.5 w-3.5" />
                         Commit
                       </p>
-                      <p className="mt-2 truncate font-mono text-sm text-slate-200">{shortSha(deployment.commitSha)}</p>
+                      <p className="mt-2 truncate font-mono text-sm text-slate-700">{shortSha(deployment.commitSha)}</p>
                       <p className="mt-1 truncate text-xs text-slate-500">{deployment.branch ?? 'Branch not provided'}</p>
                     </div>
 
@@ -495,12 +495,12 @@ export function DashboardOverviewClient() {
                         <Timer className="h-3.5 w-3.5" />
                         Duration
                       </p>
-                      <p className="mt-2 text-sm font-medium text-slate-200">{formatDuration(deployment.durationMs)}</p>
+                      <p className="mt-2 text-sm font-medium text-slate-700">{formatDuration(deployment.durationMs)}</p>
                       <p className="mt-1 text-xs text-slate-500">{formatDate(deployment.createdAt)}</p>
                     </div>
 
                     <div className="flex items-center justify-start lg:justify-end">
-                      <span className="inline-flex items-center gap-1 text-xs font-medium text-cyan-300 opacity-100 transition group-hover:translate-x-0.5">
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 opacity-100 transition group-hover:translate-x-0.5">
                         Details <ArrowRight className="h-3.5 w-3.5" />
                       </span>
                     </div>
@@ -512,13 +512,13 @@ export function DashboardOverviewClient() {
         </section>
 
         <div className="space-y-4">
-          <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h2 className="text-base font-semibold text-white">Platform readiness</h2>
-                <p className="mt-1 text-sm text-slate-400">Only values backed by current endpoints are marked live.</p>
+                <h2 className="text-base font-semibold text-slate-900">Platform readiness</h2>
+                <p className="mt-1 text-sm text-slate-600">Only values backed by current endpoints are marked live.</p>
               </div>
-              <RadioTower className="h-5 w-5 text-cyan-300" />
+              <RadioTower className="h-5 w-5 text-blue-600" />
             </div>
             <div className="mt-5">
               <ReadinessRow
@@ -536,31 +536,31 @@ export function DashboardOverviewClient() {
             </div>
           </section>
 
-          <section className="rounded-3xl border border-white/10 bg-[linear-gradient(135deg,rgba(14,165,233,0.12),rgba(124,58,237,0.08),rgba(255,255,255,0.035))] p-5 shadow-xl shadow-black/10">
+          <section className="rounded-lg border border-slate-200 bg-[linear-gradient(135deg,rgba(14,165,233,0.12),rgba(124,58,237,0.08),rgba(255,255,255,0.035))] p-5 shadow-sm">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h2 className="text-base font-semibold text-white">Latest deployment</h2>
-                <p className="mt-1 text-sm text-slate-400">Newest record returned by the deployment API.</p>
+                <h2 className="text-base font-semibold text-slate-900">Latest deployment</h2>
+                <p className="mt-1 text-sm text-slate-600">Newest record returned by the deployment API.</p>
               </div>
               <Activity className="h-5 w-5 text-violet-300" />
             </div>
             {latestDeployment ? (
-              <Link href={`/dashboard/deployments/${latestDeployment.id}`} className="mt-5 block rounded-2xl border border-white/10 bg-slate-950/35 p-4 transition hover:border-violet-300/35 hover:bg-white/[0.06]">
+              <Link href={`/dashboard/deployments/${latestDeployment.id}`} className="mt-5 block rounded-md border border-slate-200 bg-slate-50 p-4 transition hover:border-violet-300/35 hover:bg-slate-100">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(latestDeployment.status)}`}>
                     {latestDeployment.status}
                   </span>
-                  <span className="rounded-full border border-white/10 bg-white/[0.045] px-2.5 py-1 text-[11px] text-slate-400">
+                  <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[11px] text-slate-600">
                     {latestDeployment.trigger}
                   </span>
                 </div>
-                <p className="mt-4 font-mono text-sm text-white">{shortSha(latestDeployment.commitSha)}</p>
+                <p className="mt-4 font-mono text-sm text-slate-900">{shortSha(latestDeployment.commitSha)}</p>
                 <p className="mt-2 text-xs text-slate-500">
-                  {formatDate(latestDeployment.createdAt)} · {formatDuration(latestDeployment.durationMs)}
+                  {formatDate(latestDeployment.createdAt)} Ãƒâ€šÃ‚Â· {formatDuration(latestDeployment.durationMs)}
                 </p>
               </Link>
             ) : (
-              <div className="mt-5 rounded-2xl border border-dashed border-white/15 bg-slate-950/35 p-5 text-sm text-slate-400">
+              <div className="mt-5 rounded-md border border-dashed border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
                 No deployment has been triggered yet.
               </div>
             )}
@@ -569,31 +569,31 @@ export function DashboardOverviewClient() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-base font-semibold text-white">Real-time controls</h2>
-              <p className="mt-1 text-sm text-slate-400">Every action here reads, filters, refreshes, or navigates real platform data.</p>
+              <h2 className="text-base font-semibold text-slate-900">Real-time controls</h2>
+              <p className="mt-1 text-sm text-slate-600">Every action here reads, filters, refreshes, or navigates real platform data.</p>
             </div>
-            <Zap className="h-5 w-5 text-cyan-300" />
+            <Zap className="h-5 w-5 text-blue-600" />
           </div>
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <Button asChild variant="outline" className="justify-between rounded-2xl border-white/10 bg-white/[0.04] px-4 py-6 hover:bg-white/[0.08]">
+            <Button asChild variant="outline" className="justify-between rounded-md border-slate-200 bg-slate-50 px-4 py-6 hover:bg-blue-50">
               <Link href="/dashboard/projects">
                 Project inventory <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
-            <Button asChild variant="outline" className="justify-between rounded-2xl border-white/10 bg-white/[0.04] px-4 py-6 hover:bg-white/[0.08]">
+            <Button asChild variant="outline" className="justify-between rounded-md border-slate-200 bg-slate-50 px-4 py-6 hover:bg-blue-50">
               <Link href="/dashboard/deployments">
                 Trigger deployment <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
-            <Button asChild variant="outline" className="justify-between rounded-2xl border-white/10 bg-white/[0.04] px-4 py-6 hover:bg-white/[0.08]">
+            <Button asChild variant="outline" className="justify-between rounded-md border-slate-200 bg-slate-50 px-4 py-6 hover:bg-blue-50">
               <Link href="/dashboard/observability">
                 Observability readiness <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
-            <Button asChild variant="outline" className="justify-between rounded-2xl border-white/10 bg-white/[0.04] px-4 py-6 hover:bg-white/[0.08]">
+            <Button asChild variant="outline" className="justify-between rounded-md border-slate-200 bg-slate-50 px-4 py-6 hover:bg-blue-50">
               <Link href="/dashboard/settings">
                 Governance settings <ArrowRight className="h-4 w-4" />
               </Link>
@@ -601,13 +601,13 @@ export function DashboardOverviewClient() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-base font-semibold text-white">Execution boundary</h2>
-              <p className="mt-1 text-sm text-slate-400">Current records are real. Infrastructure mutation is not active.</p>
+              <h2 className="text-base font-semibold text-slate-900">Execution boundary</h2>
+              <p className="mt-1 text-sm text-slate-600">Current records are real. Infrastructure mutation is not active.</p>
             </div>
-            <ShieldCheck className="h-5 w-5 text-emerald-300" />
+            <ShieldCheck className="h-5 w-5 text-emerald-700" />
           </div>
           <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
             {[
@@ -615,29 +615,29 @@ export function DashboardOverviewClient() {
               { label: 'Queue runtime', value: 'Redis + BullMQ', icon: RadioTower },
               { label: 'Executor', value: 'Safe simulation', icon: Sparkles },
             ].map(({ label, value, icon: Icon }) => (
-              <div key={label} className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
-                <Icon className="h-4 w-4 text-cyan-300" />
+              <div key={label} className="rounded-md border border-slate-200 bg-slate-50 p-4">
+                <Icon className="h-4 w-4 text-blue-600" />
                 <p className="mt-3 text-xs uppercase tracking-wide text-slate-500">{label}</p>
-                <p className="mt-1 text-sm font-medium text-white">{value}</p>
+                <p className="mt-1 text-sm font-medium text-slate-900">{value}</p>
               </div>
             ))}
           </div>
         </section>
       </div>
 
-      <section className="rounded-3xl border border-white/10 bg-white/[0.055] p-5 shadow-xl shadow-black/10">
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-base font-semibold text-white">Capability roadmap</h2>
-            <p className="mt-1 text-sm text-slate-400">Shown as planned work only, not active platform telemetry.</p>
+            <h2 className="text-base font-semibold text-slate-900">Capability roadmap</h2>
+            <p className="mt-1 text-sm text-slate-600">Shown as planned work only, not active platform telemetry.</p>
           </div>
           <Clock3 className="h-5 w-5 text-slate-500" />
         </div>
         <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-4">
           {['Docker executor', 'Terraform executor', 'Kubernetes executor', 'GitHub integration'].map((item) => (
-            <div key={item} className="rounded-2xl border border-dashed border-white/15 bg-slate-950/35 p-4">
-              <p className="text-sm font-medium text-white">{item}</p>
-              <p className="mt-2 text-xs text-amber-300">Planned, not active</p>
+            <div key={item} className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-medium text-slate-900">{item}</p>
+              <p className="mt-2 text-xs text-amber-700">Planned, not active</p>
             </div>
           ))}
         </div>
