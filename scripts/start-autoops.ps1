@@ -10,8 +10,25 @@ Write-Host "========================================" -ForegroundColor Cyan
 
 Set-Location "C:\AutoOps 2.0"
 
+Write-Host "`nChecking Docker engine..." -ForegroundColor Cyan
+try {
+  docker version | Out-Null
+  Write-Host "Docker engine: available" -ForegroundColor Green
+} catch {
+  Write-Host "Docker engine is not available. Start Docker Desktop and try again." -ForegroundColor Red
+  exit 1
+}
+
 Write-Host "`nChecking Git working tree..." -ForegroundColor Cyan
 git --no-pager status --short
+$branch = git branch --show-current
+if ($branch) {
+  Write-Host "Current branch: $branch" -ForegroundColor DarkCyan
+}
+
+if (-not (Test-Path ".env")) {
+  Write-Host "`n.env was not found. Copy .env.example to .env and set local secrets before starting." -ForegroundColor Yellow
+}
 
 Write-Host "`nStarting Jenkins..." -ForegroundColor Cyan
 docker start autoops-jenkins 2>$null | Out-Null
@@ -70,6 +87,7 @@ try {
 
 Write-Host "`nAutoOps started." -ForegroundColor Green
 Write-Host "Open: http://localhost:3000" -ForegroundColor Green
+Write-Host "API: http://localhost:4000" -ForegroundColor Green
 Write-Host "Jenkins: http://localhost:8080" -ForegroundColor Green
 Write-Host "Grafana: http://localhost:3001" -ForegroundColor Green
 Write-Host "Prometheus: http://localhost:9090" -ForegroundColor Green

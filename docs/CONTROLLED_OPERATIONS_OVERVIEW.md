@@ -90,3 +90,12 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Use disposable resources for action tests, such as `autoops-docker-smoke` or `default/autoops-k8s-smoke`.
 - Do not add create/delete UI for smoke resources.
 - Do not print `.env`, tokens, kubeconfig, Authorization headers, or provider credentials.
+
+## Production Release Hardening
+
+- `.env.example` is a safe template only; `.env` must never be committed and production secrets must be rotated.
+- `docker-compose.prod.yml` is production-like and intentionally omits Docker socket and kubeconfig mounts by default.
+- Production startup rejects placeholder JWT secrets and requires access and refresh secrets to be different.
+- Backup and restore are explicit script-driven flows; restore requires typing `RESTORE` and never deletes Docker volumes.
+- `scripts/check-release.ps1` runs build, typecheck, migration status when configured, and whitespace checks without destructive commands.
+- Production deployment and security checklists live in `docs/PRODUCTION_DEPLOYMENT_READINESS.md` and `docs/SECURITY_CHECKLIST.md`.

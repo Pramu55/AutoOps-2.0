@@ -1,160 +1,114 @@
 # AutoOps 2.0
 
-> **AI-native DevOps control plane.** Deploy, observe, and understand your infrastructure — with an AI copilot that reads your logs, writes your Dockerfiles, and explains every incident.
-
----
+> Governed DevOps control plane for real runtime visibility, controlled operations, approvals, worker execution, incidents, and safe runbooks.
 
 ## Stack
 
 | Layer | Technology |
-|---|---|
+| --- | --- |
 | Monorepo | pnpm workspaces + Turborepo |
-| API | Express 4 + TypeScript (ESM) |
+| API | Express 4 + TypeScript |
 | Worker | BullMQ + Redis |
-| Web | Next.js 15 (App Router) + Tailwind + shadcn/ui |
-| Database | PostgreSQL 16 + Prisma ORM |
+| Web | Next.js 15 + Tailwind |
+| Database | PostgreSQL 16 + Prisma |
 | Queue/Cache | Redis 7 |
 | Observability | Prometheus + Grafana |
-| Reverse proxy | Nginx |
+| Runtime | Docker Compose |
 
----
+## Quick Start
 
-## Quick start (Docker — one command)
-
-```bash
-# 1. Clone and enter the repo
-git clone <repo-url> autoops && cd autoops
-
-# 2. Copy env template and fill in the two secrets
-cp .env.example .env
-# Edit .env — set JWT_SECRET and JWT_REFRESH_SECRET (32+ chars each):
-#   openssl rand -base64 48
-
-# 3. Start the full stack
-docker compose up --build -d
-
-# 4. Run migrations and seed the database
-docker compose exec api pnpm --filter @autoops/database db:migrate
-docker compose exec api pnpm --filter @autoops/database db:seed
-
-# 5. Open the UI
-open http://localhost
+```powershell
+git clone https://github.com/Pramu55/AutoOps-2.0.git
+cd "AutoOps 2.0"
+Copy-Item .env.example .env
+notepad .env
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\start-autoops.ps1 -Build
 ```
+
+Run migrations and local seed when starting with a new database:
+
+```powershell
+$env:DATABASE_URL="postgresql://autoops:autoops_dev@localhost:5432/autoops?schema=public"
+.\node_modules\.bin\prisma.cmd migrate deploy --schema packages/database/prisma/schema.prisma
+pnpm.cmd --filter @autoops/database run seed
+```
+
+Open:
 
 | Service | URL |
-|---|---|
-| Web UI | http://localhost |
-| API | http://localhost/api |
-| Grafana | http://localhost/grafana &nbsp;(admin / admin) |
+| --- | --- |
+| Web UI | http://localhost:3000 |
+| API health | http://localhost:4000/health |
+| API readiness | http://localhost:4000/ready |
+| Jenkins local controller | http://localhost:8080 |
+| Grafana | http://localhost:3001 |
 | Prometheus | http://localhost:9090 |
 
-**Demo login:** `admin@autoops.local` / `AutoOpsAdmin1!`
+## Local Demo Accounts
 
----
+These accounts are local demo users only. Do not use them in production.
 
-## Local development (without Docker)
+| Role | Email |
+| --- | --- |
+| Operator / Requester | `pramod.local@autoops.dev` |
+| Admin / Approver | `approver.local@autoops.dev` |
 
-```bash
-# Install dependencies
-pnpm install
+The local seed password is shown in the login page and `.env.example`.
 
-# Copy and fill env
-cp .env.example .env
+## Current Capabilities
 
-# Start Postgres + Redis (Docker required for these two)
-docker compose up postgres redis -d
+- Authenticated web console and API.
+- Tenant-scoped projects, deployments, operations, audit logs, and incidents.
+- Jenkins status, jobs, builds, and allowlisted build trigger.
+- Docker status, containers, images, networks, volumes, logs, and governed start/stop/restart.
+- Kubernetes status, metrics, namespaces, workloads, pods, services, scale, and rollout restart.
+- Confirmation tokens for controlled actions.
+- Operation policy and approval engine.
+- RBAC operation authorization.
+- Requester/approver separation.
+- Worker heartbeat runtime registry.
+- Operations observability.
+- Failed-operation incidents and deterministic runbooks.
 
-# Generate Prisma client
-pnpm db:generate
+## Safety Model
 
-# Run migrations
-pnpm db:migrate
+AutoOps does not expose provider secrets, kubeconfig content, tokens, certs, Kubernetes Secrets, raw operation metadata, or stack traces in production responses. Docker exec/shell/delete/create and Kubernetes exec/shell/apply/delete/secret controls are intentionally not exposed.
 
-# Seed
-pnpm db:seed
+## Release Readiness
 
-# Start all apps in watch mode (api, worker, web)
-pnpm dev
+Company-pilot guidance:
+
+- [Production Deployment Readiness](./docs/PRODUCTION_DEPLOYMENT_READINESS.md)
+- [Security Checklist](./docs/SECURITY_CHECKLIST.md)
+- [Controlled Operations Overview](./docs/CONTROLLED_OPERATIONS_OVERVIEW.md)
+
+Release scripts:
+
+```powershell
+.\scripts\check-release.ps1
+.\scripts\backup-postgres.ps1
+.\scripts\restore-postgres.ps1 -BackupPath ".\backups\autoops-YYYY-MM-DD-HHMMSS.dump"
 ```
 
-Each app runs on its own port:
+## Useful Commands
 
-| App | Port |
-|---|---|
-| Web | 3000 |
-| API | 4000 |
-| Worker health | 4001 |
-
----
-
-## Project layout
-
-```
-autoops/
-├── apps/
-│   ├── api/          Express API — auth, REST, WebSocket, Prometheus
-│   ├── worker/       BullMQ worker — deployments, builds (Phase 2), AI (Phase 4)
-│   └── web/          Next.js 15 dashboard
-│
-├── packages/
-│   ├── database/     Prisma schema (21 models) + seed
-│   ├── types/        Shared Zod schemas + inferred TS types
-│   ├── logger/       Pino structured logger
-│   └── utils/        AppError hierarchy, env loader, Result type
-│
-├── infra/
-│   ├── docker/       Dockerfiles (multi-stage, node runtime user)
-│   ├── nginx/        Reverse proxy — web, api, ws upgrade, grafana
-│   ├── prometheus/   Scrape config
-│   └── grafana/      Provisioned datasource + overview dashboard
-│
-├── docker-compose.yml
-├── ARCHITECTURE.md
-└── .env.example
+```powershell
+pnpm.cmd build
+pnpm.cmd typecheck
+.\node_modules\.bin\prisma.cmd migrate status --schema packages/database/prisma/schema.prisma
+docker compose -f docker-compose.yml -f docker-compose.k8s.yml ps
+docker compose -f docker-compose.yml -f docker-compose.k8s.yml logs -f api worker
 ```
 
----
+## Project Layout
 
-## Environment variables
-
-See `.env.example` for the full list. Required values:
-
-```env
-DATABASE_URL=postgresql://autoops:autoops_dev@localhost:5432/autoops
-REDIS_URL=redis://localhost:6379
-JWT_SECRET=<32+ chars>
-JWT_REFRESH_SECRET=<32+ chars>
+```text
+apps/api        Express API
+apps/worker     BullMQ worker
+apps/web        Next.js console
+packages/*      Shared database, types, logger, and utilities
+infra/*         Dockerfiles, nginx, Prometheus, Grafana
+scripts/*       Safe local operations scripts
+docs/*          Deployment, security, and controlled-operation docs
 ```
-
----
-
-## Useful commands
-
-```bash
-pnpm build              # Build all packages + apps
-pnpm lint               # Lint everything
-pnpm typecheck          # Type-check everything
-pnpm db:generate        # Regenerate Prisma client after schema changes
-pnpm db:migrate         # Run pending migrations (prisma migrate dev)
-pnpm db:seed            # Seed the database
-pnpm db:studio          # Open Prisma Studio at :5555
-docker compose logs -f api worker   # Follow service logs
-```
-
----
-
-## Phase roadmap
-
-| Phase | Goal | Status |
-|---|---|---|
-| **1 — Foundation** | Monorepo, shared packages, DB schema, API, worker, web shell, Docker stack | ✅ |
-| **2 — Build & Deploy** | GitHub OAuth, project CRUD, Docker build pipeline, deployment engine, log streaming | 🔜 |
-| **3 — Observability** | In-app Prometheus dashboards, alerts engine, incident management | 🔜 |
-| **4 — AI Copilot** | Multi-provider AI (OpenAI/Anthropic/Ollama), log explainer, RCA, Dockerfile generator | 🔜 |
-| **5 — Kubernetes** | kubeconfig management, cluster viz, Helm catalog, ArgoCD-style sync | 🔜 |
-
----
-
-## Architecture
-
-See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the full design doc — topology, data flows, security posture, and decision log.

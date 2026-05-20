@@ -67,3 +67,5 @@ volumes
 structure.txt
 full-structure.txt
 personal-portfolio/
+backups/
+*.dump

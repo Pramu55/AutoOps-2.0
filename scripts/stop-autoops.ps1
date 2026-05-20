@@ -6,6 +6,8 @@ Write-Host "========================================" -ForegroundColor Cyan
 
 Set-Location "C:\AutoOps 2.0"
 
+Write-Host "`nStopping only running services. Volumes, images, and database data are preserved." -ForegroundColor Yellow
+
 Write-Host "`nStopping AutoOps Docker Compose stack..." -ForegroundColor Cyan
 
 $KUBE_SERVER = kubectl config view --minify -o jsonpath="{.clusters[0].cluster.server}" 2>$null
@@ -18,12 +20,12 @@ $env:KUBERNETES_TLS_SERVER_NAME_OVERRIDE="127.0.0.1"
 docker compose -f docker-compose.yml -f docker-compose.k8s.yml stop
 
 Write-Host "`nStopping Jenkins..." -ForegroundColor Cyan
-docker stop autoops-jenkins 2>$null
+docker stop autoops-jenkins 2>$null | Out-Null
 
 Write-Host "`nStopping Docker smoke container..." -ForegroundColor Cyan
-docker stop autoops-docker-smoke 2>$null
+docker stop autoops-docker-smoke 2>$null | Out-Null
 
 Write-Host "`nRunning containers after shutdown:" -ForegroundColor Cyan
 docker ps
 
-Write-Host "`nAutoOps stopped safely." -ForegroundColor Green
+Write-Host "`nAutoOps stopped safely. No volumes were deleted." -ForegroundColor Green
