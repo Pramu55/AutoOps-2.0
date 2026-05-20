@@ -21,7 +21,7 @@
     "prisma"
   ],
   "scripts": {
-    "build": "prisma generate --schema=prisma/schema.prisma && tsc -p tsconfig.json",
+    "build": "node scripts/generate-prisma-client.mjs && tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
