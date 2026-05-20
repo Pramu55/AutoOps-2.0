@@ -32,7 +32,7 @@ type PendingApprovalDecision = {
   decision: ApprovalDecision;
 };
 
-const POLL_INTERVAL_MS = 15_000;
+const POLL_INTERVAL_MS = 5_000;
 const MISSING_VALUE = '-';
 
 function getErrorMessage(error: unknown): string {
@@ -92,7 +92,14 @@ function shortOperationId(value: string): string {
 }
 
 function statusTone(status: string): string {
-  if (status === 'READY' || status === 'SUCCEEDED' || status === 'CONNECTED' || status === 'HEALTHY' || status === 'RUNNING') {
+  if (
+    status === 'READY' ||
+    status === 'SUCCEEDED' ||
+    status === 'CONNECTED' ||
+    status === 'HEALTHY' ||
+    status === 'RUNNING' ||
+    status === 'RESOLVED'
+  ) {
     return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-700';
   }
   if (status === 'UNKNOWN' || status === 'DEGRADED') return 'border-amber-400/25 bg-amber-400/10 text-amber-700';
@@ -456,7 +463,20 @@ export function OperationsClient() {
     const intervalId = window.setInterval(() => {
       void loadSummary();
     }, POLL_INTERVAL_MS);
-    return () => window.clearInterval(intervalId);
+
+    function refreshWhenVisible() {
+      if (document.visibilityState === 'visible') {
+        void loadSummary();
+      }
+    }
+
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
   }, [loadSummary]);
 
   useEffect(() => {
@@ -478,6 +498,14 @@ export function OperationsClient() {
   const operationObservability = observability?.operations;
   const incidentSummary = observability?.incidents;
   const pendingApprovals = useMemo(() => pendingApprovalItems, [pendingApprovalItems]);
+  const importantIncidents = useMemo(
+    () =>
+      (incidentSummary?.latest ?? [])
+        .filter((incident) => incident.status === 'OPEN' || incident.status === 'ACKNOWLEDGED')
+        .filter((incident) => incident.severity === 'CRITICAL' || incident.severity === 'HIGH' || incident.severity === 'MEDIUM')
+        .slice(0, 3),
+    [incidentSummary?.latest],
+  );
 
   const openDecisionModal = (operation: OperationActivityItem, decision: ApprovalDecision) => {
     const allowed = decision === 'approve' ? operation.permissions.canApprove : operation.permissions.canReject;
@@ -569,10 +597,12 @@ export function OperationsClient() {
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-[#ff9900]">Action required</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-[#ff9900]">
+              {importantIncidents.length > 0 ? 'Action required' : 'No incident action required'}
+            </p>
             <h2 className="mt-1 text-lg font-semibold text-slate-950">Important incidents</h2>
             <p className="mt-1 text-sm text-slate-600">
-              High-impact failed operations appear here automatically. No drill-down is required to see what needs attention.
+              Open and acknowledged incidents appear here automatically. Resolved incidents leave this danger view on refresh.
             </p>
           </div>
           <Button asChild variant="outline" size="sm" className="rounded-full border-slate-200 bg-slate-50">
@@ -580,12 +610,12 @@ export function OperationsClient() {
           </Button>
         </div>
         <div className="mt-5 grid gap-3 lg:grid-cols-3">
-          {(incidentSummary?.latest ?? []).length === 0 ? (
+          {importantIncidents.length === 0 ? (
             <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-600 lg:col-span-3">
-              No incidents recorded. Failed operations will appear here automatically with safe runbooks.
+              No open important incidents. Resolved incidents remain in the incident register for audit history.
             </div>
           ) : (
-            (incidentSummary?.latest ?? []).slice(0, 3).map((incident) => (
+            importantIncidents.map((incident) => (
               <Link
                 key={incident.id}
                 href={`/dashboard/incidents/${incident.id}`}
