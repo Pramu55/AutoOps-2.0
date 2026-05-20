@@ -1,0 +1,56 @@
+name: AutoOps CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  quality-build:
+    name: Quality Build
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      CI: "true"
+      STRICT_ENV_VALIDATION: "false"
+      LOG_LEVEL: warn
+      API_PORT: "4000"
+      API_HOST: 0.0.0.0
+      API_PUBLIC_URL: http://localhost:4000
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-access-secret-not-for-production-32chars
+      JWT_REFRESH_SECRET: ci-refresh-secret-not-for-production-32chars
+      CORS_ORIGINS: http://localhost:3000
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+      NEXT_PUBLIC_WS_URL: ws://localhost:4000
+      NEXT_PUBLIC_APP_NAME: AutoOps
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run release gate
+        run: bash scripts/check-release.sh
+
+      - name: Success summary
+        run: echo "AutoOps CI release gate completed successfully."

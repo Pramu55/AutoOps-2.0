@@ -27,6 +27,8 @@ credentials
 *token*
 *secret*
 !.env.example
+!scripts/scan-secrets.ps1
+!scripts/scan-secrets.sh
 
 # prisma
 **/prisma/migrations/dev.db*

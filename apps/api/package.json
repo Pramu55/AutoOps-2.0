@@ -11,7 +11,7 @@
     "dev": "tsx watch src/server.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --cache=false",
     "clean": "rimraf dist .turbo"
   },
   "dependencies": {

@@ -81,15 +81,19 @@ Company-pilot guidance:
 
 - [Production Deployment Readiness](./docs/PRODUCTION_DEPLOYMENT_READINESS.md)
 - [Security Checklist](./docs/SECURITY_CHECKLIST.md)
+- [CI and Release Gates](./docs/CI_AND_RELEASE_GATES.md)
 - [Controlled Operations Overview](./docs/CONTROLLED_OPERATIONS_OVERVIEW.md)
 
 Release scripts:
 
 ```powershell
 .\scripts\check-release.ps1
+.\scripts\scan-secrets.ps1
 .\scripts\backup-postgres.ps1
 .\scripts\restore-postgres.ps1 -BackupPath ".\backups\autoops-YYYY-MM-DD-HHMMSS.dump"
 ```
+
+GitHub Actions runs AutoOps CI on push and pull requests to `main`. The workflow mirrors the release gate with build/typecheck/test/secret-scan checks and does not require Jenkins, Docker socket access, kubeconfig, or real connector secrets.
 
 ## Useful Commands
 

@@ -81,8 +81,23 @@ Run:
 
 ```powershell
 .\scripts\check-release.ps1
+.\scripts\scan-secrets.ps1
 git --no-pager diff --stat
 git diff --check
 ```
 
 Do not release if build/typecheck fails, migration status is unsafe, or secrets appear in the diff.
+
+## CI and Branch Protection
+
+- CI must not contain real tokens or production credentials.
+- GitHub Actions secrets must be scoped to the minimum required repositories and environments.
+- Do not store kubeconfig, Jenkins tokens, Docker socket credentials, or `.env` in the repository.
+- Do not put Jenkins API tokens directly in workflow YAML.
+- Secret scan must pass before merge.
+- Release check must pass before merge.
+- Workflow logs must not print environment dumps, Authorization headers, tokens, kubeconfig, or database URLs with passwords.
+- Enable branch protection on `main`.
+- Disable force pushes on `main`.
+- Require pull request review for production branches.
+- Require AutoOps CI status checks before merge.

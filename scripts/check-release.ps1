@@ -51,10 +51,12 @@ if ($LASTEXITCODE -ne 0) {
 Run-Step "Types build" { pnpm.cmd --filter "@autoops/types" build }
 Run-Step "API typecheck" { pnpm.cmd --filter "@autoops/api" typecheck }
 Run-Step "API build" { pnpm.cmd --filter "@autoops/api" build }
+Run-Step "API tests" { pnpm.cmd --filter "@autoops/api" test }
 Run-Step "Worker typecheck" { pnpm.cmd --filter "@autoops/worker" typecheck }
 Run-Step "Worker build" { pnpm.cmd --filter "@autoops/worker" build }
 Run-Step "Web typecheck" { pnpm.cmd --filter "@autoops/web" typecheck }
 Run-Step "Web build" { pnpm.cmd --filter "@autoops/web" build }
+Run-Step "Secret scan" { powershell -ExecutionPolicy Bypass -File scripts/scan-secrets.ps1 }
 Run-Step "Git whitespace check" { git diff --check }
 
 if ($env:DATABASE_URL) {

@@ -268,6 +268,7 @@ These are local demo accounts only. Do not use demo users in production. Product
 
 ```powershell
 .\scripts\check-release.ps1
+.\scripts\scan-secrets.ps1
 git --no-pager diff --stat
 git diff --check
 ```
@@ -282,6 +283,19 @@ $env:DATABASE_URL="postgresql://autoops:autoops_dev@localhost:5432/autoops?schem
 ## Security Checklist
 
 See `docs/SECURITY_CHECKLIST.md`.
+
+## Automated CI and Release Gates
+
+- GitHub Actions workflow: `.github/workflows/ci.yml`.
+- Local Windows release gate: `.\scripts\check-release.ps1`.
+- Linux/CI release gate: `bash scripts/check-release.sh`.
+- Secret scan: `.\scripts\scan-secrets.ps1` or `bash scripts/scan-secrets.sh`.
+- Pull requests should use `.github/pull_request_template.md`.
+- Protect `main` by requiring AutoOps CI to pass, requiring review, blocking force pushes, and requiring branches to be up to date.
+- Jenkins, Docker socket access, and Kubernetes kubeconfig are not required in CI.
+- Production deployment should happen only after release checks, secret scan, migration review, and approval workflow validation pass.
+
+See `docs/CI_AND_RELEASE_GATES.md` for the full workflow and troubleshooting guide.
 
 ## Troubleshooting
 
