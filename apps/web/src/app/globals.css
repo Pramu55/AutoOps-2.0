@@ -47,6 +47,7 @@
 
   body {
     @apply bg-background text-foreground;
+    font-family: Arial, "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 

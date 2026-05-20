@@ -184,6 +184,41 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+const ADMIN_NAV_GROUPS: NavGroup[] = [
+  {
+    label: 'Admin Center',
+    items: [
+      { href: '/dashboard', label: 'Control Center', icon: ShieldCheck },
+      { href: '/dashboard/operations#approvals', label: 'Approval Queue', icon: ShieldCheck },
+      { href: '/dashboard/incidents', label: 'Incident Command', icon: AlertTriangle },
+    ],
+  },
+  {
+    label: 'Governance',
+    items: [
+      { href: '/dashboard/operations#activity', label: 'Operation Audit', icon: Activity },
+      { href: '/dashboard/projects', label: 'Project Access', icon: Layers },
+      { href: '/dashboard/deployments', label: 'Deployment Records', icon: GitMerge },
+    ],
+  },
+  {
+    label: 'Runtime Oversight',
+    items: [
+      { href: '/dashboard/operations#runtime-health', label: 'Runtime Health', icon: Network },
+      { href: '/dashboard/operations#queue-health', label: 'Queue Health', icon: Database },
+      { href: '/dashboard/operations', label: 'Operations Hub', icon: Activity },
+    ],
+  },
+  {
+    label: 'Connector Oversight',
+    items: [
+      { href: '/dashboard/integrations/jenkins', label: 'Jenkins', icon: Hammer },
+      { href: '/dashboard/integrations/docker', label: 'Docker', icon: Container },
+      { href: '/dashboard/integrations/kubernetes', label: 'Kubernetes', icon: Boxes },
+    ],
+  },
+];
+
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function getCommandResults(query: string): CommandItem[] {
@@ -366,6 +401,14 @@ function CommandPalette({
 export function ConsoleSidebar() {
   const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const user = useAuthStore((state) => state.user);
+  const [consoleRole, setConsoleRole] = useState<ConsoleRole | null>(null);
+
+  useEffect(() => {
+    setConsoleRole(getPrimaryOrganizationRole());
+  }, [user?.email]);
+
+  const navGroups = isAdminConsoleRole(consoleRole) ? ADMIN_NAV_GROUPS : NAV_GROUPS;
 
   return (
     <aside
@@ -385,7 +428,7 @@ export function ConsoleSidebar() {
           {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           {isCollapsed ? null : <span>Collapse navigation</span>}
         </button>
-        {NAV_GROUPS.map((group) => (
+        {navGroups.map((group) => (
           <div key={group.label} className="mb-6">
             {isCollapsed ? null : (
               <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{group.label}</p>
@@ -432,7 +475,7 @@ export function Topbar() {
 
   useEffect(() => {
     setConsoleRole(getPrimaryOrganizationRole());
-  }, []);
+  }, [user?.email]);
 
   function handleLogout() {
     disconnectSocket();
@@ -550,7 +593,7 @@ export function Topbar() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            {NAV_GROUPS.map((group) => (
+            {(isAdminConsoleRole(consoleRole) ? ADMIN_NAV_GROUPS : NAV_GROUPS).map((group) => (
               <div key={group.label} className="mb-6">
                 <p className="px-2 pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{group.label}</p>
                 <nav className="space-y-1">

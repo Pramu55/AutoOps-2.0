@@ -10,6 +10,7 @@ import { setAuthSession } from '@/lib/auth-session';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { isAdminConsoleRole } from '@/lib/role';
+import { useAuthStore } from '@/stores/auth';
 
 type LoginResponse = {
   data: AuthSession;
@@ -76,6 +77,8 @@ function validateLoginPassword(value: string): string | null {
 
 export default function LoginPage() {
   const router = useRouter();
+  const setAuth = useAuthStore((state) => state.setAuth);
+  const clearAuth = useAuthStore((state) => state.clearAuth);
 
   const [email, setEmail] = useState('pramod.local@autoops.dev');
   const [password, setPassword] = useState('StrongPass123');
@@ -115,12 +118,14 @@ export default function LoginPage() {
     setIsSubmitting(true);
 
     try {
+      clearAuth();
       const response = await api.post<LoginResponse>('/v1/auth/login', {
         email: normalizedEmail,
         password,
       });
 
       setAuthSession(response.data);
+      setAuth(response.data.user, response.data.tokens.accessToken);
       const role = response.data.organizations[0]?.role ?? null;
       const target = isAdminConsoleRole(role) ? '/dashboard' : getRedirectTarget();
       router.replace(target);
