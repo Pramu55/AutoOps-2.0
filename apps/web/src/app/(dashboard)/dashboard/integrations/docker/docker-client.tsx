@@ -780,7 +780,7 @@ export function DockerClient() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-                  MEDIUM risk | Approval not required
+                  MEDIUM risk | Policy may require approval
                 </p>
                 <h2 id="docker-confirmation-title" className="mt-2 text-xl font-semibold text-slate-900">
                   Confirm Docker {pendingAction.action}

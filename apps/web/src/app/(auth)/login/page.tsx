@@ -9,6 +9,7 @@ import { api, ApiError } from '@/lib/api';
 import { setAuthSession } from '@/lib/auth-session';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { isAdminConsoleRole } from '@/lib/role';
 
 type LoginResponse = {
   data: AuthSession;
@@ -66,6 +67,13 @@ function getLoginErrorMessage(err: unknown): string {
   return 'Unable to sign in. Please try again.';
 }
 
+function validateLoginPassword(value: string): string | null {
+  if (!value) return 'Password is required.';
+  if (value.length > 128) return 'Password must be 128 characters or fewer.';
+  if (/\s/.test(value)) return 'Password cannot contain spaces.';
+  return null;
+}
+
 export default function LoginPage() {
   const router = useRouter();
 
@@ -97,8 +105,9 @@ export default function LoginPage() {
       return;
     }
 
-    if (!password) {
-      setError('Password is required.');
+    const passwordError = validateLoginPassword(password);
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
 
@@ -112,7 +121,9 @@ export default function LoginPage() {
       });
 
       setAuthSession(response.data);
-      router.replace(getRedirectTarget());
+      const role = response.data.organizations[0]?.role ?? null;
+      const target = isAdminConsoleRole(role) ? '/dashboard' : getRedirectTarget();
+      router.replace(target);
       router.refresh();
     } catch (err) {
       setError(getLoginErrorMessage(err));
@@ -278,7 +289,7 @@ export default function LoginPage() {
       </div>
 
       <footer className="pointer-events-none absolute bottom-5 left-0 right-0 hidden text-center text-xs text-[#5f6b7a] md:block">
-        AutoOps Control Plane 2026 - Simulation executor enabled - Real infrastructure execution is not active
+        AutoOps Control Plane 2026 - Local runtime - Real connector data with governed controls
       </footer>
     </main>
   );

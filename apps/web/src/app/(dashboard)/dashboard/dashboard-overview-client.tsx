@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ElementType } from 'react';
 import Link from 'next/link';
 import type { Deployment, Environment, Project } from '@autoops/types';
 import {
@@ -29,6 +29,7 @@ import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/cn';
+import { getPrimaryOrganizationRole, isAdminConsoleRole, type ConsoleRole } from '@/lib/role';
 
 type ProjectsResponse = { data: Project[] };
 type DeploymentsResponse = { data: Deployment[] };
@@ -144,7 +145,168 @@ function ReadinessRow({ label, value, tone }: { label: string; value: string; to
   );
 }
 
+function AdminOverview({
+  role,
+  projects,
+  environments,
+  deployments,
+  healthState,
+  environmentError,
+  lastUpdated,
+  isLoading,
+  isRefreshing,
+  onRefresh,
+}: {
+  role: ConsoleRole;
+  projects: Project[];
+  environments: Environment[];
+  deployments: Deployment[];
+  healthState: HealthState;
+  environmentError: boolean;
+  lastUpdated: Date | null;
+  isLoading: boolean;
+  isRefreshing: boolean;
+  onRefresh: () => void;
+}) {
+  const activeDeployments = deployments.filter((deployment) => ACTIVE_STATUSES.has(deployment.status)).length;
+  const failedDeployments = deployments.filter((deployment) => deployment.status === 'FAILED').length;
+  const adminActions: Array<{
+    title: string;
+    description: string;
+    href: string;
+    icon: ElementType;
+  }> = [
+    {
+      title: 'Approval queue',
+      description: 'Approve or reject held Docker and Kubernetes operations.',
+      href: '/dashboard/operations#approvals',
+      icon: ShieldCheck,
+    },
+    {
+      title: 'Incident command',
+      description: 'Acknowledge and resolve failed-operation incidents.',
+      href: '/dashboard/incidents',
+      icon: AlertTriangle,
+    },
+    {
+      title: 'Runtime health',
+      description: 'Verify API, queue, provider, and worker readiness.',
+      href: '/dashboard/operations#runtime-health',
+      icon: RadioTower,
+    },
+    {
+      title: 'Operator activity',
+      description: 'Audit recent operation history and decisions.',
+      href: '/dashboard/operations#activity',
+      icon: Activity,
+    },
+  ];
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <section className="overflow-hidden rounded-md border border-[#c7d2fe] bg-white shadow-sm">
+        <div className="border-b border-[#d5dbdb] bg-[linear-gradient(90deg,#f7fbff,#eef6ff,#ffffff)] px-6 py-5">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-[#2563eb]">Admin control center</p>
+              <h1 className="mt-2 text-3xl font-bold tracking-tight text-[#16191f] lg:text-4xl">
+                AutoOps administration
+              </h1>
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-[#414d5c]">
+                This admin workspace controls the operator platform: approvals, incidents, runtime
+                readiness, governance, and service access. Operators use the governed console; admins
+                supervise and decide.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-[#2563eb]/20 bg-[#eff6ff] px-3 py-1.5 text-xs font-bold text-[#1d4ed8]">
+                {role}
+              </span>
+              <span className="rounded-full border border-[#d5dbdb] bg-white px-3 py-1.5 text-xs text-[#5f6b7a]">
+                Updated {formatTime(lastUpdated)}
+              </span>
+              <Button
+                type="button"
+                onClick={onRefresh}
+                disabled={isLoading || isRefreshing}
+                className="rounded bg-[#0078d4] text-white hover:bg-[#106ebe]"
+              >
+                <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+                Refresh
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-px bg-[#d5dbdb] md:grid-cols-4">
+          {[
+            ['Projects governed', projects.length],
+            ['Environments', environments.length],
+            ['Active deployments', activeDeployments],
+            ['Failed deployments', failedDeployments],
+          ].map(([label, value]) => (
+            <div key={label} className="bg-white p-5">
+              <p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">{label}</p>
+              <p className="mt-2 text-3xl font-bold text-[#16191f]">{isLoading ? '...' : value}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+        <section className="rounded-md border border-[#d5dbdb] bg-white p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-bold text-[#16191f]">Admin command actions</h2>
+              <p className="mt-1 text-sm text-[#5f6b7a]">
+                Review decisions, supervise incidents, and verify runtime health before operators continue.
+              </p>
+            </div>
+            <ShieldCheck className="h-5 w-5 text-[#0078d4]" />
+          </div>
+          <div className="mt-5 grid gap-3 md:grid-cols-2">
+            {adminActions.map(({ title, description, href, icon: Icon }) => (
+              <Link
+                key={title}
+                href={href}
+                className="rounded-md border border-[#d5dbdb] bg-[#f8fafd] p-4 transition hover:border-[#0078d4] hover:bg-[#eef6ff]"
+              >
+                <Icon className="h-5 w-5 text-[#0078d4]" />
+                <p className="mt-3 font-bold text-[#16191f]">{title}</p>
+                <p className="mt-1 text-sm leading-6 text-[#5f6b7a]">{description}</p>
+              </Link>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-md border border-[#d5dbdb] bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-bold text-[#16191f]">Platform readiness</h2>
+          <p className="mt-1 text-sm text-[#5f6b7a]">Admin-only summary of the operator platform boundary.</p>
+          <div className="mt-5">
+            <ReadinessRow
+              label="API health"
+              value={healthState === 'online' ? 'Online' : healthState === 'checking' ? 'Checking' : 'Offline'}
+              tone={healthState === 'online' ? 'green' : healthState === 'checking' ? 'amber' : 'rose'}
+            />
+            <ReadinessRow label="Projects API" value={`${projects.length} records`} tone="blue" />
+            <ReadinessRow
+              label="Environment API"
+              value={environmentError ? 'Partial' : `${environments.length} targets`}
+              tone={environmentError ? 'amber' : 'blue'}
+            />
+            <ReadinessRow label="Deployment API" value={`${deployments.length} records`} tone="blue" />
+          </div>
+          <div className="mt-5 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+            Admins do not bypass RBAC. Requester self-approval remains blocked by the backend.
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 export function DashboardOverviewClient() {
+  const [consoleRole, setConsoleRole] = useState<ConsoleRole | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
@@ -197,6 +359,10 @@ export function DashboardOverviewClient() {
   useEffect(() => {
     void loadOverview('initial');
   }, [loadOverview]);
+
+  useEffect(() => {
+    setConsoleRole(getPrimaryOrganizationRole());
+  }, []);
 
   useEffect(() => {
     if (!isLive) return undefined;
@@ -265,6 +431,23 @@ export function DashboardOverviewClient() {
       })
       .slice(0, 8);
   }, [deployments, environmentById, filter, projectById, query]);
+
+  if (isAdminConsoleRole(consoleRole)) {
+    return (
+      <AdminOverview
+        role={consoleRole ?? 'ADMIN'}
+        projects={projects}
+        environments={environments}
+        deployments={deployments}
+        healthState={healthState}
+        environmentError={environmentError}
+        lastUpdated={lastUpdated}
+        isLoading={isLoading}
+        isRefreshing={isRefreshing}
+        onRefresh={() => void loadOverview()}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -556,7 +739,7 @@ export function DashboardOverviewClient() {
                 </div>
                 <p className="mt-4 font-mono text-sm text-slate-900">{shortSha(latestDeployment.commitSha)}</p>
                 <p className="mt-2 text-xs text-slate-500">
-                  {formatDate(latestDeployment.createdAt)} Ãƒâ€šÃ‚Â· {formatDuration(latestDeployment.durationMs)}
+                  {formatDate(latestDeployment.createdAt)} | {formatDuration(latestDeployment.durationMs)}
                 </p>
               </Link>
             ) : (

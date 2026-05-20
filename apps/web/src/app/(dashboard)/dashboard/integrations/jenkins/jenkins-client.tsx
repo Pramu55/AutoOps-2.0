@@ -36,7 +36,7 @@ type JobsResponse = { data: JenkinsListResponse<JenkinsJob> };
 type BuildsResponse = { data: JenkinsListResponse<JenkinsBuild> };
 type OperationsResponse = { data: JenkinsOperationListResponse };
 type TriggerResponse = { data: JenkinsTriggerBuildResponse };
-const MISSING_VALUE = 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â';
+const MISSING_VALUE = '-';
 
 type PendingJenkinsAction = {
   jobName: string;

@@ -497,14 +497,14 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
               <p className="mt-1 text-sm text-amber-800">
                 This operation will not execute until an authenticated approver approves it.
               </p>
-              <div className="mt-4 grid gap-2 text-sm text-amber-50">
+              <div className="mt-4 grid gap-2 text-sm text-amber-900">
                 <p>Requester: {actorLabel(detail.actor)}</p>
                 <p>Requested: {formatDate(detail.createdAt)}</p>
                 <p>Policy: {detail.governance.policyName ?? MISSING_VALUE}</p>
                 <p>Reason: {detail.governance.approvalReason ?? 'Policy requires approval before worker execution.'}</p>
               </div>
               {!canApprove || !canReject ? (
-                <p className="mt-4 rounded-xl border border-slate-200 bg-white/[0.05] p-3 text-sm text-amber-50">
+                <p className="mt-4 rounded-xl border border-amber-200 bg-white p-3 text-sm text-amber-900">
                   {detail.permissions.reason ?? 'You do not have permission to decide this operation.'}
                 </p>
               ) : null}

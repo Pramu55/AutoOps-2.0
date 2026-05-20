@@ -22,9 +22,11 @@ function isValidEmail(value: string): boolean {
 function validatePassword(value: string): string | null {
   if (value.length < 12) return 'Password must be at least 12 characters.';
   if (value.length > 128) return 'Password must be 128 characters or fewer.';
+  if (/\s/.test(value)) return 'Password cannot contain spaces.';
   if (!/[a-z]/.test(value)) return 'Password must contain a lowercase letter.';
   if (!/[A-Z]/.test(value)) return 'Password must contain an uppercase letter.';
   if (!/\d/.test(value)) return 'Password must contain a digit.';
+  if (!/[^A-Za-z0-9]/.test(value)) return 'Password must contain a symbol.';
   return null;
 }
 
@@ -58,6 +60,8 @@ export default function RegisterPage() {
       { label: 'Lowercase letter', passed: /[a-z]/.test(password) },
       { label: 'Uppercase letter', passed: /[A-Z]/.test(password) },
       { label: 'Number', passed: /\d/.test(password) },
+      { label: 'Symbol', passed: /[^A-Za-z0-9]/.test(password) },
+      { label: 'No spaces', passed: password.length > 0 && !/\s/.test(password) },
     ],
     [password],
   );
@@ -74,7 +78,14 @@ export default function RegisterPage() {
     if (trimmedOrg && trimmedOrg.length < 2) nextErrors.organizationName = 'Organization name must be at least 2 characters.';
     if (trimmedOrg.length > 120) nextErrors.organizationName = 'Organization name must be 120 characters or fewer.';
 
-    const passwordError = validatePassword(password);
+    const emailName = trimmedEmail.includes('@') ? (trimmedEmail.split('@')[0] ?? '') : '';
+    const firstName = trimmedName.split(/\s+/)[0] ?? '';
+    const passwordError =
+      emailName.length >= 3 && password.toLowerCase().includes(emailName.toLowerCase())
+        ? 'Password cannot contain your email name.'
+        : firstName.length >= 3 && password.toLowerCase().includes(firstName.toLowerCase())
+          ? 'Password cannot contain your name.'
+          : validatePassword(password);
     if (passwordError) nextErrors.password = passwordError;
     if (password !== confirmPassword) nextErrors.confirmPassword = 'Passwords do not match.';
 

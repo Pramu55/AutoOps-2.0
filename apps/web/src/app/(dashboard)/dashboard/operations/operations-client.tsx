@@ -33,7 +33,7 @@ type PendingApprovalDecision = {
 };
 
 const POLL_INTERVAL_MS = 15_000;
-const MISSING_VALUE = 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â';
+const MISSING_VALUE = '-';
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.code === 'SESSION_EXPIRED') {
@@ -566,6 +566,52 @@ export function OperationsClient() {
         ))}
       </section>
 
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-[#ff9900]">Action required</p>
+            <h2 className="mt-1 text-lg font-semibold text-slate-950">Important incidents</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              High-impact failed operations appear here automatically. No drill-down is required to see what needs attention.
+            </p>
+          </div>
+          <Button asChild variant="outline" size="sm" className="rounded-full border-slate-200 bg-slate-50">
+            <Link href="/dashboard/incidents">Open incident register</Link>
+          </Button>
+        </div>
+        <div className="mt-5 grid gap-3 lg:grid-cols-3">
+          {(incidentSummary?.latest ?? []).length === 0 ? (
+            <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-600 lg:col-span-3">
+              No incidents recorded. Failed operations will appear here automatically with safe runbooks.
+            </div>
+          ) : (
+            (incidentSummary?.latest ?? []).slice(0, 3).map((incident) => (
+              <Link
+                key={incident.id}
+                href={`/dashboard/incidents/${incident.id}`}
+                className="rounded-md border border-slate-200 bg-slate-50 p-4 transition hover:border-blue-300 hover:bg-blue-50"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${riskTone(incident.severity)}`}>
+                    {incident.severity}
+                  </span>
+                  <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(incident.status)}`}>
+                    {incident.status}
+                  </span>
+                </div>
+                <p className="mt-3 line-clamp-2 text-sm font-semibold text-slate-950">{incident.title}</p>
+                <p className="mt-1 truncate text-xs text-slate-600">{incident.targetLabel ?? MISSING_VALUE}</p>
+                {incident.safeErrorMessage ? (
+                  <p className="mt-3 line-clamp-2 rounded border border-rose-200 bg-rose-50 p-2 text-xs text-rose-800">
+                    {incident.safeErrorMessage}
+                  </p>
+                ) : null}
+              </Link>
+            ))
+          )}
+        </div>
+      </section>
+
       <section id="runtime-health" className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
@@ -641,83 +687,6 @@ export function OperationsClient() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Incidents</h2>
-            <p className="mt-1 text-sm text-slate-600">
-              Failed operations are tracked as tenant-scoped incidents with safe runbooks.
-            </p>
-          </div>
-          <Button asChild variant="outline" size="sm" className="rounded-full border-slate-200 bg-slate-50">
-            <Link href="/dashboard/incidents">View incident register</Link>
-          </Button>
-        </div>
-        <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {[
-            ['Open incidents', incidentSummary?.open ?? 0],
-            ['Acknowledged', incidentSummary?.acknowledged ?? 0],
-            ['High/Critical', incidentSummary?.criticalOpen ?? 0],
-            ['Resolved 24h', incidentSummary?.resolvedRecent ?? 0],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded-md border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-              <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
-            </div>
-          ))}
-        </div>
-        <div className="mt-5 space-y-3">
-          {(incidentSummary?.latest ?? []).length === 0 ? (
-            <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-600">
-              No incidents recorded.
-            </div>
-          ) : (
-            incidentSummary?.latest.map((incident) => (
-              <div key={incident.id} className="rounded-md border border-slate-200 bg-slate-50 p-4">
-                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${riskTone(incident.severity)}`}>
-                        {incident.severity}
-                      </span>
-                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(incident.status)}`}>
-                        {incident.status}
-                      </span>
-                      <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
-                        {incident.provider ?? 'AutoOps'}
-                      </span>
-                    </div>
-                    <p className="mt-3 text-sm font-semibold text-slate-900">{incident.title}</p>
-                    <p className="mt-1 text-sm text-slate-600">{incident.targetLabel ?? MISSING_VALUE}</p>
-                    {incident.safeErrorMessage ? (
-                      <p className="mt-3 rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-800">
-                        {incident.safeErrorMessage}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex shrink-0 flex-wrap gap-2">
-                    <Link
-                      href={`/dashboard/incidents/${incident.id}`}
-                      className="inline-flex items-center rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-blue-700 transition hover:border-cyan-300/45 hover:bg-cyan-300/15"
-                    >
-                      View incident
-                    </Link>
-                    {incident.linkedOperationId ? (
-                      <Link
-                        href={`/dashboard/operations/${incident.linkedOperationId}`}
-                        className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-blue-50"
-                      >
-                        View operation
-                      </Link>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </section>
-
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <OperationMiniList
           title="Active Operations"
@@ -732,24 +701,27 @@ export function OperationsClient() {
         />
       </div>
 
-      <div id="approvals" className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+      <div
+        id="approvals"
+        className={
+          pendingApprovals.length > 0
+            ? 'grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.05fr]'
+            : 'grid grid-cols-1 gap-4'
+        }
+      >
+        {pendingApprovals.length > 0 ? (
         <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-base font-semibold text-slate-900">Approval Gates</h2>
-              <p className="mt-1 text-sm text-slate-600">Production operations pause here before worker execution.</p>
+              <h2 className="text-base font-semibold text-slate-900">Policy Holds</h2>
+              <p className="mt-1 text-sm text-slate-600">Only operations already held by policy appear here.</p>
             </div>
             <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-1.5 text-xs font-medium text-amber-800">
               {pendingApprovals.length} pending
             </span>
           </div>
           <div className="mt-5 space-y-3">
-            {pendingApprovals.length === 0 ? (
-              <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-600">
-                No pending approvals.
-              </div>
-            ) : (
-              pendingApprovals.map((operation) => (
+            {pendingApprovals.map((operation) => (
                 <div key={operation.id} className="rounded-md border border-slate-200 bg-slate-50 p-4">
                   <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                     <div className="min-w-0">
@@ -805,12 +777,12 @@ export function OperationsClient() {
                     </div>
                   </div>
                 </div>
-              ))
-            )}
+              ))}
           </div>
         </section>
+        ) : null}
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <section id="activity" className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-base font-semibold text-slate-900">Operations Activity Timeline</h2>

@@ -31,6 +31,7 @@ import { cn } from '@/lib/cn';
 import { disconnectSocket } from '@/lib/socket';
 import { useAuthStore } from '@/stores/auth';
 import { useWorkspaceStore } from '@/stores/workspace';
+import { getPrimaryOrganizationRole, isAdminConsoleRole, type ConsoleRole } from '@/lib/role';
 
 type CommandItem = {
   group: 'Pages' | 'Integrations' | 'Operations' | 'Incidents' | 'Actions';
@@ -168,6 +169,13 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: 'Governance',
+    items: [
+      { href: '/dashboard/operations#approvals', label: 'Pending Approvals', icon: ShieldCheck },
+      { href: '/dashboard/operations#activity', label: 'Operation Activity', icon: Activity },
+    ],
+  },
+  {
     label: 'Observability',
     items: [
       { href: '/dashboard/operations#runtime-health', label: 'Runtime Health', icon: Network },
@@ -265,7 +273,14 @@ function CommandPalette({
   let resultIndex = -1;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/45 px-4 py-16 backdrop-blur-sm" role="dialog" aria-modal="true">
+    <div
+      className="fixed inset-0 z-50 bg-slate-950/45 px-4 py-16 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       <div className="mx-auto w-full max-w-3xl overflow-hidden rounded-xl border border-slate-300 bg-white shadow-2xl shadow-slate-950/20">
         <div className="flex items-center gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
           <Search className="h-4 w-4 text-slate-500" />
@@ -412,7 +427,12 @@ export function Topbar() {
   const currentOrg = useWorkspaceStore((state) => state.currentOrg);
   const { isOpen, setIsOpen, query, setQuery } = useCommandPalette();
   const [isServicesOpen, setIsServicesOpen] = useState(false);
+  const [consoleRole, setConsoleRole] = useState<ConsoleRole | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setConsoleRole(getPrimaryOrganizationRole());
+  }, []);
 
   function handleLogout() {
     disconnectSocket();
@@ -448,7 +468,9 @@ export function Topbar() {
               <Zap className="h-4 w-4" />
             </div>
             <div className="hidden min-[430px]:block">
-              <p className="text-sm font-semibold text-slate-950">AutoOps Console</p>
+              <p className="text-sm font-semibold text-slate-950">
+                {isAdminConsoleRole(consoleRole) ? 'AutoOps Admin' : 'AutoOps Console'}
+              </p>
               <p className="text-[11px] text-slate-500">{currentOrg?.name ?? 'Local runtime'}</p>
             </div>
           </Link>
@@ -458,15 +480,23 @@ export function Topbar() {
             <input
               ref={searchInputRef}
               value={query}
-              onFocus={() => setIsOpen(true)}
+              onFocus={() => {
+                if (query.trim()) setIsOpen(true);
+              }}
               onChange={(event) => {
                 setQuery(event.target.value);
-                setIsOpen(true);
+                setIsOpen(event.target.value.trim().length > 0);
               }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   event.preventDefault();
-                  setIsOpen(true);
+                  const [firstResult] = getCommandResults(query);
+                  if (firstResult) {
+                    setIsOpen(false);
+                    router.push(firstResult.href);
+                  } else {
+                    setIsOpen(true);
+                  }
                 }
               }}
               placeholder="Search services, operations, incidents, or paste UUID"
@@ -489,7 +519,7 @@ export function Topbar() {
             Runtime
           </div>
           <div className="hidden rounded-full border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 xl:block">
-            Local runtime
+            {isAdminConsoleRole(consoleRole) ? 'Admin control' : 'Local runtime'}
           </div>
           <div className="hidden items-center gap-2 rounded-full border border-slate-300 bg-white py-1 pl-1 pr-3 shadow-sm sm:flex">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#232f3e] text-xs font-semibold text-white">{initials}</div>
