@@ -1,6 +1,6 @@
 # AutoOps Documentation
 
-This is the documentation home for AutoOps, a local-first, production-style DevOps Control Plane for governed Jenkins, Docker, and Kubernetes operations.
+This is the documentation home for AutoOps, a local-first, production-style DevOps Control Plane for governed Jenkins, Docker, Kubernetes, Terraform/OpenTofu, and Ansible operations.
 
 ## Start Here
 
@@ -13,6 +13,7 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 
 - [README](../README.md)
 - [Feature Matrix](./FEATURE_MATRIX.md)
+- [Infrastructure Automation Center](./INFRASTRUCTURE_AUTOMATION_CENTER.md)
 - [Route Reference](./ROUTE_REFERENCE.md)
 - [Limitations and Roadmap](./LIMITATIONS_AND_ROADMAP.md)
 
@@ -26,6 +27,7 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 
 - [Architecture Overview](./ARCHITECTURE_OVERVIEW.md)
 - [Controlled Operations Overview](./CONTROLLED_OPERATIONS_OVERVIEW.md)
+- [Infrastructure Automation Center](./INFRASTRUCTURE_AUTOMATION_CENTER.md)
 
 ## Company Pilot Evaluation
 
@@ -54,6 +56,7 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 
 - [Controlled Operations Overview](./CONTROLLED_OPERATIONS_OVERVIEW.md)
 - [Demo Guide](./DEMO_GUIDE.md#step-7-trigger-a-governed-operation)
+- [Infrastructure Automation Center](./INFRASTRUCTURE_AUTOMATION_CENTER.md)
 
 ## Backup and Restore
 

@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button';
 type GovernanceApiResponse = { data: GovernanceEvidenceResponse };
 type GovernanceExportApiResponse = { data: GovernanceExportResponse };
 
-const PROVIDERS: Array<OperationProvider | 'ALL'> = ['ALL', 'JENKINS', 'DOCKER', 'KUBERNETES', 'AWS', 'GITHUB'];
+const PROVIDERS: Array<OperationProvider | 'ALL'> = ['ALL', 'JENKINS', 'DOCKER', 'KUBERNETES', 'INFRASTRUCTURE', 'AWS', 'GITHUB'];
 const STATUSES: Array<OperationStatus | 'ALL'> = [
   'ALL',
   'PENDING_APPROVAL',

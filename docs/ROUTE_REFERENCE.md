@@ -88,6 +88,14 @@
 - Key actions: SCALE and ROLLOUT with confirmation and approval policy.
 - Safety notes: Protected namespaces are blocked; no exec, shell, apply, delete, Secret access, or port-forward.
 
+## `/dashboard/integrations/infrastructure`
+
+- Purpose: Infrastructure Automation Center for Terraform/OpenTofu and Ansible.
+- Who uses it: Operators requesting IaC checks and admins reviewing apply/run approvals.
+- Data shown: Tool status, allowlisted Terraform workspaces, allowlisted Ansible playbooks, recent infrastructure operations.
+- Key actions: Terraform/OpenTofu validate, plan, approval-gated apply; Ansible syntax-check, check mode, approval-gated run.
+- Safety notes: No arbitrary shell, no arbitrary paths, no cloud credentials, no SSH keys, no vault secrets, and no Terraform state exposure.
+
 ## `/dashboard/projects`
 
 - Purpose: Project inventory.

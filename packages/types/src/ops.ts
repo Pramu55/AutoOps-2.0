@@ -163,6 +163,7 @@ export const OperationActivitySource = {
   JENKINS: 'jenkins',
   KUBERNETES: 'kubernetes',
   DOCKER: 'docker',
+  INFRASTRUCTURE: 'infrastructure',
   GITHUB: 'github',
   AWS: 'aws',
   DEPLOYMENT: 'deployment',
@@ -324,6 +325,7 @@ export interface OpsObservabilityResponse {
     jenkins: OpsProviderHealthSummary;
     docker: OpsProviderHealthSummary;
     kubernetes: OpsProviderHealthSummary;
+    infrastructure?: OpsProviderHealthSummary;
   };
   operations: {
     totalRecent: number;

@@ -86,4 +86,45 @@ describe('evaluateOperationPolicy', () => {
     expect(decision.riskLevel).toBe(OperationRiskLevel.HIGH);
     expect(decision.approvalReason).toContain('Unknown operation type');
   });
+
+  it.each([
+    [OperationType.TERRAFORM_VALIDATE, 'VALIDATE'],
+    [OperationType.TERRAFORM_PLAN, 'PLAN'],
+    [OperationType.ANSIBLE_SYNTAX_CHECK, 'SYNTAX'],
+    [OperationType.ANSIBLE_CHECK, 'CHECK'],
+  ])('keeps infrastructure %s confirmation-only', (operationType, confirmationTokenLabel) => {
+    const decision = evaluateOperationPolicy({
+      provider: OperationProvider.INFRASTRUCTURE,
+      operationType,
+      input: {},
+    });
+
+    expect(decision.approvalRequired).toBe(false);
+    expect(decision.confirmationTokenLabel).toBe(confirmationTokenLabel);
+    expect(decision.riskLevel).toBe(OperationRiskLevel.LOW);
+  });
+
+  it('requires approval for Terraform/OpenTofu apply', () => {
+    const decision = evaluateOperationPolicy({
+      provider: OperationProvider.INFRASTRUCTURE,
+      operationType: OperationType.TERRAFORM_APPLY,
+      input: {},
+    });
+
+    expect(decision.approvalRequired).toBe(true);
+    expect(decision.confirmationTokenLabel).toBe('APPLY');
+    expect(decision.riskLevel).toBe(OperationRiskLevel.HIGH);
+  });
+
+  it('requires approval for Ansible run', () => {
+    const decision = evaluateOperationPolicy({
+      provider: OperationProvider.INFRASTRUCTURE,
+      operationType: OperationType.ANSIBLE_RUN,
+      input: {},
+    });
+
+    expect(decision.approvalRequired).toBe(true);
+    expect(decision.confirmationTokenLabel).toBe('RUN');
+    expect(decision.riskLevel).toBe(OperationRiskLevel.HIGH);
+  });
 });

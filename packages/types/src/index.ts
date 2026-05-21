@@ -18,6 +18,7 @@ export * from './provider.js';
 export * from './aws.js';
 export * from './jenkins.js';
 export * from './operation.js';
+export * from './infrastructure.js';
 export * from './incident.js';
 export * from './audit.js';
 export * from './pipeline.js';

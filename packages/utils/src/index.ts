@@ -5,3 +5,4 @@ export * from './async.js';
 export * from './ids.js';
 export * from './docker-engine.js';
 export * from './redact.js';
+export * from './infrastructure-catalog.js';

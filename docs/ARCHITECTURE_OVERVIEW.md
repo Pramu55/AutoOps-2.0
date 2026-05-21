@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-AutoOps is a local-first, production-style DevOps Control Plane. It connects a Next.js console, Express API, PostgreSQL, Redis/BullMQ, and a worker runtime to governed Jenkins, Docker, and Kubernetes operations.
+AutoOps is a local-first, production-style DevOps Control Plane. It connects a Next.js console, Express API, PostgreSQL, Redis/BullMQ, and a worker runtime to governed Jenkins, Docker, Kubernetes, Terraform/OpenTofu, and Ansible operations.
 
 ## Architecture Goals
 
@@ -40,15 +40,19 @@ flowchart TD
   Worker --> Jenkins["Jenkins API"]
   Worker --> Docker["Docker Engine"]
   Worker --> K8s["Kubernetes API"]
+  Worker --> Terraform["Terraform / OpenTofu"]
+  Worker --> Ansible["Ansible Playbooks"]
   API --> Jenkins
   API --> Docker
   API --> K8s
+  API --> Terraform
+  API --> Ansible
   API --> Metrics["Kubernetes Metrics API"]
 ```
 
 ## Web Application
 
-The web app provides the authenticated AutoOps console. It shows dashboard overview, Operations Hub, incidents, Jenkins, Docker, Kubernetes, projects, deployments, operation detail, and command search.
+The web app provides the authenticated AutoOps console. It shows dashboard overview, Operations Hub, incidents, Jenkins, Docker, Kubernetes, Infrastructure Automation, projects, deployments, operation detail, and command search.
 
 The web app is a client of the API only. It does not own security decisions.
 
@@ -70,7 +74,7 @@ The API owns:
 
 ## Worker Service
 
-The worker owns execution after the API accepts and queues an operation. It executes Jenkins build triggers, Docker container actions, Kubernetes scale, and Kubernetes rollout restart through controlled code paths only.
+The worker owns execution after the API accepts and queues an operation. It executes Jenkins build triggers, Docker container actions, Kubernetes scale, Kubernetes rollout restart, Terraform/OpenTofu workflows, and Ansible workflows through controlled code paths only.
 
 ## PostgreSQL and Prisma
 
@@ -96,6 +100,10 @@ The policy engine decides risk, confirmation token, and approval requirement. Ex
 - Docker START: confirmation only.
 - Docker STOP/RESTART: approval required.
 - Kubernetes SCALE above 2 replicas: approval required.
+- Terraform/OpenTofu VALIDATE and PLAN: confirmation only.
+- Terraform/OpenTofu APPLY: approval required.
+- Ansible SYNTAX and CHECK: confirmation only.
+- Ansible RUN: approval required.
 - Unknown operation type: approval required.
 
 ## Approval Workflow
@@ -129,6 +137,10 @@ Docker reads status, containers, images, networks, volumes, and logs. It can sta
 ## Kubernetes Connector
 
 Kubernetes reads cluster status, Metrics API status, namespaces, workloads, pods, services, and rollout status. It can scale and rollout restart deployments with confirmation and approval policy. Protected namespaces are blocked.
+
+## Infrastructure Automation Connector
+
+Infrastructure automation reads allowlisted Terraform/OpenTofu workspaces and Ansible playbooks from configured roots. It can validate, plan, syntax-check, and check mode without approval. Terraform/OpenTofu apply and Ansible run require approval before the worker executes fixed command definitions. No arbitrary command string, shell UI, SSH key, vault secret, cloud credential, Terraform state, or arbitrary path execution is exposed.
 
 ## Worker Heartbeat Registry
 
@@ -169,7 +181,7 @@ Evidence includes requester, approver/rejecter, policy, risk, approval status, p
 
 ## Production Deployment Topology
 
-`docker-compose.prod.yml` provides a production-like company pilot topology with web, API, worker, Postgres, and Redis. Postgres and Redis stay internal. Optional Docker socket and kubeconfig mounts are not enabled by default.
+`docker-compose.prod.yml` provides a production-like company pilot topology with web, API, worker, Postgres, and Redis. Postgres and Redis stay internal. Optional Docker socket, kubeconfig, and infrastructure workspace mounts are not enabled by default.
 
 ## CI/Release Architecture
 

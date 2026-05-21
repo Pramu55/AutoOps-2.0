@@ -52,6 +52,34 @@ export class IncidentRunbookService {
       return this._kubernetesRunbook('Kubernetes rollout restart failure runbook', 'kubernetes-rollout-failure', relatedActions, operationHref);
     }
 
+    if (
+      input.operationType === OperationType.TERRAFORM_VALIDATE ||
+      input.operationType === OperationType.TERRAFORM_PLAN ||
+      input.operationType === OperationType.TERRAFORM_APPLY
+    ) {
+      return this._infrastructureRunbook(
+        'Terraform/OpenTofu operation failure runbook',
+        input.key ?? 'terraform-operation-failure',
+        relatedActions,
+        operationHref,
+        'Check tool installation, allowlisted workspace path, configuration syntax, provider credentials if configured, and state lock conditions.',
+      );
+    }
+
+    if (
+      input.operationType === OperationType.ANSIBLE_SYNTAX_CHECK ||
+      input.operationType === OperationType.ANSIBLE_CHECK ||
+      input.operationType === OperationType.ANSIBLE_RUN
+    ) {
+      return this._infrastructureRunbook(
+        'Ansible operation failure runbook',
+        input.key ?? 'ansible-operation-failure',
+        relatedActions,
+        operationHref,
+        'Check Ansible installation, allowlisted playbook path, inventory, syntax, check-mode behavior, and local permissions.',
+      );
+    }
+
     return {
       key: input.key ?? 'operation-failure',
       title: 'Operation failure runbook',
@@ -108,6 +136,28 @@ export class IncidentRunbookService {
     };
   }
 
+  private _infrastructureRunbook(
+    title: string,
+    key: string,
+    relatedActions: IncidentRunbook['relatedActions'],
+    operationHref: string | null,
+    verifyHint: string,
+  ): IncidentRunbook {
+    return {
+      key,
+      title,
+      summary: 'Use Infrastructure Automation Center status and operation evidence before retrying.',
+      relatedActions,
+      steps: [
+        this._step(1, 'Check Infrastructure Automation Center', 'Verify tool status and allowlisted workspace/playbook discovery.', 'OBSERVE', 'Open Infrastructure Center', '/dashboard/integrations/infrastructure'),
+        this._step(2, 'Review operation evidence', 'Confirm requester, policy, approval, target, and safe output summary.', 'VERIFY', 'View operation', operationHref),
+        this._step(3, 'Verify local automation inputs', verifyHint, 'VERIFY'),
+        this._step(4, 'Retry only through governed controls', 'Use validate/plan/check before approval-gated apply/run retry.', 'RECOVER', 'Open Infrastructure Center', '/dashboard/integrations/infrastructure'),
+        this._step(5, 'Escalate repeated failure', 'Escalate to an owner/admin before changing credentials, state, inventory, or cloud targets.', 'ESCALATE'),
+      ],
+    };
+  }
+
   private _step(
     order: number,
     title: string,
@@ -129,6 +179,7 @@ export class IncidentRunbookService {
     if (provider === OperationProvider.JENKINS) return '/dashboard/integrations/jenkins';
     if (provider === OperationProvider.DOCKER) return '/dashboard/integrations/docker';
     if (provider === OperationProvider.KUBERNETES) return '/dashboard/integrations/kubernetes';
+    if (provider === OperationProvider.INFRASTRUCTURE) return '/dashboard/integrations/infrastructure';
     return null;
   }
 }

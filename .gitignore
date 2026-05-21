@@ -61,6 +61,16 @@ postgres-data
 redis-data
 volumes
 
+# infrastructure automation local state
+.terraform/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+.terraform.lock.hcl
+*.retry
+
 # misc
 .cache
 *.pid

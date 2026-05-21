@@ -6,6 +6,7 @@
 - It is not enterprise-certified or SOC2 compliant.
 - It is not a managed SaaS.
 - It does not replace Jenkins, Docker, Kubernetes, AWS, or an incident management suite.
+- It does not replace Terraform Cloud, OpenTofu orchestration platforms, or Ansible Tower/AWX.
 - Notification integrations are not implemented yet.
 
 ## Local-First Limitations
@@ -13,6 +14,7 @@
 - Demo flows assume local Docker Compose.
 - Jenkins, Docker, and Kubernetes availability depends on local setup.
 - Kubernetes Metrics API may be unavailable depending on cluster configuration.
+- Terraform/OpenTofu and Ansible actions require the matching binaries in the API/worker runtime.
 
 ## Production Hardening Still Needed
 
@@ -22,6 +24,7 @@
 - Audit export and retention policies.
 - Centralized log shipping.
 - More automated end-to-end tests.
+- Managed handling for Terraform remote state, cloud credentials, and Ansible vaults.
 
 ## Cloud Deployment Future Work
 
@@ -29,6 +32,8 @@
 - Managed Postgres and Redis examples.
 - Reverse proxy and TLS examples.
 - Kubernetes deployment manifests or Helm chart.
+- AWS/cloud Terraform workspaces with secret-manager-backed credentials.
+- Remote state and drift detection.
 
 ## Multi-Org SaaS Future Work
 
@@ -43,6 +48,7 @@
 - Retention configuration.
 - Evidence bundles for change reviews.
 - Signed approval records.
+- Signed Terraform plan evidence and retained Ansible run summaries.
 
 ## More Test Coverage Future Work
 
@@ -66,6 +72,15 @@ AI assistance is intentionally future scope. If added, it should be read-only by
 ## AWS/GitHub Integration Future Work
 
 AWS and GitHub connectors are future work. They should follow the same pattern: real status, safe read models, explicit allowlists, confirmation tokens, RBAC, policy gates, and worker-backed execution.
+
+## Infrastructure Automation Future Work
+
+- Terraform/OpenTofu remote state support.
+- Drift detection jobs.
+- Signed plan artifact review.
+- Ansible inventory source controls.
+- AWX/Tower integration.
+- Cloud credential broker integration.
 
 ## Why These Are Intentionally Future Scope
 

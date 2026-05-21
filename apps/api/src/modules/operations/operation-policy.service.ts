@@ -81,6 +81,56 @@ export function evaluateOperationPolicy(input: OperationPolicyInput): OperationP
     return confirmationOnly(OperationRiskLevel.MEDIUM, 'SCALE');
   }
 
+  if (
+    input.provider === OperationProvider.INFRASTRUCTURE &&
+    input.operationType === OperationType.TERRAFORM_VALIDATE
+  ) {
+    return confirmationOnly(OperationRiskLevel.LOW, 'VALIDATE');
+  }
+
+  if (
+    input.provider === OperationProvider.INFRASTRUCTURE &&
+    input.operationType === OperationType.TERRAFORM_PLAN
+  ) {
+    return confirmationOnly(OperationRiskLevel.LOW, 'PLAN');
+  }
+
+  if (
+    input.provider === OperationProvider.INFRASTRUCTURE &&
+    input.operationType === OperationType.TERRAFORM_APPLY
+  ) {
+    return approvalRequired(
+      OperationRiskLevel.HIGH,
+      'APPLY',
+      'Terraform/OpenTofu apply changes infrastructure and requires approval.',
+    );
+  }
+
+  if (
+    input.provider === OperationProvider.INFRASTRUCTURE &&
+    input.operationType === OperationType.ANSIBLE_SYNTAX_CHECK
+  ) {
+    return confirmationOnly(OperationRiskLevel.LOW, 'SYNTAX');
+  }
+
+  if (
+    input.provider === OperationProvider.INFRASTRUCTURE &&
+    input.operationType === OperationType.ANSIBLE_CHECK
+  ) {
+    return confirmationOnly(OperationRiskLevel.LOW, 'CHECK');
+  }
+
+  if (
+    input.provider === OperationProvider.INFRASTRUCTURE &&
+    input.operationType === OperationType.ANSIBLE_RUN
+  ) {
+    return approvalRequired(
+      OperationRiskLevel.HIGH,
+      'RUN',
+      'Ansible run can change managed systems and requires approval.',
+    );
+  }
+
   return approvalRequired(
     OperationRiskLevel.HIGH,
     null,

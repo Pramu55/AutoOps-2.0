@@ -71,8 +71,11 @@ services:
       DATABASE_URL: postgresql://autoops:autoops_dev@postgres:5432/autoops
       REDIS_URL: redis://redis:6379
       DOCKER_SOCKET_PATH: /var/run/docker.sock
+      INFRA_TERRAFORM_ROOT: /app/infra/terraform
+      INFRA_ANSIBLE_ROOT: /app/infra/ansible
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./infra:/app/infra:ro
     ports:
       - "4000:4000"
     healthcheck:
@@ -103,8 +106,11 @@ services:
       DATABASE_URL: postgresql://autoops:autoops_dev@postgres:5432/autoops
       REDIS_URL: redis://redis:6379
       DOCKER_SOCKET_PATH: /var/run/docker.sock
+      INFRA_TERRAFORM_ROOT: /app/infra/terraform
+      INFRA_ANSIBLE_ROOT: /app/infra/ansible
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./infra:/app/infra:ro
     ports:
       - "4001:4001"
     healthcheck:

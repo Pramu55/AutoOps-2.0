@@ -16,13 +16,14 @@ This guide gives a safe, repeatable company demo path for AutoOps. It shows real
 - PostgreSQL, Redis, API, web, and worker containers are healthy.
 - Optional local Jenkins is running if the Jenkins connector will be shown.
 - Optional Docker Desktop Kubernetes is running if the Kubernetes connector will be shown.
+- Optional Terraform/OpenTofu and Ansible binaries are installed in the runtime if infrastructure actions will be executed.
 - `.env` exists locally and is not committed.
 
 ## Demo Safety Checklist
 
 - Do not show `.env`, tokens, kubeconfig, database passwords, or Authorization headers.
 - Use local demo accounts only.
-- Use local Jenkins, Docker smoke containers, and local Kubernetes resources.
+- Use local Jenkins, Docker smoke containers, local Kubernetes resources, and local-only IaC smoke samples.
 - Do not connect a real production cluster without permission.
 - Do not run destructive reset commands.
 - Do not show raw logs if they may contain secrets.
@@ -54,8 +55,8 @@ Use the login page demo buttons to prefill credentials. The buttons do not bypas
 1. Login as Operator / Requester.
 2. Open Dashboard and Operations Hub.
 3. Show runtime health, provider health, queue health, and worker heartbeat.
-4. Show Jenkins, Docker, and Kubernetes connector pages.
-5. Trigger a governed Docker restart or Kubernetes scale.
+4. Show Jenkins, Docker, Kubernetes, and Infrastructure Automation connector pages.
+5. Trigger a governed Docker restart, Kubernetes scale, Terraform plan, or Ansible check.
 6. Show the pending approval and requester self-approval block.
 7. Login as Admin / Approver.
 8. Approve or reject.
@@ -126,32 +127,49 @@ Show:
 
 Say that Kubernetes exec, shell, apply, delete, Secret access, and port-forward are intentionally absent.
 
-## Step 7: Trigger a Governed Operation
+## Step 7: Show Infrastructure Automation Center
+
+Open `/dashboard/integrations/infrastructure`.
+
+Show:
+
+- Terraform/OpenTofu tool status.
+- Ansible tool status.
+- allowlisted `local-smoke` Terraform workspace.
+- allowlisted `local-smoke` Ansible playbook.
+- disabled actions when tools are not installed.
+- approval requirement for `APPLY` and `RUN`.
+
+Say that AutoOps never accepts arbitrary shell commands or arbitrary file paths. Terraform/OpenTofu and Ansible actions are fixed worker operations against allowlisted files.
+
+## Step 8: Trigger a Governed Operation
 
 Safe options:
 
 - Docker restart on a disposable local AutoOps smoke container.
 - Kubernetes scale on a non-protected local deployment.
+- Terraform/OpenTofu plan if the tool is installed.
+- Ansible check mode if Ansible is installed.
 
 Use the required confirmation token shown in the modal. Do not use production resources.
 
-## Step 8: Show Pending Approval
+## Step 9: Show Pending Approval
 
-For Docker stop/restart or Kubernetes scale above 2 replicas, show `PENDING_APPROVAL` in Operations Hub. Explain that approval-required operations are not enqueued until approved.
+For Docker stop/restart, Kubernetes scale above 2 replicas, Terraform/OpenTofu apply, or Ansible run, show `PENDING_APPROVAL` in Operations Hub. Explain that approval-required operations are not enqueued until approved.
 
-## Step 9: Login as Admin / Approver
+## Step 10: Login as Admin / Approver
 
 Logout, then login with the Admin / Approver account. Explain that the approver is a real local database user with a real organization membership.
 
-## Step 10: Approve or Reject Operation
+## Step 11: Approve or Reject Operation
 
 Open pending approvals and approve the operation. Explain that requesters cannot approve their own approval-required operations.
 
-## Step 11: Show Worker Execution
+## Step 12: Show Worker Execution
 
 Watch the operation move through queued/running/succeeded or failed states. Explain that the worker owns execution after the API validates policy and approval.
 
-## Step 12: Show Operation Detail Lifecycle
+## Step 13: Show Operation Detail Lifecycle
 
 Open `/dashboard/operations/:operationId`. Show:
 
@@ -163,7 +181,7 @@ Open `/dashboard/operations/:operationId`. Show:
 - incident link if failed
 - recovery panel if supported
 
-## Step 13: Show Governance Center
+## Step 14: Show Governance Center
 
 Open `/dashboard/governance`. Show:
 
@@ -176,7 +194,7 @@ Open `/dashboard/governance`. Show:
 
 Explain that this is audit-style evidence for review and intentionally excludes raw metadata, tokens, stack traces, kubeconfig, and secret-like fields.
 
-## Step 14: Show Incident and Runbook
+## Step 15: Show Incident and Runbook
 
 Open `/dashboard/incidents` and then an incident detail page. Show:
 
@@ -189,7 +207,7 @@ Open `/dashboard/incidents` and then an incident detail page. Show:
 
 Explain that runbooks are safe templates, not AI-generated remediation.
 
-## Step 15: Show CI/Release Readiness
+## Step 16: Show CI/Release Readiness
 
 Show:
 
@@ -200,7 +218,7 @@ Show:
 
 ## Suggested 5-Minute Demo Script
 
-1. "AutoOps is a production-style DevOps Control Plane for governed Jenkins, Docker, and Kubernetes operations."
+1. "AutoOps is a production-style DevOps Control Plane for governed Jenkins, Docker, Kubernetes, Terraform/OpenTofu, and Ansible operations."
 2. Login as Operator.
 3. Show Operations Hub health, worker runtime, approvals, and incidents.
 4. Open Docker or Kubernetes and trigger one governed operation.
@@ -215,6 +233,7 @@ Use the 5-minute script, then add:
 
 - Jenkins connector and allowlisted build trigger.
 - Kubernetes Metrics API and protected namespaces.
+- Infrastructure Automation Center for Terraform/OpenTofu and Ansible.
 - Worker heartbeat details.
 - Backup/restore and release-check scripts.
 - Feature matrix and limitations/roadmap.
@@ -225,6 +244,7 @@ Use the 5-minute script, then add:
 - "The frontend does not bypass RBAC; backend services enforce authorization."
 - "Approvals are policy-driven and worker execution starts only after approval when required."
 - "Incidents are created from failed operations and use deterministic safe runbooks."
+- "Infrastructure automation uses allowlisted workspaces/playbooks only and never exposes a shell."
 - "This is production-style and company-pilot-ready direction, not enterprise-certified software."
 
 ## What Not to Show
@@ -236,6 +256,7 @@ Use the 5-minute script, then add:
 - Authorization headers
 - raw stack traces
 - production cluster names or credentials
+- Terraform state files, Ansible vault files, SSH keys, or cloud credentials
 
 ## Troubleshooting Demo Issues
 
@@ -244,6 +265,7 @@ Use the 5-minute script, then add:
 - If worker is stale, restart the worker service with compose.
 - If Jenkins is `NOT_CONFIGURED`, explain it is optional and use Docker/Kubernetes flows.
 - If Kubernetes Metrics API is unavailable, show cluster inventory and explain metrics are optional.
+- If Terraform/OpenTofu or Ansible is `NOT_INSTALLED`, show the honest disabled state and explain the setup path.
 
 ## Safe Reset Guidance Without Destructive Commands
 

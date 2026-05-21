@@ -1,9 +1,23 @@
 import { existsSync } from 'node:fs';
+import { cp, mkdtemp, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
 import { Queue, Worker, type Job } from 'bullmq';
 import * as k8s from '@kubernetes/client-node';
 import { prisma as db, type Prisma } from '@autoops/database';
 import { OperationProvider, OperationStatus, OperationType } from '@autoops/types';
-import { DockerEngineClient } from '@autoops/utils';
+import {
+  DockerEngineClient,
+  detectAnsibleTool,
+  detectTerraformTool,
+  getAnsiblePlaybookBySlug,
+  getInfrastructureOutputLimit,
+  getInfrastructureTimeoutMs,
+  getTerraformWorkspaceBySlug,
+  summarizeCommandOutput,
+} from '@autoops/utils';
 import { createBullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
@@ -22,6 +36,8 @@ type MutableCluster = {
   server: string;
   tlsServerName?: string;
 };
+
+const execFileAsync = promisify(execFile);
 
 export function createOperationsQueue(): Queue<OperationJobData> {
   return new Queue<OperationJobData>(OPERATIONS_QUEUE, {
@@ -118,6 +134,7 @@ async function executeOperation(operation: {
   provider: OperationProvider;
   operationType: OperationType;
   input: unknown;
+  approvedAt?: Date | null;
 }): Promise<Record<string, unknown>> {
   const input = toRecord(operation.input);
   if (
@@ -148,6 +165,24 @@ async function executeOperation(operation: {
       operation.operationType === OperationType.DOCKER_CONTAINER_RESTART)
   ) {
     return executeDockerContainerAction(operation.operationType, input);
+  }
+
+  if (
+    operation.provider === OperationProvider.INFRASTRUCTURE &&
+    (operation.operationType === OperationType.TERRAFORM_VALIDATE ||
+      operation.operationType === OperationType.TERRAFORM_PLAN ||
+      operation.operationType === OperationType.TERRAFORM_APPLY)
+  ) {
+    return executeTerraformOperation(operation.operationType, input, operation.approvedAt ?? null);
+  }
+
+  if (
+    operation.provider === OperationProvider.INFRASTRUCTURE &&
+    (operation.operationType === OperationType.ANSIBLE_SYNTAX_CHECK ||
+      operation.operationType === OperationType.ANSIBLE_CHECK ||
+      operation.operationType === OperationType.ANSIBLE_RUN)
+  ) {
+    return executeAnsibleOperation(operation.operationType, input, operation.approvedAt ?? null);
   }
 
   throw new Error(`Unsupported operation type: ${operation.operationType}`);
@@ -320,6 +355,129 @@ function dockerActionResult(
     status: 'completed',
     completedAt: new Date().toISOString(),
   };
+}
+
+async function executeTerraformOperation(
+  operationType: OperationType,
+  input: Record<string, unknown>,
+  approvedAt: Date | null,
+): Promise<Record<string, unknown>> {
+  const workspaceSlug = stringField(input, 'workspaceSlug');
+  const workspace = await getTerraformWorkspaceBySlug(workspaceSlug);
+  if (!workspace) throw new Error('Terraform workspace is not allowlisted.');
+
+  const toolStatus = await detectTerraformTool();
+  if (toolStatus.status !== 'CONNECTED' || (toolStatus.tool !== 'terraform' && toolStatus.tool !== 'tofu')) {
+    throw new Error(toolStatus.message);
+  }
+
+  const action =
+    operationType === OperationType.TERRAFORM_VALIDATE
+      ? 'validate'
+      : operationType === OperationType.TERRAFORM_PLAN
+        ? 'plan'
+        : 'apply';
+
+  if (action === 'apply' && !approvedAt) {
+    throw new Error('Terraform/OpenTofu apply requires approval before worker execution.');
+  }
+
+  const startedAt = Date.now();
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'autoops-tf-'));
+  const tempWorkspace = path.join(tempRoot, workspace.slug);
+  try {
+    await cp(workspace.absolutePath, tempWorkspace, { recursive: true });
+    const init = await runTool(toolStatus.tool, ['init', '-backend=false', '-input=false', '-no-color'], tempWorkspace);
+    const args =
+      action === 'validate'
+        ? ['validate', '-no-color']
+        : action === 'plan'
+          ? ['plan', '-input=false', '-no-color', '-lock=false']
+          : ['apply', '-auto-approve', '-input=false', '-no-color', '-lock=false'];
+    const run = await runTool(toolStatus.tool, args, tempWorkspace);
+    return {
+      tool: toolStatus.tool,
+      action,
+      workspaceSlug: workspace.slug,
+      relativePath: workspace.relativePath,
+      status: 'completed',
+      safeOutputSummary: summarizeCommandOutput(`${init}\n${run}`),
+      durationMs: Date.now() - startedAt,
+      completedAt: new Date().toISOString(),
+    };
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
+async function executeAnsibleOperation(
+  operationType: OperationType,
+  input: Record<string, unknown>,
+  approvedAt: Date | null,
+): Promise<Record<string, unknown>> {
+  const playbookSlug = stringField(input, 'playbookSlug');
+  const playbook = await getAnsiblePlaybookBySlug(playbookSlug);
+  if (!playbook) throw new Error('Ansible playbook is not allowlisted.');
+
+  const toolStatus = await detectAnsibleTool();
+  if (toolStatus.status !== 'CONNECTED') {
+    throw new Error(toolStatus.message);
+  }
+
+  const action =
+    operationType === OperationType.ANSIBLE_SYNTAX_CHECK
+      ? 'syntax-check'
+      : operationType === OperationType.ANSIBLE_CHECK
+        ? 'check'
+        : 'run';
+
+  if (action === 'run' && !approvedAt) {
+    throw new Error('Ansible run requires approval before worker execution.');
+  }
+
+  const startedAt = Date.now();
+  const args = ['-i', playbook.inventoryAbsolutePath, playbook.absolutePath];
+  if (action === 'syntax-check') args.unshift('--syntax-check');
+  if (action === 'check') args.unshift('--check');
+  const output = await runTool('ansible-playbook', args, path.dirname(playbook.absolutePath));
+
+  return {
+    tool: 'ansible-playbook',
+    action,
+    playbookSlug: playbook.slug,
+    relativePath: playbook.relativePath,
+    inventoryRelativePath: playbook.inventoryRelativePath,
+    status: 'completed',
+    safeOutputSummary: summarizeCommandOutput(output),
+    durationMs: Date.now() - startedAt,
+    completedAt: new Date().toISOString(),
+  };
+}
+
+async function runTool(command: string, args: string[], cwd: string): Promise<string> {
+  try {
+    const { stdout, stderr } = await execFileAsync(command, args, {
+      cwd,
+      timeout: getInfrastructureTimeoutMs(),
+      windowsHide: true,
+      maxBuffer: getInfrastructureOutputLimit() * 4,
+      env: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        USERPROFILE: process.env.USERPROFILE,
+        TF_IN_AUTOMATION: '1',
+        CHECKPOINT_DISABLE: '1',
+        ANSIBLE_RETRY_FILES_ENABLED: 'false',
+      },
+    });
+    return `${stdout ?? ''}\n${stderr ?? ''}`;
+  } catch (error) {
+    const record = toRecord(error);
+    const stdout = typeof record.stdout === 'string' ? record.stdout : '';
+    const stderr = typeof record.stderr === 'string' ? record.stderr : '';
+    const message = error instanceof Error ? error.message : 'Infrastructure tool execution failed.';
+    throw new Error(summarizeCommandOutput(`${message}\n${stdout}\n${stderr}`, 1_000));
+  }
 }
 
 async function triggerJenkinsBuild(input: Record<string, unknown>): Promise<Record<string, unknown>> {

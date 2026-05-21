@@ -286,6 +286,24 @@ export class OperationService {
     if (operationType === OperationType.DOCKER_CONTAINER_RESTART) {
       return AuditAction.DOCKER_CONTAINER_RESTART_REQUESTED;
     }
+    if (operationType === OperationType.TERRAFORM_VALIDATE) {
+      return AuditAction.TERRAFORM_VALIDATE_REQUESTED;
+    }
+    if (operationType === OperationType.TERRAFORM_PLAN) {
+      return AuditAction.TERRAFORM_PLAN_REQUESTED;
+    }
+    if (operationType === OperationType.TERRAFORM_APPLY) {
+      return AuditAction.TERRAFORM_APPLY_REQUESTED;
+    }
+    if (operationType === OperationType.ANSIBLE_SYNTAX_CHECK) {
+      return AuditAction.ANSIBLE_SYNTAX_CHECK_REQUESTED;
+    }
+    if (operationType === OperationType.ANSIBLE_CHECK) {
+      return AuditAction.ANSIBLE_CHECK_REQUESTED;
+    }
+    if (operationType === OperationType.ANSIBLE_RUN) {
+      return AuditAction.ANSIBLE_RUN_REQUESTED;
+    }
     if (operationType === OperationType.KUBERNETES_MANIFEST_DRY_RUN) {
       return AuditAction.KUBERNETES_MANIFEST_DRY_RUN_REQUESTED;
     }

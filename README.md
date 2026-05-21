@@ -2,7 +2,7 @@
 
 [![AutoOps CI](https://github.com/Pramu55/AutoOps-2.0/actions/workflows/ci.yml/badge.svg)](https://github.com/Pramu55/AutoOps-2.0/actions/workflows/ci.yml)
 
-AutoOps is a production-style DevOps Control Plane for managing, observing, and governing operations across Jenkins, Docker, and Kubernetes. It combines real integrations, RBAC, approval workflows, worker-backed execution, observability, incidents, runbooks, and CI/release gates into one platform.
+AutoOps is a production-style DevOps Control Plane for managing, observing, and governing operations across Jenkins, Docker, Kubernetes, Terraform/OpenTofu, and Ansible. It combines real integrations, RBAC, approval workflows, worker-backed execution, observability, incidents, runbooks, and CI/release gates into one platform.
 
 ## What AutoOps Is
 
@@ -21,6 +21,7 @@ Real DevOps work is not only clicking buttons. Teams need safe execution, clear 
 - Jenkins status, jobs, builds, and allowlisted build trigger.
 - Docker status, containers, images, networks, volumes, logs, and governed start/stop/restart.
 - Kubernetes status, Metrics API status, namespaces, workloads, pods, services, scale, and rollout restart.
+- Infrastructure Automation Center for allowlisted Terraform/OpenTofu validate/plan/apply and Ansible syntax/check/run workflows.
 - Confirmation tokens for all controlled operations.
 - Policy engine for approval-required operations.
 - RBAC with requester/approver separation.
@@ -68,6 +69,7 @@ See [Architecture Overview](./docs/ARCHITECTURE_OVERVIEW.md).
 | Jenkins | Status, jobs, builds, allowlisted governed build trigger |
 | Docker | Inventory, logs, governed start/stop/restart |
 | Kubernetes | Cluster inventory, Metrics API, governed scale and rollout restart |
+| Infrastructure | Allowlisted Terraform/OpenTofu and Ansible automation |
 | Projects | Project and environment ownership |
 | Deployments | Deployment records and safe simulation workflow |
 
@@ -141,6 +143,7 @@ Open:
 - `/dashboard/integrations/jenkins`
 - `/dashboard/integrations/docker`
 - `/dashboard/integrations/kubernetes`
+- `/dashboard/integrations/infrastructure`
 - `/dashboard/projects`
 - `/dashboard/deployments`
 
@@ -162,6 +165,7 @@ Start with [Documentation Home](./docs/README.md).
 - [Security Checklist](./docs/SECURITY_CHECKLIST.md)
 - [CI and Release Gates](./docs/CI_AND_RELEASE_GATES.md)
 - [Controlled Operations Overview](./docs/CONTROLLED_OPERATIONS_OVERVIEW.md)
+- [Infrastructure Automation Center](./docs/INFRASTRUCTURE_AUTOMATION_CENTER.md)
 - [Limitations and Roadmap](./docs/LIMITATIONS_AND_ROADMAP.md)
 - [Demo Data Safety](./docs/DEMO_DATA_SAFETY.md)
 

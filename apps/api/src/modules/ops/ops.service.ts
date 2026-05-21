@@ -45,6 +45,7 @@ import { deploymentsQueue } from '../deployments/deployment.queue.js';
 import { operationsQueue } from '../operations/operation.queue.js';
 import { awsService } from '../integrations/aws/aws.service.js';
 import { dockerService } from '../integrations/docker/docker.service.js';
+import { infrastructureService } from '../integrations/infrastructure/infrastructure.service.js';
 import { jenkinsService } from '../integrations/jenkins/jenkins.service.js';
 import { kubernetesService } from '../integrations/kubernetes/kubernetes.service.js';
 import { incidentService } from '../incidents/incident.service.js';
@@ -132,14 +133,16 @@ const BASE_INTEGRATIONS: OpsIntegrationReadiness[] = [
     name: 'Ansible',
     category: IntegrationCategory.CONFIGURATION,
     status: IntegrationStatus.NOT_CONNECTED,
-    description: 'Playbook inventory and governed run controls are planned for a future milestone.',
+    description: 'Allowlisted playbook syntax, check, and run controls execute through governed worker operations.',
+    href: '/dashboard/integrations/infrastructure',
   },
   {
     key: 'terraform',
     name: 'Terraform',
     category: IntegrationCategory.INFRASTRUCTURE,
     status: IntegrationStatus.NOT_CONNECTED,
-    description: 'State and plan visibility are planned. No terraform commands are executed.',
+    description: 'Allowlisted Terraform/OpenTofu validate, plan, and apply controls execute through governed worker operations.',
+    href: '/dashboard/integrations/infrastructure',
   },
   {
     key: 'github-actions',
@@ -332,6 +335,7 @@ export class OpsService {
       awsStatus,
       jenkinsStatus,
       dockerStatus,
+      infrastructureStatus,
       operationStatusCounts,
     ] = await Promise.all([
       this._getDatabaseStatus(),
@@ -391,6 +395,7 @@ export class OpsService {
       awsService.getStatus(),
       jenkinsService.getStatus(),
       dockerService.getStatus(),
+      infrastructureService.getStatus(),
       prisma.operation.groupBy({
         by: ['status'],
         where: {
@@ -434,7 +439,7 @@ export class OpsService {
       queues: {
         deployments: queueSummary,
       },
-      integrations: this._withProviderStatus(kubernetesStatus, awsStatus, jenkinsStatus, dockerStatus),
+      integrations: this._withProviderStatus(kubernetesStatus, awsStatus, jenkinsStatus, dockerStatus, infrastructureStatus),
       operations: {
         total: operationStatusCounts.reduce((total, item) => total + item._count._all, 0),
         pendingApproval:
@@ -462,6 +467,7 @@ export class OpsService {
       jenkinsHealth,
       dockerHealth,
       kubernetesHealth,
+      infrastructureHealth,
       role,
       incidentSummary,
     ] = await Promise.all([
@@ -474,6 +480,7 @@ export class OpsService {
       this._getJenkinsHealth(),
       this._getDockerHealth(),
       this._getKubernetesHealth(),
+      this._getInfrastructureHealth(),
       operationAuthorizationService.getOrganizationRole({ organizationId, userId }),
       incidentService.getSummary(organizationId, userId),
     ]);
@@ -529,6 +536,7 @@ export class OpsService {
         jenkins: jenkinsHealth,
         docker: dockerHealth,
         kubernetes: kubernetesHealth,
+        infrastructure: infrastructureHealth,
       },
       operations: {
         totalRecent: observableOperations.length,
@@ -598,8 +606,53 @@ export class OpsService {
     awsStatus: Awaited<ReturnType<typeof awsService.getStatus>>,
     jenkinsStatus: Awaited<ReturnType<typeof jenkinsService.getStatus>>,
     dockerStatus: Awaited<ReturnType<typeof dockerService.getStatus>>,
+    infrastructureStatus: Awaited<ReturnType<typeof infrastructureService.getStatus>>,
   ): OpsIntegrationReadiness[] {
     return BASE_INTEGRATIONS.map((integration) => {
+      if (integration.key === 'terraform') {
+        const terraformStatus = infrastructureStatus.terraform;
+        return {
+          ...integration,
+          status:
+            terraformStatus.status === 'CONNECTED'
+              ? IntegrationStatus.CONNECTED
+              : terraformStatus.status === 'NOT_INSTALLED'
+                ? IntegrationStatus.NOT_CONFIGURED
+                : IntegrationStatus.UNREACHABLE,
+          description:
+            terraformStatus.status === 'CONNECTED'
+              ? `${terraformStatus.tool ?? 'Terraform/OpenTofu'} is available for allowlisted validate, plan, and approval-gated apply operations.`
+              : terraformStatus.message,
+          lastCheckedAt: terraformStatus.checkedAt,
+          metrics: {
+            tool: terraformStatus.tool,
+            version: terraformStatus.version,
+          },
+        };
+      }
+
+      if (integration.key === 'ansible') {
+        const ansibleStatus = infrastructureStatus.ansible;
+        return {
+          ...integration,
+          status:
+            ansibleStatus.status === 'CONNECTED'
+              ? IntegrationStatus.CONNECTED
+              : ansibleStatus.status === 'NOT_INSTALLED'
+                ? IntegrationStatus.NOT_CONFIGURED
+                : IntegrationStatus.UNREACHABLE,
+          description:
+            ansibleStatus.status === 'CONNECTED'
+              ? 'Ansible playbook runner is available for allowlisted syntax, check, and approval-gated run operations.'
+              : ansibleStatus.message,
+          lastCheckedAt: ansibleStatus.checkedAt,
+          metrics: {
+            tool: ansibleStatus.tool,
+            version: ansibleStatus.version,
+          },
+        };
+      }
+
       if (integration.key === 'jenkins') {
         return {
           ...integration,
@@ -1208,6 +1261,27 @@ export class OpsService {
     }
   }
 
+  private async _getInfrastructureHealth(): Promise<OpsProviderHealthSummary> {
+    try {
+      const status = await infrastructureService.getStatus();
+      const connectedTools = [status.terraform, status.ansible].filter((tool) => tool.status === 'CONNECTED');
+      return {
+        status: connectedTools.length > 0 ? 'CONNECTED' : 'NOT_CONFIGURED',
+        message:
+          connectedTools.length > 0
+            ? `${connectedTools.length} infrastructure automation tool(s) available for allowlisted worker operations.`
+            : 'Terraform/OpenTofu and Ansible are not installed in this runtime.',
+        href: '/dashboard/integrations/infrastructure',
+        checkedAt: status.terraform.checkedAt,
+      };
+    } catch {
+      return this._unknownProviderHealth(
+        '/dashboard/integrations/infrastructure',
+        'Infrastructure automation health check failed safely.',
+      );
+    }
+  }
+
   private _unknownProviderHealth(href: string, message: string): OpsProviderHealthSummary {
     return {
       status: 'UNKNOWN',
@@ -1478,6 +1552,7 @@ export class OpsService {
         [OperationProvider.GITHUB]: evidence.filter((item) => item.provider === OperationProvider.GITHUB).length,
         [OperationProvider.JENKINS]: evidence.filter((item) => item.provider === OperationProvider.JENKINS).length,
         [OperationProvider.KUBERNETES]: evidence.filter((item) => item.provider === OperationProvider.KUBERNETES).length,
+        [OperationProvider.INFRASTRUCTURE]: evidence.filter((item) => item.provider === OperationProvider.INFRASTRUCTURE).length,
       },
       riskBreakdown: {
         [OperationRiskLevel.LOW]: evidence.filter((item) => item.policy.riskLevel === OperationRiskLevel.LOW).length,
@@ -1538,6 +1613,7 @@ export class OpsService {
     if (provider === OperationProvider.JENKINS) return OperationActivitySource.JENKINS;
     if (provider === OperationProvider.KUBERNETES) return OperationActivitySource.KUBERNETES;
     if (provider === OperationProvider.DOCKER) return OperationActivitySource.DOCKER;
+    if (provider === OperationProvider.INFRASTRUCTURE) return OperationActivitySource.INFRASTRUCTURE;
     if (provider === OperationProvider.GITHUB) return OperationActivitySource.GITHUB;
     if (provider === OperationProvider.AWS) return OperationActivitySource.AWS;
     return OperationActivitySource.SYSTEM;
@@ -1547,6 +1623,7 @@ export class OpsService {
     if (source === OperationActivitySource.JENKINS) return OperationProvider.JENKINS;
     if (source === OperationActivitySource.KUBERNETES) return OperationProvider.KUBERNETES;
     if (source === OperationActivitySource.DOCKER) return OperationProvider.DOCKER;
+    if (source === OperationActivitySource.INFRASTRUCTURE) return OperationProvider.INFRASTRUCTURE;
     if (source === OperationActivitySource.GITHUB) return OperationProvider.GITHUB;
     if (source === OperationActivitySource.AWS) return OperationProvider.AWS;
     return null;
@@ -1561,6 +1638,12 @@ export class OpsService {
     if (type === OperationType.DOCKER_CONTAINER_START) return 'Docker container started';
     if (type === OperationType.DOCKER_CONTAINER_STOP) return 'Docker container stopped';
     if (type === OperationType.DOCKER_CONTAINER_RESTART) return 'Docker container restarted';
+    if (type === OperationType.TERRAFORM_VALIDATE) return 'Terraform/OpenTofu workspace validated';
+    if (type === OperationType.TERRAFORM_PLAN) return 'Terraform/OpenTofu plan generated';
+    if (type === OperationType.TERRAFORM_APPLY) return 'Terraform/OpenTofu apply requested';
+    if (type === OperationType.ANSIBLE_SYNTAX_CHECK) return 'Ansible syntax checked';
+    if (type === OperationType.ANSIBLE_CHECK) return 'Ansible check mode executed';
+    if (type === OperationType.ANSIBLE_RUN) return 'Ansible run requested';
     if (type === OperationType.GITHUB_WORKFLOW_DISPATCH) return 'GitHub workflow dispatched';
     if (type === OperationType.AWS_DEPLOYMENT) return 'AWS deployment requested';
     if (type === OperationType.DEPLOYMENT_ROLLBACK) return 'Deployment rollback requested';
@@ -1574,6 +1657,30 @@ export class OpsService {
   ): string | null {
     if (type === OperationType.JENKINS_BUILD_TRIGGER) {
       return this._stringField(result, 'jobName') ?? this._stringField(input, 'jobName');
+    }
+
+    if (
+      type === OperationType.TERRAFORM_VALIDATE ||
+      type === OperationType.TERRAFORM_PLAN ||
+      type === OperationType.TERRAFORM_APPLY
+    ) {
+      return (
+        this._stringField(result, 'workspaceSlug') ??
+        this._stringField(input, 'workspaceSlug') ??
+        this._stringField(input, 'relativePath')
+      );
+    }
+
+    if (
+      type === OperationType.ANSIBLE_SYNTAX_CHECK ||
+      type === OperationType.ANSIBLE_CHECK ||
+      type === OperationType.ANSIBLE_RUN
+    ) {
+      return (
+        this._stringField(result, 'playbookSlug') ??
+        this._stringField(input, 'playbookSlug') ??
+        this._stringField(input, 'relativePath')
+      );
     }
 
     if (
@@ -1616,6 +1723,17 @@ export class OpsService {
     }
 
     if (
+      type === OperationType.TERRAFORM_VALIDATE ||
+      type === OperationType.TERRAFORM_PLAN ||
+      type === OperationType.TERRAFORM_APPLY ||
+      type === OperationType.ANSIBLE_SYNTAX_CHECK ||
+      type === OperationType.ANSIBLE_CHECK ||
+      type === OperationType.ANSIBLE_RUN
+    ) {
+      return this._stringField(result, 'status') ?? this._stringField(result, 'safeOutputSummary');
+    }
+
+    if (
       type === OperationType.KUBERNETES_DEPLOYMENT_SCALE ||
       type === OperationType.KUBERNETES_DEPLOYMENT_RESTART
     ) {
@@ -1649,6 +1767,13 @@ export class OpsService {
     const containerId =
       this._stringField(result, 'containerId') ?? this._stringField(input, 'containerId');
     const jobName = this._stringField(result, 'jobName') ?? this._stringField(input, 'jobName');
+    const workspaceSlug =
+      this._stringField(result, 'workspaceSlug') ?? this._stringField(input, 'workspaceSlug');
+    const playbookSlug =
+      this._stringField(result, 'playbookSlug') ?? this._stringField(input, 'playbookSlug');
+    const relativePath =
+      this._stringField(result, 'relativePath') ?? this._stringField(input, 'relativePath');
+    const safeOutputSummary = this._stringField(result, 'safeOutputSummary');
     const buildNumber = this._numberField(result, 'buildNumber');
     const buildUrl = this._stringField(result, 'buildUrl');
     const replicas = this._numberField(result, 'replicas') ?? this._numberField(input, 'replicas');
@@ -1657,6 +1782,9 @@ export class OpsService {
     const restartedAt = this._stringField(result, 'restartedAt');
 
     if (jobName) safeSummary.push(`Job: ${jobName}`);
+    if (workspaceSlug) safeSummary.push(`Terraform workspace: ${workspaceSlug}`);
+    if (playbookSlug) safeSummary.push(`Ansible playbook: ${playbookSlug}`);
+    if (relativePath) safeSummary.push(`Allowlisted path: ${relativePath}`);
     if (buildNumber !== null) safeSummary.push(`Build: #${buildNumber}`);
     if (buildUrl) safeSummary.push('Jenkins build URL is available.');
     if (containerName) safeSummary.push(`Container: ${containerName}`);
@@ -1666,14 +1794,17 @@ export class OpsService {
     if (replicas !== null) safeSummary.push(`Replica target: ${replicas}`);
     if (restartedAt) safeSummary.push(`Restarted at: ${restartedAt}`);
     if (status) safeSummary.push(`Result: ${status}`);
+    if (safeOutputSummary) safeSummary.push(`Output summary: ${safeOutputSummary.slice(0, 300)}`);
     if (completedAt) safeSummary.push(`Completed at: ${completedAt}`);
     if (safeSummary.length === 0) safeSummary.push('No additional safe provider details are available.');
 
     return {
       provider,
       operationType: type,
-      targetKind: targetKind ?? (namespace && targetName ? 'Deployment' : null),
-      targetName,
+      targetKind:
+        targetKind ??
+        (workspaceSlug ? 'Terraform/OpenTofu workspace' : playbookSlug ? 'Ansible playbook' : namespace && targetName ? 'Deployment' : null),
+      targetName: targetName ?? workspaceSlug ?? playbookSlug,
       namespace,
       containerName,
       containerId,
@@ -1975,6 +2106,30 @@ export class OpsService {
 
     if (type === OperationType.DOCKER_CONTAINER_RESTART) {
       return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'RESTART', policy.riskLevel ?? OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
+    }
+
+    if (type === OperationType.TERRAFORM_VALIDATE) {
+      return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'VALIDATE', policy.riskLevel ?? OperationRiskLevel.LOW, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
+    }
+
+    if (type === OperationType.TERRAFORM_PLAN) {
+      return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'PLAN', policy.riskLevel ?? OperationRiskLevel.LOW, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
+    }
+
+    if (type === OperationType.TERRAFORM_APPLY) {
+      return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'APPLY', policy.riskLevel ?? OperationRiskLevel.HIGH, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
+    }
+
+    if (type === OperationType.ANSIBLE_SYNTAX_CHECK) {
+      return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'SYNTAX', policy.riskLevel ?? OperationRiskLevel.LOW, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
+    }
+
+    if (type === OperationType.ANSIBLE_CHECK) {
+      return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'CHECK', policy.riskLevel ?? OperationRiskLevel.LOW, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
+    }
+
+    if (type === OperationType.ANSIBLE_RUN) {
+      return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'RUN', policy.riskLevel ?? OperationRiskLevel.HIGH, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
     }
 
     if (type === OperationType.GITHUB_WORKFLOW_DISPATCH) {

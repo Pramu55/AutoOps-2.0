@@ -53,7 +53,20 @@ RUN pnpm --filter @autoops/types build \
 # ─────────────────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
 
-RUN apk add --no-cache openssl
+ARG OPENTOFU_VERSION=1.8.8
+
+RUN apk add --no-cache openssl ca-certificates curl unzip ansible \
+ && case "$(apk --print-arch)" in \
+      x86_64) TOFU_ARCH="amd64" ;; \
+      aarch64) TOFU_ARCH="arm64" ;; \
+      *) echo "Unsupported OpenTofu architecture: $(apk --print-arch)" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL -o /tmp/tofu.zip "https://github.com/opentofu/opentofu/releases/download/v${OPENTOFU_VERSION}/tofu_${OPENTOFU_VERSION}_linux_${TOFU_ARCH}.zip" \
+ && unzip -q /tmp/tofu.zip tofu -d /usr/local/bin \
+ && chmod +x /usr/local/bin/tofu \
+ && rm -f /tmp/tofu.zip \
+ && tofu version \
+ && ansible-playbook --version
 
 WORKDIR /app
 

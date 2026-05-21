@@ -1,0 +1,19 @@
+---
+- name: AutoOps local Ansible smoke playbook
+  hosts: local
+  gather_facts: false
+  tasks:
+    - name: Confirm the playbook is running against localhost only
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == "localhost"
+        fail_msg: "This smoke playbook must remain localhost-only."
+
+    - name: Inspect repository marker safely
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../../terraform/local-smoke/main.tf"
+      register: terraform_smoke_file
+
+    - name: Show safe smoke result
+      ansible.builtin.debug:
+        msg: "AutoOps Ansible smoke playbook is safe and local-only. Terraform sample present={{ terraform_smoke_file.stat.exists }}"

@@ -119,6 +119,14 @@ const COMMANDS: CommandItem[] = [
     keywords: ['kubernetes', 'k8s', 'cluster', 'pods', 'workloads'],
   },
   {
+    group: 'Integrations',
+    label: 'Infrastructure Automation',
+    description: 'Terraform/OpenTofu and Ansible governed automation center',
+    href: '/dashboard/integrations/infrastructure',
+    icon: Wrench,
+    keywords: ['infrastructure', 'terraform', 'tofu', 'opentofu', 'ansible', 'iac'],
+  },
+  {
     group: 'Actions',
     label: 'Governance Center',
     description: 'Audit-style operation evidence and safe governance export',
@@ -174,6 +182,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/dashboard/integrations/jenkins', label: 'Jenkins', icon: Hammer },
       { href: '/dashboard/integrations/docker', label: 'Docker', icon: Container },
       { href: '/dashboard/integrations/kubernetes', label: 'Kubernetes', icon: Boxes },
+      { href: '/dashboard/integrations/infrastructure', label: 'Infrastructure', icon: Wrench },
     ],
   },
   {
@@ -225,6 +234,7 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
       { href: '/dashboard/integrations/jenkins', label: 'Jenkins', icon: Hammer },
       { href: '/dashboard/integrations/docker', label: 'Docker', icon: Container },
       { href: '/dashboard/integrations/kubernetes', label: 'Kubernetes', icon: Boxes },
+      { href: '/dashboard/integrations/infrastructure', label: 'Infrastructure', icon: Wrench },
     ],
   },
 ];

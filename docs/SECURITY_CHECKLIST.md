@@ -43,17 +43,30 @@ Use this checklist before a company pilot, demo, or production-like deployment.
 - Do not add Docker create/run/delete/remove controls.
 - Do not add image push/build/delete, volume delete, or network delete controls.
 
+## Infrastructure Automation
+
+- Do not expose arbitrary shell command execution.
+- Do not accept arbitrary Terraform/OpenTofu workspace paths.
+- Do not accept arbitrary Ansible playbook or inventory paths.
+- Do not commit `.terraform/`, `*.tfstate`, Ansible vault files, SSH private keys, or cloud credentials.
+- Do not show Terraform state, Ansible inventory secrets, cloud credentials, or provider tokens in UI/API/logs.
+- Require approval for Terraform/OpenTofu apply.
+- Require approval for Ansible run.
+- Keep Terraform/OpenTofu plan and Ansible check output summarized and redacted.
+- Mount only approved infrastructure automation directories in company environments.
+
 ## Governance
 
 - Verify backend RBAC.
 - Verify requester/approver separation.
-- Verify approval policy for Docker stop/restart and Kubernetes scale above policy threshold.
+- Verify approval policy for Docker stop/restart, Kubernetes scale above policy threshold, Terraform/OpenTofu apply, and Ansible run.
 - Verify approval-required operations are not enqueued until approved.
 - Verify rejected operations do not execute.
 - Verify operation recovery remains confirmation, policy, and RBAC governed.
 - Verify Governance Center evidence is tenant-scoped.
 - Verify governance exports include safe evidence fields only.
 - Verify governance exports do not include raw operation metadata, stack traces, tokens, kubeconfig, Authorization headers, or secret-like values.
+- Verify infrastructure governance evidence does not include Terraform state, Ansible vault data, SSH keys, cloud credentials, or raw full logs.
 
 ## Incidents and Runbooks
 

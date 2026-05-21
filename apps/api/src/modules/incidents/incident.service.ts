@@ -363,6 +363,9 @@ export class IncidentService {
       return replicas > 2 ? DbIncidentSeverity.HIGH : DbIncidentSeverity.MEDIUM;
     }
     if (type === OperationType.JENKINS_BUILD_TRIGGER) return DbIncidentSeverity.MEDIUM;
+    if (type === OperationType.TERRAFORM_APPLY || type === OperationType.ANSIBLE_RUN) {
+      return DbIncidentSeverity.HIGH;
+    }
     return DbIncidentSeverity.MEDIUM;
   }
 
@@ -374,6 +377,20 @@ export class IncidentService {
     }
     if (type === OperationType.KUBERNETES_DEPLOYMENT_SCALE) return 'kubernetes-scale-failure';
     if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) return 'kubernetes-rollout-failure';
+    if (
+      type === OperationType.TERRAFORM_VALIDATE ||
+      type === OperationType.TERRAFORM_PLAN ||
+      type === OperationType.TERRAFORM_APPLY
+    ) {
+      return 'terraform-operation-failure';
+    }
+    if (
+      type === OperationType.ANSIBLE_SYNTAX_CHECK ||
+      type === OperationType.ANSIBLE_CHECK ||
+      type === OperationType.ANSIBLE_RUN
+    ) {
+      return 'ansible-operation-failure';
+    }
     return 'operation-failure';
   }
 
@@ -385,6 +402,12 @@ export class IncidentService {
     if (type === OperationType.DOCKER_CONTAINER_STOP) return `Docker container stop failed${label}`;
     if (type === OperationType.KUBERNETES_DEPLOYMENT_SCALE) return `Kubernetes deployment scale failed${label}`;
     if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) return `Kubernetes rollout restart failed${label}`;
+    if (type === OperationType.TERRAFORM_VALIDATE) return `Terraform/OpenTofu validate failed${label}`;
+    if (type === OperationType.TERRAFORM_PLAN) return `Terraform/OpenTofu plan failed${label}`;
+    if (type === OperationType.TERRAFORM_APPLY) return `Terraform/OpenTofu apply failed${label}`;
+    if (type === OperationType.ANSIBLE_SYNTAX_CHECK) return `Ansible syntax check failed${label}`;
+    if (type === OperationType.ANSIBLE_CHECK) return `Ansible check mode failed${label}`;
+    if (type === OperationType.ANSIBLE_RUN) return `Ansible run failed${label}`;
     return `Operation failed${label}`;
   }
 
@@ -409,6 +432,20 @@ export class IncidentService {
       const namespace = this._string(input, 'namespace');
       const name = this._string(input, 'name');
       return { kind: 'Kubernetes deployment', label: namespace && name ? `${namespace}/${name}` : name };
+    }
+    if (
+      type === OperationType.TERRAFORM_VALIDATE ||
+      type === OperationType.TERRAFORM_PLAN ||
+      type === OperationType.TERRAFORM_APPLY
+    ) {
+      return { kind: 'Terraform/OpenTofu workspace', label: this._string(input, 'workspaceSlug') };
+    }
+    if (
+      type === OperationType.ANSIBLE_SYNTAX_CHECK ||
+      type === OperationType.ANSIBLE_CHECK ||
+      type === OperationType.ANSIBLE_RUN
+    ) {
+      return { kind: 'Ansible playbook', label: this._string(input, 'playbookSlug') };
     }
     return { kind: null, label: null };
   }

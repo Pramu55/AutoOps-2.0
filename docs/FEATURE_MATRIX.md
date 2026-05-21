@@ -18,6 +18,12 @@
 | Kubernetes | Metrics API status | Complete | Yes when configured | Read-only metrics | Honest unavailable state |
 | Kubernetes | Scale deployment | Complete | Yes | SCALE confirmation + approval threshold | Protected namespaces blocked |
 | Kubernetes | Rollout restart | Complete | Yes | ROLLOUT confirmation | No apply/delete/exec |
+| Infrastructure | Terraform/OpenTofu workspace discovery | Complete | Yes | Allowlisted directories only | No arbitrary path execution |
+| Infrastructure | Terraform/OpenTofu validate and plan | Complete | Yes when tool installed | VALIDATE/PLAN confirmation + worker execution | No cloud credentials included |
+| Infrastructure | Terraform/OpenTofu apply | Complete | Yes when tool installed | APPLY confirmation + approval required | No arbitrary variables or shell |
+| Infrastructure | Ansible playbook discovery | Complete | Yes | Allowlisted playbooks and inventory only | Local smoke playbook included |
+| Infrastructure | Ansible syntax-check and check mode | Complete | Yes when tool installed | SYNTAX/CHECK confirmation + worker execution | No SSH keys or vault secrets |
+| Infrastructure | Ansible run | Complete | Yes when tool installed | RUN confirmation + approval required | No arbitrary playbook path |
 | Worker Runtime | BullMQ execution | Complete | Yes | Worker-only execution | API queues accepted work |
 | Worker Runtime | Heartbeat registry | Complete | Yes | Persisted heartbeat rows | Fresh/stale/offline derived |
 | Observability | Operations Hub | Complete | Yes | Safe summaries | Platform/provider/queue/worker/incidents |

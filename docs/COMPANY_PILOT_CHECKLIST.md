@@ -9,7 +9,7 @@ Use this checklist to evaluate AutoOps as a local-first, production-style DevOps
 - [ ] Docker Desktop or Docker Engine is running.
 - [ ] Node.js 20+ and pnpm 9+ are installed.
 - [ ] `.env` exists locally and is not committed.
-- [ ] Optional Jenkins, Docker, and Kubernetes resources are local or explicitly approved.
+- [ ] Optional Jenkins, Docker, Kubernetes, Terraform/OpenTofu, and Ansible resources are local or explicitly approved.
 
 ## Repository Readiness
 
@@ -45,6 +45,10 @@ Use this checklist to evaluate AutoOps as a local-first, production-style DevOps
 - [ ] Docker RESTART requires approval.
 - [ ] Kubernetes SCALE to 0, 1, or 2 replicas is confirmation-only.
 - [ ] Kubernetes SCALE above 2 requires approval.
+- [ ] Terraform/OpenTofu VALIDATE and PLAN do not require approval.
+- [ ] Terraform/OpenTofu APPLY requires approval.
+- [ ] Ansible SYNTAX and CHECK do not require approval.
+- [ ] Ansible RUN requires approval.
 - [ ] Requester cannot approve own operation.
 - [ ] Admin can approve pending operation.
 - [ ] Rejected operations do not execute.
@@ -74,6 +78,19 @@ Use this checklist to evaluate AutoOps as a local-first, production-style DevOps
 - [ ] SCALE and ROLLOUT require confirmation.
 - [ ] No exec, shell, apply, delete, Secret access, or port-forward exists.
 
+## Infrastructure Automation Validation
+
+- [ ] Infrastructure Automation Center page loads.
+- [ ] Terraform/OpenTofu status is `CONNECTED` or `NOT_INSTALLED` honestly.
+- [ ] Ansible status is `CONNECTED` or `NOT_INSTALLED` honestly.
+- [ ] Terraform workspace list comes from allowlisted `infra/terraform`.
+- [ ] Ansible playbook list comes from allowlisted `infra/ansible`.
+- [ ] Validate/plan/check actions are disabled when tools are not installed.
+- [ ] APPLY and RUN create approval-required operations when tools are installed.
+- [ ] No arbitrary shell command input is exposed.
+- [ ] No arbitrary path input is exposed.
+- [ ] No Terraform state, cloud credentials, SSH keys, or Ansible vault data are exposed.
+
 ## Worker/Runtime Validation
 
 - [ ] Worker heartbeat is `RUNNING`.
@@ -95,6 +112,7 @@ Use this checklist to evaluate AutoOps as a local-first, production-style DevOps
 - [ ] Evidence links operation requester, policy, approval decision, provider, lifecycle, and incident when present.
 - [ ] Rejected operations are visible.
 - [ ] Failed operations are visible.
+- [ ] Infrastructure operations appear with provider, action, target, risk, approval, and safe output summary.
 - [ ] Safe JSON export works for authorized owner/admin users.
 - [ ] Export contains no raw input, raw result, raw error stack, tokens, kubeconfig, or secret-like metadata.
 
@@ -146,6 +164,7 @@ Use this checklist to evaluate AutoOps as a local-first, production-style DevOps
 - [ ] AutoOps can be started safely.
 - [ ] Core runtime is healthy.
 - [ ] Governed operation flow works.
+- [ ] Jenkins, Docker, Kubernetes, Terraform/OpenTofu, and Ansible flows can be evaluated safely.
 - [ ] RBAC and approval separation work.
 - [ ] Governance evidence and safe export work.
 - [ ] Incident/runbook lifecycle works.
@@ -157,6 +176,7 @@ Use this checklist to evaluate AutoOps as a local-first, production-style DevOps
 - Local-first runtime by default.
 - No SOC2 or enterprise certification claim.
 - No cloud connector product features yet.
+- Terraform/OpenTofu and Ansible binaries are optional and report `NOT_INSTALLED` honestly until installed in the runtime.
 - No notification integration yet.
 - No AI runbook generation yet.
 
@@ -166,5 +186,8 @@ Use this checklist to evaluate AutoOps as a local-first, production-style DevOps
 - Which Kubernetes RBAC role should AutoOps use?
 - Should Docker socket access be allowed in production?
 - Which Jenkins jobs are safe to allowlist?
+- Which Terraform/OpenTofu workspaces are safe to allowlist?
+- Which Ansible playbooks and inventories are safe to allowlist?
+- Where should cloud credentials and remote state be managed?
 - What alerting/notification channels are required?
 - What audit retention is required?

@@ -11,6 +11,10 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 | Docker | Stop, restart container | STOP, RESTART | MEDIUM | Required by local policy |
 | Kubernetes | Scale deployment to 0-2 replicas, rollout restart deployment | SCALE, ROLLOUT | MEDIUM | Not required |
 | Kubernetes | Scale deployment above 2 replicas | SCALE | MEDIUM | Required by local policy |
+| Terraform/OpenTofu | Validate, plan allowlisted workspace | VALIDATE, PLAN | LOW | Not required |
+| Terraform/OpenTofu | Apply allowlisted workspace | APPLY | HIGH | Required |
+| Ansible | Syntax-check, check mode allowlisted playbook | SYNTAX, CHECK | LOW | Not required |
+| Ansible | Run allowlisted playbook | RUN | HIGH | Required |
 
 ## Safety Rules
 
@@ -22,12 +26,13 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Kubernetes protected namespaces remain blocked for mutations.
 - Docker exec, shell, delete/remove, image push/delete, volume delete, and network delete are not exposed.
 - Kubernetes exec, shell, port-forward, Secret access, arbitrary apply/patch, and delete actions are not exposed.
+- Infrastructure automation never accepts arbitrary command strings or arbitrary paths. Terraform/OpenTofu and Ansible operations are limited to allowlisted workspaces/playbooks and fixed worker command definitions.
 
 ## Operation Detail and Recovery
 
 - Operation detail views use safe derived DTOs from `/api/v1/ops/activity/:operationId`.
 - Raw operation input, result, and error payloads are not rendered in the UI.
-- Recovery is provider-specific only: Jenkins BUILD, Docker START/STOP/RESTART, and Kubernetes SCALE/ROLLOUT.
+- Recovery is provider-specific only: Jenkins BUILD, Docker START/STOP/RESTART, Kubernetes SCALE/ROLLOUT, Terraform/OpenTofu VALIDATE/PLAN/APPLY, and Ansible SYNTAX/CHECK/RUN.
 - Recovery actions remain confirmation-gated, audit-backed, and worker-executed.
 - AutoOps does not provide generic operation replay, shell access, exec, delete, arbitrary apply, or secret access.
 
@@ -35,7 +40,7 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 
 - `/api/v1/ops/observability` returns safe platform health, provider health, queue health, active operations, recent failures, and recent operation status breakdowns.
 - Queue counts come from BullMQ when safely readable; unavailable queues are reported honestly rather than filled with fake zeroes.
-- Provider health uses real Jenkins, Docker, and Kubernetes connector checks, including Kubernetes Metrics API status when available.
+- Provider health uses real Jenkins, Docker, Kubernetes, and Infrastructure Automation connector checks, including Kubernetes Metrics API status and IaC tool installation status when available.
 - Operations Hub polls at a modest interval for live operation monitoring, and operation detail pages poll only while an operation is queued, running, or pending approval.
 - Failed operations show safe error summaries and link to operation detail/recovery where supported.
 - Observability responses do not expose raw operation metadata, provider credentials, kubeconfig, tokens, environment values, or stack traces.
@@ -53,6 +58,8 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Confirmations remain required for all controlled actions; approval is an additional policy gate, not a replacement.
 - The local pilot policy keeps Jenkins BUILD, Docker START, Kubernetes ROLLOUT, and Kubernetes SCALE to 0-2 replicas confirmation-only.
 - Docker STOP/RESTART and Kubernetes SCALE above 2 replicas enter `PENDING_APPROVAL` and are not enqueued until approved.
+- Terraform/OpenTofu VALIDATE/PLAN and Ansible SYNTAX/CHECK are confirmation-only.
+- Terraform/OpenTofu APPLY and Ansible RUN enter `PENDING_APPROVAL` and are not enqueued until approved.
 - Approving a pending operation records the decision and queues the existing worker-executed operation; rejecting records the decision and prevents worker execution.
 - Ops Hub and operation detail expose safe policy reason, risk, confirmation label, approval status, and decision timestamps without rendering raw operation metadata.
 - AutoOps does not provide generic replay, unsafe Docker/Kubernetes controls, or fake approval records. Future RBAC can separate requester and approver responsibilities.
@@ -78,7 +85,7 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 ## Governance Center and Audit-Style Evidence
 
 - `/api/v1/ops/governance` derives tenant-scoped governance evidence from real operation, approval, worker, and incident records.
-- `/dashboard/governance` gives admins and reviewers a table-first evidence view across Jenkins, Docker, Kubernetes, and other operation providers.
+- `/dashboard/governance` gives admins and reviewers a table-first evidence view across Jenkins, Docker, Kubernetes, Infrastructure Automation, and other operation providers.
 - Evidence includes requester, approver/rejecter, policy name, policy reason, risk, approval status, provider, target, lifecycle timing, incident linkage, and safe result/error summaries.
 - Owner/admin users can export safe JSON evidence for review; exports are intentionally limited and exclude raw metadata.
 - Governance evidence is compliance-supporting review material, not an immutable audit ledger or certification claim.
