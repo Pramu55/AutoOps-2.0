@@ -1,0 +1,137 @@
+# AutoOps Route Reference
+
+## `/login`
+
+- Purpose: Sign in through the real auth API.
+- Who uses it: Operator / Requester, Admin / Approver, registered users.
+- Data shown: Login form and local demo account prefill cards.
+- Key actions: Authenticate and store session.
+- Safety notes: Demo cards only prefill credentials; no auth bypass.
+
+## `/register`
+
+- Purpose: Create a user and organization workspace through the real API.
+- Who uses it: Local evaluators creating a workspace.
+- Data shown: Registration form and password validation.
+- Key actions: Register user, redirect to login.
+- Safety notes: Duplicate registration errors are shown safely.
+
+## `/dashboard`
+
+- Purpose: Command overview for platform posture.
+- Who uses it: Operators and admins.
+- Data shown: Runtime, projects, deployments, and readiness summaries.
+- Key actions: Navigate to major modules.
+- Safety notes: Uses real API data only.
+
+## `/dashboard/operations`
+
+- Purpose: Operations Hub.
+- Who uses it: Operators, admins, incident responders.
+- Data shown: Platform health, provider health, queue health, worker runtime, pending approvals, important incidents, failures, and activity.
+- Key actions: View operation detail, approve/reject when authorized, open incidents/connectors.
+- Safety notes: Backend enforces RBAC and requester/approver separation.
+
+## `/dashboard/operations/:operationId`
+
+- Purpose: Operation detail and recovery.
+- Who uses it: Operators, admins, reviewers.
+- Data shown: Status, governance, lifecycle, approval panel, provider details, incident link, safe error/result summaries.
+- Key actions: Approve/reject pending operation, trigger supported recovery.
+- Safety notes: Raw operation metadata is not rendered.
+
+## `/dashboard/incidents`
+
+- Purpose: Incident register.
+- Who uses it: Operators, admins, responders.
+- Data shown: Tenant-scoped incident list, filters, summary counts.
+- Key actions: Open incident detail.
+- Safety notes: Incidents come from real failed operations.
+
+## `/dashboard/incidents/:incidentId`
+
+- Purpose: Incident detail and runbook.
+- Who uses it: Operators, admins, responders.
+- Data shown: Severity, status, linked operation, safe error summary, lifecycle, runbook.
+- Key actions: Acknowledge, resolve, open linked operation.
+- Safety notes: Acknowledge/resolve permissions are enforced by backend.
+
+## `/dashboard/integrations/jenkins`
+
+- Purpose: Jenkins control connector.
+- Who uses it: Operators and admins.
+- Data shown: Jenkins status, jobs, builds, recent Jenkins operations.
+- Key actions: Trigger allowlisted build with `BUILD` confirmation.
+- Safety notes: No arbitrary Jenkins mutation.
+
+## `/dashboard/integrations/docker`
+
+- Purpose: Docker control connector.
+- Who uses it: Operators and admins.
+- Data shown: Engine status, containers, images, networks, volumes, logs, Docker operations.
+- Key actions: START, STOP, RESTART with confirmation and policy.
+- Safety notes: No Docker exec, shell, delete, create/run, or unsafe image/volume/network controls.
+
+## `/dashboard/integrations/kubernetes`
+
+- Purpose: Kubernetes control connector.
+- Who uses it: Operators and admins.
+- Data shown: Cluster status, Metrics API status, namespaces, workloads, pods, services, rollout status.
+- Key actions: SCALE and ROLLOUT with confirmation and approval policy.
+- Safety notes: Protected namespaces are blocked; no exec, shell, apply, delete, Secret access, or port-forward.
+
+## `/dashboard/projects`
+
+- Purpose: Project inventory.
+- Who uses it: Operators and platform owners.
+- Data shown: Real project records.
+- Key actions: Create/open projects.
+- Safety notes: Project data is organization-scoped.
+
+## `/dashboard/projects/:projectId`
+
+- Purpose: Project detail and environment management.
+- Who uses it: Operators and platform owners.
+- Data shown: Project fields and environments.
+- Key actions: Edit project, manage environments, archive project.
+- Safety notes: Uses project-scoped API endpoints.
+
+## `/dashboard/deployments`
+
+- Purpose: Deployment records and safe simulation trigger.
+- Who uses it: Operators and evaluators.
+- Data shown: Real deployment records.
+- Key actions: Trigger deployment simulation and open deployment detail.
+- Safety notes: Current deployment flow is safe simulation and does not mutate real infrastructure.
+
+## `/dashboard/deployments/:deploymentId`
+
+- Purpose: Deployment detail.
+- Who uses it: Operators and evaluators.
+- Data shown: Status, commit, branch, duration, metadata, event timeline.
+- Key actions: Refresh and inspect lifecycle.
+- Safety notes: Shows stored deployment event data.
+
+## `/dashboard/settings`
+
+- Purpose: Governance/settings area.
+- Who uses it: Platform owners.
+- Data shown: Current frontend surface for governance settings.
+- Key actions: Navigate and inspect available controls.
+- Safety notes: Treat as a limited current surface unless expanded later.
+
+## `/dashboard/alerts`
+
+- Purpose: Alert surface.
+- Who uses it: Operators and responders.
+- Data shown: Current frontend alert surface if present.
+- Key actions: Inspect alert-related UI.
+- Safety notes: No external notification integration is claimed.
+
+## `/dashboard/observability`
+
+- Purpose: Observability surface.
+- Who uses it: Operators and admins.
+- Data shown: Runtime/provider/queue data where implemented.
+- Key actions: Inspect live readiness.
+- Safety notes: Metrics are real or reported unavailable honestly.
