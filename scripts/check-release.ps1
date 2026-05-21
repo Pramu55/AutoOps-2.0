@@ -49,6 +49,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Run-Step "Types build" { pnpm.cmd --filter "@autoops/types" build }
+Run-Step "Utils build" { pnpm.cmd --filter "@autoops/utils" build }
+Run-Step "Logger build" { pnpm.cmd --filter "@autoops/logger" build }
 Run-Step "API typecheck" { pnpm.cmd --filter "@autoops/api" typecheck }
 Run-Step "API build" { pnpm.cmd --filter "@autoops/api" build }
 Run-Step "API tests" { pnpm.cmd --filter "@autoops/api" test }

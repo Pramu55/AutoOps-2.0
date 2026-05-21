@@ -16,6 +16,8 @@ run_step() {
 run_step "Git status" git --no-pager status --short
 run_step "Database build" pnpm --filter @autoops/database build
 run_step "Types build" pnpm --filter @autoops/types build
+run_step "Utils build" pnpm --filter @autoops/utils build
+run_step "Logger build" pnpm --filter @autoops/logger build
 run_step "API typecheck" pnpm --filter @autoops/api typecheck
 run_step "API build" pnpm --filter @autoops/api build
 run_step "API tests" pnpm --filter @autoops/api test
