@@ -1,7 +1,15 @@
 import { z } from 'zod';
 import type { Deployment } from './deployment.js';
+import type { IncidentSeverity } from './enums.js';
 import type { IncidentListItem, IncidentSummary } from './incident.js';
-import { OperationStatus, OperationType, type OperationStatus as OperationStatusValue, type OperationType as OperationTypeValue } from './operation.js';
+import {
+  OperationProvider,
+  OperationStatus,
+  OperationType,
+  type OperationProvider as OperationProviderValue,
+  type OperationStatus as OperationStatusValue,
+  type OperationType as OperationTypeValue,
+} from './operation.js';
 
 export const RuntimeStatus = {
   READY: 'READY',
@@ -274,6 +282,7 @@ export interface OperationDetailResponse extends OperationActivityItem {
   lifecycle: OperationLifecycleItem[];
   retry: OperationRetryInfo;
   incident: Pick<IncidentListItem, 'id' | 'title' | 'severity' | 'status'> | null;
+  governanceEvidence: GovernanceEvidenceItem;
 }
 
 export interface OpsProviderHealthSummary {
@@ -326,4 +335,115 @@ export interface OpsObservabilityResponse {
   };
   incidents: IncidentSummary;
   generatedAt: string;
+}
+
+export const governanceEvidenceFiltersSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(500).default(50),
+  provider: z.nativeEnum(OperationProvider).optional(),
+  status: z.nativeEnum(OperationStatus).optional(),
+  risk: z.nativeEnum(OperationRiskLevel).optional(),
+  approvalStatus: z.nativeEnum(OperationApprovalStatus).optional(),
+  operationType: z.nativeEnum(OperationType).optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  search: z.string().trim().max(120).optional(),
+  actor: z.string().trim().max(120).optional(),
+  format: z.literal('json').optional(),
+});
+export type GovernanceEvidenceFilters = z.infer<typeof governanceEvidenceFiltersSchema>;
+
+export interface GovernanceEvidenceActorSummary {
+  id: string;
+  name: string | null;
+  email: string | null;
+}
+
+export interface GovernanceEvidencePolicySummary {
+  policyName: string | null;
+  policyReason: string | null;
+  riskLevel: OperationRiskLevel;
+  confirmationTokenRequired: boolean;
+  confirmationTokenLabel: string | null;
+  approvalRequired: boolean;
+  approvalStatus: OperationApprovalStatus;
+}
+
+export interface GovernanceEvidenceIncidentSummary {
+  id: string;
+  title: string;
+  severity: IncidentSeverity;
+  status: IncidentListItem['status'];
+}
+
+export interface GovernanceEvidenceItem {
+  operationId: string;
+  provider: OperationProviderValue;
+  source: OperationActivitySource;
+  operationType: OperationTypeValue;
+  status: OperationStatusValue;
+  title: string;
+  targetDisplayName: string | null;
+  requestedBy: GovernanceEvidenceActorSummary | null;
+  requestedAt: string;
+  approvedBy: GovernanceEvidenceActorSummary | null;
+  approvedAt: string | null;
+  rejectedBy: GovernanceEvidenceActorSummary | null;
+  rejectedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  policy: GovernanceEvidencePolicySummary;
+  incident: GovernanceEvidenceIncidentSummary | null;
+  safeResultSummary: string | null;
+  safeErrorSummary: string | null;
+  lifecycleCount: number;
+  recoveryAvailable: boolean;
+  evidenceSummary: string;
+}
+
+export interface GovernanceStatusBreakdown {
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  rejected: number;
+  cancelled: number;
+  pendingApproval: number;
+}
+
+export type GovernanceProviderBreakdown = Record<OperationProviderValue, number>;
+export type GovernanceRiskBreakdown = Record<OperationRiskLevel, number>;
+export type GovernanceApprovalBreakdown = Record<OperationApprovalStatus, number>;
+
+export interface GovernanceSummaryResponse {
+  total: number;
+  pendingApprovals: number;
+  rejected: number;
+  failed: number;
+  incidentsLinked: number;
+  statusBreakdown: GovernanceStatusBreakdown;
+  providerBreakdown: GovernanceProviderBreakdown;
+  riskBreakdown: GovernanceRiskBreakdown;
+  approvalBreakdown: GovernanceApprovalBreakdown;
+  meanApprovalTimeMs: number | null;
+  medianApprovalTimeMs: number | null;
+  meanExecutionDurationMs: number | null;
+  medianExecutionDurationMs: number | null;
+}
+
+export interface GovernanceEvidenceResponse {
+  summary: GovernanceSummaryResponse;
+  evidence: GovernanceEvidenceItem[];
+  latestHighRiskOperations: GovernanceEvidenceItem[];
+  latestRejectedOperations: GovernanceEvidenceItem[];
+  latestFailedOperations: GovernanceEvidenceItem[];
+  latestIncidentLinkedOperations: GovernanceEvidenceItem[];
+  generatedAt: string;
+}
+
+export interface GovernanceExportResponse {
+  format: 'json';
+  generatedAt: string;
+  limit: number;
+  evidence: GovernanceEvidenceItem[];
+  summary: GovernanceSummaryResponse;
 }

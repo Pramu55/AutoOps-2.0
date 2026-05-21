@@ -89,6 +89,15 @@ Use this checklist to evaluate AutoOps as a local-first, production-style DevOps
 - [ ] Recent operation activity is tenant-scoped.
 - [ ] No fake metrics or fake resources are displayed.
 
+## Governance Evidence Validation
+
+- [ ] Governance Center shows real tenant-scoped operation evidence.
+- [ ] Evidence links operation requester, policy, approval decision, provider, lifecycle, and incident when present.
+- [ ] Rejected operations are visible.
+- [ ] Failed operations are visible.
+- [ ] Safe JSON export works for authorized owner/admin users.
+- [ ] Export contains no raw input, raw result, raw error stack, tokens, kubeconfig, or secret-like metadata.
+
 ## Incident/Runbook Validation
 
 - [ ] Failed operation creates an incident.
@@ -138,6 +147,7 @@ Use this checklist to evaluate AutoOps as a local-first, production-style DevOps
 - [ ] Core runtime is healthy.
 - [ ] Governed operation flow works.
 - [ ] RBAC and approval separation work.
+- [ ] Governance evidence and safe export work.
 - [ ] Incident/runbook lifecycle works.
 - [ ] Release and secret checks pass.
 - [ ] Documentation is sufficient for an evaluator.

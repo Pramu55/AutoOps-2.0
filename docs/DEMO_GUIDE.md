@@ -60,8 +60,9 @@ Use the login page demo buttons to prefill credentials. The buttons do not bypas
 7. Login as Admin / Approver.
 8. Approve or reject.
 9. Show worker execution and operation detail lifecycle.
-10. Show incident and runbook for a failed operation.
-11. Show CI/release readiness docs.
+10. Show governance evidence.
+11. Show incident and runbook for a failed operation.
+12. Show CI/release readiness docs.
 
 ## Step 1: Login as Operator / Requester
 
@@ -158,10 +159,24 @@ Open `/dashboard/operations/:operationId`. Show:
 - approval panel
 - lifecycle timeline
 - provider details
+- governance evidence summary
 - incident link if failed
 - recovery panel if supported
 
-## Step 13: Show Incident and Runbook
+## Step 13: Show Governance Center
+
+Open `/dashboard/governance`. Show:
+
+- requester and approver evidence
+- policy name and approval reason
+- provider and target
+- operation status and timing
+- incident linkage
+- safe JSON export if logged in as Admin / Approver
+
+Explain that this is audit-style evidence for review and intentionally excludes raw metadata, tokens, stack traces, kubeconfig, and secret-like fields.
+
+## Step 14: Show Incident and Runbook
 
 Open `/dashboard/incidents` and then an incident detail page. Show:
 
@@ -174,7 +189,7 @@ Open `/dashboard/incidents` and then an incident detail page. Show:
 
 Explain that runbooks are safe templates, not AI-generated remediation.
 
-## Step 14: Show CI/Release Readiness
+## Step 15: Show CI/Release Readiness
 
 Show:
 
@@ -191,7 +206,7 @@ Show:
 4. Open Docker or Kubernetes and trigger one governed operation.
 5. Show approval-required state.
 6. Login as Admin and approve.
-7. Show operation detail and incident/runbook.
+7. Show operation detail, Governance Center, and incident/runbook.
 8. End with CI/release gates and safety docs.
 
 ## Suggested 10-Minute Demo Script

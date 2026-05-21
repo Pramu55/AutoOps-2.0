@@ -120,6 +120,14 @@ const COMMANDS: CommandItem[] = [
   },
   {
     group: 'Actions',
+    label: 'Governance Center',
+    description: 'Audit-style operation evidence and safe governance export',
+    href: '/dashboard/governance',
+    icon: ShieldCheck,
+    keywords: ['governance', 'audit', 'evidence', 'compliance', 'export'],
+  },
+  {
+    group: 'Actions',
     label: 'Pending Approvals',
     description: 'Jump to approval gates on Operations Hub',
     href: '/dashboard/operations#approvals',
@@ -171,6 +179,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Governance',
     items: [
+      { href: '/dashboard/governance', label: 'Governance Center', icon: ShieldCheck },
       { href: '/dashboard/operations#approvals', label: 'Pending Approvals', icon: ShieldCheck },
       { href: '/dashboard/operations#activity', label: 'Operation Activity', icon: Activity },
     ],
@@ -196,6 +205,7 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
   {
     label: 'Governance',
     items: [
+      { href: '/dashboard/governance', label: 'Governance Center', icon: ShieldCheck },
       { href: '/dashboard/operations#activity', label: 'Operation Audit', icon: Activity },
       { href: '/dashboard/projects', label: 'Project Access', icon: Layers },
       { href: '/dashboard/deployments', label: 'Deployment Records', icon: GitMerge },

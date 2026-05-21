@@ -2,6 +2,9 @@ import type { Request, Response } from 'express';
 import type {
   OperationActivityResponse,
   OperationDetailResponse,
+  GovernanceEvidenceFilters,
+  GovernanceEvidenceResponse,
+  GovernanceExportResponse,
   OpsActivityQuery,
   OpsObservabilityResponse,
   OpsSummary,
@@ -42,6 +45,32 @@ export class OpsController {
     const auth = this._requireAuth(req);
     const observability = await opsService.getObservability(auth.organizationId, auth.userId);
     res.json({ data: observability });
+  };
+
+  governance = async (
+    req: Request,
+    res: Response<{ data: GovernanceEvidenceResponse }>,
+  ): Promise<void> => {
+    const auth = this._requireAuth(req);
+    const governance = await opsService.getGovernanceEvidence(
+      auth.organizationId,
+      auth.userId,
+      req.query as unknown as GovernanceEvidenceFilters,
+    );
+    res.json({ data: governance });
+  };
+
+  governanceExport = async (
+    req: Request,
+    res: Response<{ data: GovernanceExportResponse }>,
+  ): Promise<void> => {
+    const auth = this._requireAuth(req);
+    const exportData = await opsService.exportGovernanceEvidence(
+      auth.organizationId,
+      auth.userId,
+      req.query as unknown as GovernanceEvidenceFilters,
+    );
+    res.json({ data: exportData });
   };
 
   private _requireAuth(req: Request): { organizationId: string; userId: string } {

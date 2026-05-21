@@ -142,6 +142,22 @@ Operations Hub combines platform health, provider health, queue health, worker r
 
 Failed operations create tenant-scoped incidents. Incidents have OPEN, ACKNOWLEDGED, and RESOLVED lifecycle. Runbooks are deterministic, safe, and provider-aware.
 
+## Governance Center and Evidence Flow
+
+Governance Center derives audit-style evidence from existing operation, approval, worker, and incident records. It is review-ready evidence, not a certification claim or immutable ledger.
+
+```mermaid
+flowchart LR
+  Operation["Operation Record"] --> Evidence["Safe Evidence Mapper"]
+  Approval["Requester / Approver Fields"] --> Evidence
+  Incident["Linked Incident"] --> Evidence
+  Evidence --> API["/api/v1/ops/governance"]
+  API --> UI["Governance Center"]
+  API --> Export["Safe JSON Export"]
+```
+
+Evidence includes requester, approver/rejecter, policy, risk, approval status, provider, target, lifecycle timing, incident linkage, and safe result/error summaries. It omits raw input, raw provider result objects, raw error objects, stack traces, environment values, tokens, kubeconfig, Authorization headers, and secret-like metadata.
+
 ## Security Boundaries
 
 - API owns governance.

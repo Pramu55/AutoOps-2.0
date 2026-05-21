@@ -489,6 +489,40 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
         </section>
       </div>
 
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Governance Evidence</h2>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+              {detail.governanceEvidence.evidenceSummary}
+            </p>
+          </div>
+          <Button asChild variant="outline" className="rounded-full border-cyan-300/25 bg-cyan-300/10 text-blue-700">
+            <Link href="/dashboard/governance">Open Governance Center</Link>
+          </Button>
+        </div>
+        <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            ['Requested by', actorLabel(detail.governanceEvidence.requestedBy)],
+            ['Requested at', formatDate(detail.governanceEvidence.requestedAt)],
+            ['Policy', detail.governanceEvidence.policy.policyName ?? MISSING_VALUE],
+            ['Approval reason', detail.governanceEvidence.policy.policyReason ?? MISSING_VALUE],
+            ['Approved by', actorLabel(detail.governanceEvidence.approvedBy)],
+            ['Rejected by', actorLabel(detail.governanceEvidence.rejectedBy)],
+            ['Worker status', detail.governanceEvidence.status],
+            ['Incident', detail.governanceEvidence.incident?.status ?? MISSING_VALUE],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
+              <p className="mt-1 break-words font-medium text-slate-700">{value}</p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 rounded-md border border-cyan-300/15 bg-cyan-300/10 p-4 text-sm text-blue-700">
+          Evidence excludes raw input, raw provider result objects, raw error objects, stack traces, tokens, kubeconfig, and environment values.
+        </div>
+      </section>
+
       {isPendingApproval ? (
         <section className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-5 shadow-sm">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">

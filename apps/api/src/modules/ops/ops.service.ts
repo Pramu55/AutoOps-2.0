@@ -14,6 +14,11 @@ import {
   ProviderConnectionStatus,
   RuntimeStatus,
   type Deployment,
+  type GovernanceEvidenceFilters,
+  type GovernanceEvidenceItem,
+  type GovernanceEvidenceResponse,
+  type GovernanceExportResponse,
+  type GovernanceSummaryResponse,
   type IncidentSeverity,
   type OperationActivityItem,
   type OperationActivityResponse,
@@ -34,7 +39,7 @@ import {
   type WorkerRuntimeItem,
   type WorkerRuntimeStatus,
 } from '@autoops/types';
-import { NotFoundError } from '@autoops/utils';
+import { NotFoundError, UnauthorizedError } from '@autoops/utils';
 import { redis } from '../../lib/redis.js';
 import { deploymentsQueue } from '../deployments/deployment.queue.js';
 import { operationsQueue } from '../operations/operation.queue.js';
@@ -538,6 +543,56 @@ export class OpsService {
     };
   }
 
+  async getGovernanceEvidence(
+    organizationId: string,
+    userId: string,
+    query: GovernanceEvidenceFilters,
+  ): Promise<GovernanceEvidenceResponse> {
+    const role = await operationAuthorizationService.getOrganizationRole({ organizationId, userId });
+    if (!role) throw new UnauthorizedError('You do not have permission to view governance evidence.');
+
+    const operations = await this._getGovernanceOperationRecords(organizationId, query);
+    const filteredEvidence = this._filterGovernanceEvidence(
+      operations.map((operation) => this._toGovernanceEvidenceItem(operation, role, userId)),
+      query,
+    );
+    const evidence = filteredEvidence.slice(0, query.limit);
+
+    return {
+      summary: this._governanceSummary(evidence),
+      evidence,
+      latestHighRiskOperations: evidence.filter((item) => item.policy.riskLevel === OperationRiskLevel.HIGH).slice(0, 5),
+      latestRejectedOperations: evidence.filter((item) => item.status === OperationStatus.REJECTED).slice(0, 5),
+      latestFailedOperations: evidence.filter((item) => item.status === OperationStatus.FAILED).slice(0, 5),
+      latestIncidentLinkedOperations: evidence.filter((item) => item.incident !== null).slice(0, 5),
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  async exportGovernanceEvidence(
+    organizationId: string,
+    userId: string,
+    query: GovernanceEvidenceFilters,
+  ): Promise<GovernanceExportResponse> {
+    const role = await operationAuthorizationService.getOrganizationRole({ organizationId, userId });
+    if (!role || (role !== 'OWNER' && role !== 'ADMIN')) {
+      throw new UnauthorizedError('Only owner or admin users can export governance evidence.');
+    }
+
+    const response = await this.getGovernanceEvidence(organizationId, userId, {
+      ...query,
+      limit: Math.min(query.limit ?? 500, 500),
+    });
+
+    return {
+      format: 'json',
+      generatedAt: response.generatedAt,
+      limit: response.evidence.length,
+      evidence: response.evidence,
+      summary: response.summary,
+    };
+  }
+
   private _withProviderStatus(
     kubernetesStatus: Awaited<ReturnType<typeof kubernetesService.getStatus>>,
     awsStatus: Awaited<ReturnType<typeof awsService.getStatus>>,
@@ -890,6 +945,119 @@ export class OpsService {
       : [];
   }
 
+  private async _getGovernanceOperationRecords(
+    organizationId: string,
+    query: GovernanceEvidenceFilters,
+  ): Promise<OperationActivityRecord[]> {
+    return prisma.operation.findMany({
+      where: {
+        organizationId,
+        ...(query.provider ? { provider: query.provider } : {}),
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.operationType ? { operationType: query.operationType } : {}),
+        ...(query.from || query.to
+          ? {
+              createdAt: {
+                ...(query.from ? { gte: new Date(query.from) } : {}),
+                ...(query.to ? { lte: new Date(query.to) } : {}),
+              },
+            }
+          : {}),
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      take: 500,
+      select: {
+        id: true,
+        provider: true,
+        operationType: true,
+        status: true,
+        input: true,
+        result: true,
+        error: true,
+        approvedAt: true,
+        rejectedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        requestedByUserId: true,
+        requestedBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        approvedBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        rejectedBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        incident: {
+          select: {
+            id: true,
+            title: true,
+            severity: true,
+            status: true,
+          },
+        },
+      },
+    });
+  }
+
+  private _filterGovernanceEvidence(
+    evidence: GovernanceEvidenceItem[],
+    query: GovernanceEvidenceFilters,
+  ): GovernanceEvidenceItem[] {
+    const search = query.search?.toLowerCase();
+    const actor = query.actor?.toLowerCase();
+    return evidence.filter((item) => {
+      if (query.risk && item.policy.riskLevel !== query.risk) return false;
+      if (query.approvalStatus && item.policy.approvalStatus !== query.approvalStatus) return false;
+      if (search) {
+        const haystack = [
+          item.operationId,
+          item.title,
+          item.targetDisplayName,
+          item.provider,
+          item.operationType,
+          item.status,
+          item.requestedBy?.name,
+          item.requestedBy?.email,
+          item.incident?.title,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
+      if (actor) {
+        const actorHaystack = [
+          item.requestedBy?.name,
+          item.requestedBy?.email,
+          item.approvedBy?.name,
+          item.approvedBy?.email,
+          item.rejectedBy?.name,
+          item.rejectedBy?.email,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!actorHaystack.includes(actor)) return false;
+      }
+      return true;
+    });
+  }
+
   private async _getRecentOperationRecords(organizationId: string): Promise<OperationActivityRecord[]> {
     return prisma.operation.findMany({
       where: {
@@ -1189,7 +1357,159 @@ export class OpsService {
           }
         : null,
       errorMessage: activity.errorMessage ?? this._stringField(error, 'reason'),
+      governanceEvidence: this._toGovernanceEvidenceItem(operation, role, userId),
     };
+  }
+
+  private _toGovernanceEvidenceItem(
+    operation: OperationActivityRecord,
+    role: OrgRole | null,
+    userId: string,
+  ): GovernanceEvidenceItem {
+    const activity = this._toActivityItem(operation, role, userId);
+    const input = this._toRecord(operation.input);
+    const result = this._toRecord(operation.result);
+    const error = this._toRecord(operation.error);
+    const providerDetails = this._providerDetails(operation.provider, operation.operationType, input, result);
+    const lifecycle = this._lifecycle(operation);
+    const retry = this._retryInfo(operation.operationType, input, result);
+    const safeResultSummary =
+      activity.result ??
+      providerDetails.safeSummary.find((item) => item.startsWith('Result:'))?.replace(/^Result:\s*/, '') ??
+      providerDetails.safeSummary[0] ??
+      null;
+    const safeErrorSummary = activity.errorMessage ?? this._stringField(error, 'reason');
+
+    return {
+      operationId: operation.id,
+      provider: operation.provider,
+      source: activity.source,
+      operationType: operation.operationType,
+      status: operation.status,
+      title: activity.title,
+      targetDisplayName: activity.targetLabel,
+      requestedBy: activity.actor,
+      requestedAt: operation.createdAt.toISOString(),
+      approvedBy: activity.governance.approvedBy ?? null,
+      approvedAt: activity.governance.approvedAt,
+      rejectedBy: activity.governance.rejectedBy ?? null,
+      rejectedAt: activity.governance.rejectedAt,
+      completedAt: activity.completedAt,
+      durationMs: activity.durationMs,
+      policy: {
+        policyName: activity.governance.policyName,
+        policyReason: activity.governance.approvalReason,
+        riskLevel: activity.governance.riskLevel,
+        confirmationTokenRequired: activity.governance.confirmationRequired,
+        confirmationTokenLabel: activity.governance.confirmationTokenLabel,
+        approvalRequired: activity.governance.approvalRequired,
+        approvalStatus: activity.governance.approvalStatus,
+      },
+      incident: operation.incident
+        ? {
+            id: operation.incident.id,
+            title: operation.incident.title,
+            severity: operation.incident.severity as IncidentSeverity,
+            status:
+              operation.incident.status === 'TRIGGERED'
+                ? IncidentStatus.OPEN
+                : operation.incident.status === 'MITIGATED'
+                  ? IncidentStatus.ACKNOWLEDGED
+                  : (operation.incident.status as NonNullable<GovernanceEvidenceItem['incident']>['status']),
+          }
+        : null,
+      safeResultSummary,
+      safeErrorSummary,
+      lifecycleCount: lifecycle.length,
+      recoveryAvailable: retry.supported,
+      evidenceSummary: this._evidenceSummary(activity, operation),
+    };
+  }
+
+  private _evidenceSummary(
+    activity: OperationActivityItem,
+    operation: OperationActivityRecord,
+  ): string {
+    const requester = activity.actor?.name ?? activity.actor?.email ?? 'an authenticated user';
+    const target = activity.targetLabel ? ` for ${activity.targetLabel}` : '';
+    const policy = activity.governance.policyName ?? 'AutoOps policy';
+    const approval =
+      activity.governance.approvalStatus === OperationApprovalStatus.APPROVED
+        ? `approved by ${activity.governance.approvedBy?.name ?? activity.governance.approvedBy?.email ?? 'an approver'}`
+        : activity.governance.approvalStatus === OperationApprovalStatus.REJECTED
+          ? `rejected by ${activity.governance.rejectedBy?.name ?? activity.governance.rejectedBy?.email ?? 'an approver'}`
+          : activity.governance.approvalStatus === OperationApprovalStatus.PENDING
+            ? 'waiting for approval'
+            : 'did not require approval';
+
+    return `Operation ${this._shortId(operation.id)} was requested by ${requester}${target}, evaluated by ${policy}, ${approval}, and is currently ${operation.status}.`;
+  }
+
+  private _governanceSummary(evidence: GovernanceEvidenceItem[]): GovernanceSummaryResponse {
+    const approvalDurations = evidence
+      .filter((item) => item.approvedAt || item.rejectedAt)
+      .map((item) => {
+        const decisionAt = item.approvedAt ?? item.rejectedAt;
+        return decisionAt ? Math.max(0, new Date(decisionAt).getTime() - new Date(item.requestedAt).getTime()) : null;
+      })
+      .filter((item): item is number => item !== null);
+    const executionDurations = evidence
+      .map((item) => item.durationMs)
+      .filter((item): item is number => item !== null);
+
+    return {
+      total: evidence.length,
+      pendingApprovals: evidence.filter((item) => item.policy.approvalStatus === OperationApprovalStatus.PENDING).length,
+      rejected: evidence.filter((item) => item.status === OperationStatus.REJECTED).length,
+      failed: evidence.filter((item) => item.status === OperationStatus.FAILED).length,
+      incidentsLinked: evidence.filter((item) => item.incident !== null).length,
+      statusBreakdown: {
+        queued: evidence.filter((item) => item.status === OperationStatus.QUEUED).length,
+        running: evidence.filter((item) => item.status === OperationStatus.RUNNING).length,
+        succeeded: evidence.filter((item) => item.status === OperationStatus.SUCCEEDED).length,
+        failed: evidence.filter((item) => item.status === OperationStatus.FAILED).length,
+        rejected: evidence.filter((item) => item.status === OperationStatus.REJECTED).length,
+        cancelled: evidence.filter((item) => item.status === OperationStatus.CANCELLED).length,
+        pendingApproval: evidence.filter((item) => item.status === OperationStatus.PENDING_APPROVAL).length,
+      },
+      providerBreakdown: {
+        [OperationProvider.AWS]: evidence.filter((item) => item.provider === OperationProvider.AWS).length,
+        [OperationProvider.DOCKER]: evidence.filter((item) => item.provider === OperationProvider.DOCKER).length,
+        [OperationProvider.GITHUB]: evidence.filter((item) => item.provider === OperationProvider.GITHUB).length,
+        [OperationProvider.JENKINS]: evidence.filter((item) => item.provider === OperationProvider.JENKINS).length,
+        [OperationProvider.KUBERNETES]: evidence.filter((item) => item.provider === OperationProvider.KUBERNETES).length,
+      },
+      riskBreakdown: {
+        [OperationRiskLevel.LOW]: evidence.filter((item) => item.policy.riskLevel === OperationRiskLevel.LOW).length,
+        [OperationRiskLevel.MEDIUM]: evidence.filter((item) => item.policy.riskLevel === OperationRiskLevel.MEDIUM).length,
+        [OperationRiskLevel.HIGH]: evidence.filter((item) => item.policy.riskLevel === OperationRiskLevel.HIGH).length,
+      },
+      approvalBreakdown: {
+        [OperationApprovalStatus.NOT_REQUIRED]: evidence.filter((item) => item.policy.approvalStatus === OperationApprovalStatus.NOT_REQUIRED).length,
+        [OperationApprovalStatus.PENDING]: evidence.filter((item) => item.policy.approvalStatus === OperationApprovalStatus.PENDING).length,
+        [OperationApprovalStatus.APPROVED]: evidence.filter((item) => item.policy.approvalStatus === OperationApprovalStatus.APPROVED).length,
+        [OperationApprovalStatus.REJECTED]: evidence.filter((item) => item.policy.approvalStatus === OperationApprovalStatus.REJECTED).length,
+      },
+      meanApprovalTimeMs: this._mean(approvalDurations),
+      medianApprovalTimeMs: this._median(approvalDurations),
+      meanExecutionDurationMs: this._mean(executionDurations),
+      medianExecutionDurationMs: this._median(executionDurations),
+    };
+  }
+
+  private _mean(values: number[]): number | null {
+    if (values.length === 0) return null;
+    return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+  }
+
+  private _median(values: number[]): number | null {
+    if (values.length === 0) return null;
+    const sorted = [...values].sort((first, second) => first - second);
+    const middle = Math.floor(sorted.length / 2);
+    if (sorted.length % 2 === 1) return sorted[middle] ?? null;
+    const left = sorted[middle - 1] ?? 0;
+    const right = sorted[middle] ?? 0;
+    return Math.round((left + right) / 2);
   }
 
   private _permissionHints(

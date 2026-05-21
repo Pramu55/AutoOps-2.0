@@ -559,6 +559,9 @@ export function OperationsClient() {
             <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700">
               Updated {formatTime(observability?.generatedAt ?? null)}
             </span>
+            <Button asChild variant="outline" className="rounded-full border-cyan-300/25 bg-cyan-300/10 text-blue-700">
+              <Link href="/dashboard/governance">Governance Center</Link>
+            </Button>
             <Button
               type="button"
               onClick={() => void loadSummary()}

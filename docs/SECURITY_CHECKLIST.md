@@ -51,6 +51,9 @@ Use this checklist before a company pilot, demo, or production-like deployment.
 - Verify approval-required operations are not enqueued until approved.
 - Verify rejected operations do not execute.
 - Verify operation recovery remains confirmation, policy, and RBAC governed.
+- Verify Governance Center evidence is tenant-scoped.
+- Verify governance exports include safe evidence fields only.
+- Verify governance exports do not include raw operation metadata, stack traces, tokens, kubeconfig, Authorization headers, or secret-like values.
 
 ## Incidents and Runbooks
 

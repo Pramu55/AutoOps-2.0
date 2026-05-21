@@ -75,6 +75,15 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Incident views show safe error summaries only and never expose raw operation input, result, error metadata, stack traces, credentials, or provider secrets.
 - Recovery remains controlled by existing confirmation, policy, RBAC, and worker execution. AutoOps does not perform automatic remediation or unsafe shell/exec/apply/delete actions.
 
+## Governance Center and Audit-Style Evidence
+
+- `/api/v1/ops/governance` derives tenant-scoped governance evidence from real operation, approval, worker, and incident records.
+- `/dashboard/governance` gives admins and reviewers a table-first evidence view across Jenkins, Docker, Kubernetes, and other operation providers.
+- Evidence includes requester, approver/rejecter, policy name, policy reason, risk, approval status, provider, target, lifecycle timing, incident linkage, and safe result/error summaries.
+- Owner/admin users can export safe JSON evidence for review; exports are intentionally limited and exclude raw metadata.
+- Governance evidence is compliance-supporting review material, not an immutable audit ledger or certification claim.
+- Raw operation input, raw provider results, raw error objects, stack traces, environment values, tokens, kubeconfig, Authorization headers, and secret-like metadata are never returned by governance evidence endpoints.
+
 ## Local Demo Accounts for Approval Testing
 
 - Operator / Requester: `pramod.local@autoops.dev`

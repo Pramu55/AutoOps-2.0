@@ -36,9 +36,17 @@
 
 - Purpose: Operation detail and recovery.
 - Who uses it: Operators, admins, reviewers.
-- Data shown: Status, governance, lifecycle, approval panel, provider details, incident link, safe error/result summaries.
+- Data shown: Status, governance, lifecycle, approval panel, provider details, incident link, governance evidence, safe error/result summaries.
 - Key actions: Approve/reject pending operation, trigger supported recovery.
 - Safety notes: Raw operation metadata is not rendered.
+
+## `/dashboard/governance`
+
+- Purpose: Governance Center for audit-style operation evidence.
+- Who uses it: Admins, approvers, operators, and company reviewers.
+- Data shown: Tenant-scoped evidence table, requester, approver/rejecter, policy, risk, approval status, provider, target, lifecycle timing, incident linkage, and safe summaries.
+- Key actions: Filter evidence, open operation detail, open linked incidents, export safe JSON evidence when authorized.
+- Safety notes: Exports and page data intentionally exclude raw input, raw results, raw errors, stack traces, kubeconfig, tokens, environment values, and secret-like metadata.
 
 ## `/dashboard/incidents`
 

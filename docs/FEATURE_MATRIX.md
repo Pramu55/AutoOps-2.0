@@ -21,6 +21,8 @@
 | Worker Runtime | BullMQ execution | Complete | Yes | Worker-only execution | API queues accepted work |
 | Worker Runtime | Heartbeat registry | Complete | Yes | Persisted heartbeat rows | Fresh/stale/offline derived |
 | Observability | Operations Hub | Complete | Yes | Safe summaries | Platform/provider/queue/worker/incidents |
+| Governance | Governance Center | Complete | Yes | Tenant-scoped safe evidence | Requester, approver, policy, provider, lifecycle, incident linkage |
+| Governance | Safe evidence export | Complete | Yes | OWNER/ADMIN export + safe DTO | JSON only; no raw metadata or secrets |
 | Incidents | Failed operation incident | Complete | Yes | Safe summary + lifecycle | One incident per failed operation |
 | Runbooks | Deterministic runbooks | Complete | Yes | Observe/verify/recover/escalate guidance | No AI runbooks yet |
 | Production Readiness | `.env.example` | Complete | N/A | Safe placeholders | Local-only notes |

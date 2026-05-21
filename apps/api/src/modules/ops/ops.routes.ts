@@ -1,5 +1,5 @@
 import { Router, type RequestHandler } from 'express';
-import { operationParamsSchema, opsActivityQuerySchema } from '@autoops/types';
+import { governanceEvidenceFiltersSchema, operationParamsSchema, opsActivityQuerySchema } from '@autoops/types';
 import { requireAuth } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { opsController } from './ops.controller.js';
@@ -16,6 +16,20 @@ opsRouter.get(
   '/observability',
   requireAuth,
   asyncHandler(opsController.observability as unknown as RequestHandler),
+);
+
+opsRouter.get(
+  '/governance',
+  requireAuth,
+  validate({ query: governanceEvidenceFiltersSchema }),
+  asyncHandler(opsController.governance as unknown as RequestHandler),
+);
+
+opsRouter.get(
+  '/governance/export',
+  requireAuth,
+  validate({ query: governanceEvidenceFiltersSchema }),
+  asyncHandler(opsController.governanceExport as unknown as RequestHandler),
 );
 
 opsRouter.get(
