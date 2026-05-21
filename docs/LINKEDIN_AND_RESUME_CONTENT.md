@@ -4,7 +4,7 @@
 
 I built AutoOps, a production-style DevOps Control Plane for governed Jenkins, Docker, and Kubernetes operations.
 
-The goal was to go beyond a basic dashboard. AutoOps brings together real connector data, RBAC, requester/approver separation, policy-based approvals, confirmation tokens, worker-backed execution, operation lifecycle tracking, observability, incidents, deterministic runbooks, production readiness docs, secret scanning, and CI release gates.
+The goal was to go beyond a basic dashboard. AutoOps brings together real connector data, RBAC, requester/approver separation, policy-based approvals, confirmation tokens, worker-backed execution, operation lifecycle tracking, observability, incidents, deterministic runbooks, production readiness docs, secret scanning, CI release gates, GitHub Actions visibility, Prometheus/Grafana readiness, DevOps tooling readiness, and cloud-provider readiness.
 
 The platform uses a TypeScript monorepo with Next.js, Express, PostgreSQL, Prisma, Redis, BullMQ, Docker Compose, and GitHub Actions. Jenkins, Docker, and Kubernetes integrations are real but intentionally governed. Unsafe operations like Docker exec/delete and Kubernetes exec/apply/delete/Secret access are not exposed.
 

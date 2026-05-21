@@ -18,7 +18,7 @@ AutoOps unifies runtime visibility, governed operations, approval workflow, work
 
 ## My Role
 
-Designed and implemented the monorepo architecture, backend APIs, worker runtime, operation governance, frontend console, incidents/runbooks, production readiness, and CI release gates.
+Designed and implemented the monorepo architecture, backend APIs, worker runtime, operation governance, frontend console, incidents/runbooks, production readiness, CI release gates, and final cloud/devops ecosystem readiness.
 
 ## Tech Stack
 

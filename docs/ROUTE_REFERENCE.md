@@ -96,6 +96,38 @@
 - Key actions: Terraform/OpenTofu validate, plan, approval-gated apply; Ansible syntax-check, check mode, approval-gated run.
 - Safety notes: No arbitrary shell, no arbitrary paths, no cloud credentials, no SSH keys, no vault secrets, and no Terraform state exposure.
 
+## `/dashboard/integrations/github-actions`
+
+- Purpose: GitHub Actions workflow and run readiness.
+- Who uses it: Operators, admins, and company evaluators.
+- Data shown: Configured repository, allowlisted workflows, workflows, and latest runs when a read-only token is configured.
+- Key actions: Refresh and open GitHub run links.
+- Safety notes: Read-only visibility only; no arbitrary workflow dispatch or token exposure.
+
+## `/dashboard/integrations/observability`
+
+- Purpose: Prometheus and Grafana integration readiness.
+- Who uses it: Operators and SRE/platform reviewers.
+- Data shown: Prometheus readiness, target/query counts, Grafana health, and public link.
+- Key actions: Refresh and open Grafana.
+- Safety notes: No fake metrics and no Grafana token exposure.
+
+## `/dashboard/integrations/devops-tools`
+
+- Purpose: DevOps CLI readiness.
+- Who uses it: Platform operators and evaluators.
+- Data shown: Terraform/OpenTofu, Ansible, kubectl, Helm, Kustomize, Docker CLI, Node, and pnpm detection.
+- Key actions: Refresh readiness.
+- Safety notes: Version detection only; no cluster apply/delete/upgrade.
+
+## `/dashboard/integrations/cloud`
+
+- Purpose: Cloud Provider Readiness Center.
+- Who uses it: Platform owners and company evaluators.
+- Data shown: AWS/Azure/GCP readiness, safe read checks, and write model.
+- Key actions: Refresh readiness.
+- Safety notes: Direct cloud mutations are intentionally not implemented.
+
 ## `/dashboard/projects`
 
 - Purpose: Project inventory.

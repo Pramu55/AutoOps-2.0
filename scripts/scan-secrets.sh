@@ -7,6 +7,7 @@ trap 'rm -f "$tmp_file"' EXIT
 is_allowed_value() {
   local value="$1"
   [[ -z "${value// }" ]] && return 0
+  [[ "$value" == \$* ]] && return 0
   case "${value,,}" in
     *change-me*|*replace-with*|*replace-me*|*placeholder*|*local-only*|*autoops_dev*|*autoops_ci*|*"<token>"*|*not-for-production*|*strongpass123*)
       return 0
@@ -32,8 +33,12 @@ scan_line() {
     category="AWS secret key"; value="${BASH_REMATCH[1]}"
   elif [[ "$line" =~ AWS_ACCESS_KEY_ID[[:space:]]*=[[:space:]]*([^=].*)$ ]]; then
     category="AWS access key"; value="${BASH_REMATCH[1]}"
-  elif [[ "$line" =~ GITHUB_TOKEN[[:space:]]*=[[:space:]]*([^=].*)$ ]]; then
-    category="GitHub token"; value="${BASH_REMATCH[1]}"
+  elif [[ "$line" =~ AZURE_CLIENT_SECRET[[:space:]]*=[[:space:]]*([^=].*)$ ]]; then
+    category="Azure client secret"; value="${BASH_REMATCH[1]}"
+  elif [[ "$line" =~ GOOGLE_APPLICATION_CREDENTIALS[[:space:]]*=[[:space:]]*([^=].*)$ ]]; then
+    category="Google credentials"; value="${BASH_REMATCH[1]}"
+  elif [[ "$line" =~ (GITHUB_TOKEN|GITHUB_ACTIONS_TOKEN)[[:space:]]*=[[:space:]]*([^=].*)$ ]]; then
+    category="GitHub token"; value="${BASH_REMATCH[2]}"
   elif [[ "$line" =~ Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9_.-]{20,} ]]; then
     category="Bearer token"; value="$line"
   elif [[ "$line" =~ (client-key-data|client-certificate-data|certificate-authority-data):[[:space:]]*[A-Za-z0-9+/=]{40,} ]]; then

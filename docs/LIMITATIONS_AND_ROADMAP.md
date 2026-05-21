@@ -25,6 +25,9 @@
 - Centralized log shipping.
 - More automated end-to-end tests.
 - Managed handling for Terraform remote state, cloud credentials, and Ansible vaults.
+- Controlled GitHub Actions rerun/dispatch is future scoped behind allowlists, confirmation, and governance.
+- Azure/GCP live API checks are future scoped; Day 20 provides honest readiness placeholders.
+- Helm/Kustomize validation can be expanded with allowlisted sample charts/overlays, but cluster mutation remains out of scope.
 
 ## Cloud Deployment Future Work
 

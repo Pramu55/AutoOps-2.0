@@ -16,6 +16,9 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 - [Infrastructure Automation Center](./INFRASTRUCTURE_AUTOMATION_CENTER.md)
 - [Route Reference](./ROUTE_REFERENCE.md)
 - [Limitations and Roadmap](./LIMITATIONS_AND_ROADMAP.md)
+- [Final Release Checklist](./FINAL_RELEASE_CHECKLIST.md)
+- [Company Handoff Package](./COMPANY_HANDOFF_PACKAGE.md)
+- [Final Evaluator Report](./FINAL_EVALUATOR_REPORT.md)
 
 ## Demo and Presentation
 
@@ -40,6 +43,7 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 - [Production Deployment Readiness](./PRODUCTION_DEPLOYMENT_READINESS.md)
 - [Security Checklist](./SECURITY_CHECKLIST.md)
 - [CI and Release Gates](./CI_AND_RELEASE_GATES.md)
+- [GitHub Release and Tagging](./GITHUB_RELEASE_AND_TAGGING.md)
 
 ## Security
 
@@ -51,6 +55,7 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 
 - [CI and Release Gates](./CI_AND_RELEASE_GATES.md)
 - [Production Deployment Readiness](./PRODUCTION_DEPLOYMENT_READINESS.md#automated-ci-and-release-gates)
+- [Final Route and API Verification](./FINAL_ROUTE_AND_API_VERIFICATION.md)
 
 ## Controlled Operations
 
@@ -67,11 +72,13 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 
 - [Screenshot and Media Guide](./SCREENSHOT_AND_MEDIA_GUIDE.md)
 - [Demo Data Safety](./DEMO_DATA_SAFETY.md)
+- [Final Screenshot Checklist](./FINAL_SCREENSHOT_CHECKLIST.md)
 
 ## LinkedIn and Resume Content
 
 - [LinkedIn and Resume Content](./LINKEDIN_AND_RESUME_CONTENT.md)
 - [Portfolio Case Study](./PORTFOLIO_CASE_STUDY.md)
+- [Final Demo Script](./FINAL_DEMO_SCRIPT.md)
 
 ## Roadmap
 

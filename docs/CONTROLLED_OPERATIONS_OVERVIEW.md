@@ -111,6 +111,7 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 
 - `.env.example` is a safe template only; `.env` must never be committed and production secrets must be rotated.
 - `docker-compose.prod.yml` is production-like and intentionally omits Docker socket and kubeconfig mounts by default.
+- Day 20 GitHub Actions, Prometheus/Grafana, DevOps Tools, and Cloud Readiness modules are read-only ecosystem checks and do not create new mutation paths.
 - Production startup rejects placeholder JWT secrets and requires access and refresh secrets to be different.
 - Backup and restore are explicit script-driven flows; restore requires typing `RESTORE` and never deletes Docker volumes.
 - `scripts/check-release.ps1` runs build, typecheck, migration status when configured, and whitespace checks without destructive commands.

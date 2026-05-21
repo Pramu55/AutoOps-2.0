@@ -31,7 +31,9 @@ $checks = @(
   @{ Name = "Database URL"; Pattern = "(?i)\bDATABASE_URL\s*=(?!=)\s*(postgres(?:ql)?://[^`"'\s]+)" },
   @{ Name = "AWS access key"; Pattern = "(?i)\bAWS_ACCESS_KEY_ID\s*=(?!=)\s*(.+)$" },
   @{ Name = "AWS secret key"; Pattern = "(?i)\bAWS_SECRET_ACCESS_KEY\s*=(?!=)\s*(.+)$" },
-  @{ Name = "GitHub token"; Pattern = "(?i)\bGITHUB_TOKEN\s*=(?!=)\s*(.+)$" },
+  @{ Name = "Azure client secret"; Pattern = "(?i)\bAZURE_CLIENT_SECRET\s*=(?!=)\s*(.+)$" },
+  @{ Name = "Google credentials"; Pattern = "(?i)\bGOOGLE_APPLICATION_CREDENTIALS\s*=(?!=)\s*(.+)$" },
+  @{ Name = "GitHub token"; Pattern = "(?i)\b(GITHUB_TOKEN|GITHUB_ACTIONS_TOKEN)\s*=(?!=)\s*(.+)$" },
   @{ Name = "Private key"; Pattern = "-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----" },
   @{ Name = "Bearer token"; Pattern = "(?i)Authorization:\s*Bearer\s+[A-Za-z0-9_\-\.]{20,}" },
   @{ Name = "Kubeconfig certificate data"; Pattern = "(?i)\b(client-key-data|client-certificate-data|certificate-authority-data):\s*[A-Za-z0-9+/=]{40,}" },
@@ -51,6 +53,7 @@ function Is-ExcludedFile {
 function Is-AllowedValue {
   param([string]$Value)
   if ([string]::IsNullOrWhiteSpace($Value)) { return $true }
+  if ($Value.Trim().StartsWith('$')) { return $true }
   foreach ($placeholder in $allowedPlaceholders) {
     if ($Value.IndexOf($placeholder, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
       return $true

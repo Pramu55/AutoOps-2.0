@@ -64,6 +64,8 @@ Use the login page demo buttons to prefill credentials. The buttons do not bypas
 10. Show governance evidence.
 11. Show incident and runbook for a failed operation.
 12. Show CI/release readiness docs.
+13. Open GitHub Actions, Observability Integrations, DevOps Tools, and Cloud Readiness to show the final ecosystem package.
+14. Run or cite `.\scripts\final-smoke-check.ps1` as the final non-destructive validation.
 
 ## Step 1: Login as Operator / Requester
 

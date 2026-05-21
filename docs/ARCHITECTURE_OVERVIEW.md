@@ -142,6 +142,8 @@ Kubernetes reads cluster status, Metrics API status, namespaces, workloads, pods
 
 Infrastructure automation reads allowlisted Terraform/OpenTofu workspaces and Ansible playbooks from configured roots. It can validate, plan, syntax-check, and check mode without approval. Terraform/OpenTofu apply and Ansible run require approval before the worker executes fixed command definitions. No arbitrary command string, shell UI, SSH key, vault secret, cloud credential, Terraform state, or arbitrary path execution is exposed.
 
+Day 20 ecosystem readiness adds read-only GitHub Actions, Prometheus/Grafana, DevOps tooling, and cloud-provider readiness checks. These modules are API-owned, authenticated, and intentionally do not create direct mutation paths.
+
 ## Worker Heartbeat Registry
 
 Workers persist service, process id, queues, status, started time, and last seen time. Operations Hub derives fresh/stale/offline worker posture from heartbeat age.

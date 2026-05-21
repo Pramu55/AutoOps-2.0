@@ -67,6 +67,10 @@ Use this checklist before a company pilot, demo, or production-like deployment.
 - Verify governance exports include safe evidence fields only.
 - Verify governance exports do not include raw operation metadata, stack traces, tokens, kubeconfig, Authorization headers, or secret-like values.
 - Verify infrastructure governance evidence does not include Terraform state, Ansible vault data, SSH keys, cloud credentials, or raw full logs.
+- GitHub Actions integration must use read-only tokens and must not expose `GITHUB_ACTIONS_TOKEN`.
+- Cloud Provider Readiness must not perform direct AWS/Azure/GCP resource mutation.
+- Prometheus/Grafana checks must not expose API tokens or dashboard secrets.
+- Helm/Kustomize readiness must not run `apply`, `delete`, `upgrade`, or cluster-mutating commands.
 
 ## Incidents and Runbooks
 

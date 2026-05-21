@@ -24,6 +24,10 @@
 | Infrastructure | Ansible playbook discovery | Complete | Yes | Allowlisted playbooks and inventory only | Local smoke playbook included |
 | Infrastructure | Ansible syntax-check and check mode | Complete | Yes when tool installed | SYNTAX/CHECK confirmation + worker execution | No SSH keys or vault secrets |
 | Infrastructure | Ansible run | Complete | Yes when tool installed | RUN confirmation + approval required | No arbitrary playbook path |
+| GitHub Actions | Workflow/run readiness | Complete | Yes when token configured | Read-only env-configured repo | No arbitrary dispatch |
+| Observability | Prometheus/Grafana readiness | Complete | Yes | Read-only health/query checks | No fake metrics |
+| DevOps Tools | Helm/Kustomize/tool readiness | Complete | Yes | Version detection only | No apply/mutation |
+| Cloud Readiness | AWS/Azure/GCP readiness center | Complete | Yes when configured | Read-only detection; no direct writes | Cloud writes future via Terraform approval |
 | Worker Runtime | BullMQ execution | Complete | Yes | Worker-only execution | API queues accepted work |
 | Worker Runtime | Heartbeat registry | Complete | Yes | Persisted heartbeat rows | Fresh/stale/offline derived |
 | Observability | Operations Hub | Complete | Yes | Safe summaries | Platform/provider/queue/worker/incidents |

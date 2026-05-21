@@ -2,7 +2,7 @@
 
 [![AutoOps CI](https://github.com/Pramu55/AutoOps-2.0/actions/workflows/ci.yml/badge.svg)](https://github.com/Pramu55/AutoOps-2.0/actions/workflows/ci.yml)
 
-AutoOps is a production-style DevOps Control Plane for managing, observing, and governing operations across Jenkins, Docker, Kubernetes, Terraform/OpenTofu, and Ansible. It combines real integrations, RBAC, approval workflows, worker-backed execution, observability, incidents, runbooks, and CI/release gates into one platform.
+AutoOps is a production-style DevOps Control Plane for managing, observing, and governing operations across Jenkins, GitHub Actions, Docker, Kubernetes, Terraform/OpenTofu, Ansible, Prometheus/Grafana, DevOps tooling, and cloud-readiness workflows. It combines real integrations, RBAC, approval workflows, worker-backed execution, observability, incidents, runbooks, and CI/release gates into one platform.
 
 ## What AutoOps Is
 
@@ -22,6 +22,10 @@ Real DevOps work is not only clicking buttons. Teams need safe execution, clear 
 - Docker status, containers, images, networks, volumes, logs, and governed start/stop/restart.
 - Kubernetes status, Metrics API status, namespaces, workloads, pods, services, scale, and rollout restart.
 - Infrastructure Automation Center for allowlisted Terraform/OpenTofu validate/plan/apply and Ansible syntax/check/run workflows.
+- GitHub Actions workflow/run visibility for a configured repository.
+- Prometheus/Grafana integration readiness checks.
+- DevOps tools readiness for Helm, Kustomize, kubectl, Docker CLI, Terraform/OpenTofu, Ansible, Node, and pnpm.
+- Cloud Provider Readiness Center for AWS/Azure/GCP without unsafe direct cloud writes.
 - Confirmation tokens for all controlled operations.
 - Policy engine for approval-required operations.
 - RBAC with requester/approver separation.
@@ -70,6 +74,10 @@ See [Architecture Overview](./docs/ARCHITECTURE_OVERVIEW.md).
 | Docker | Inventory, logs, governed start/stop/restart |
 | Kubernetes | Cluster inventory, Metrics API, governed scale and rollout restart |
 | Infrastructure | Allowlisted Terraform/OpenTofu and Ansible automation |
+| GitHub Actions | Read-only workflow and run readiness |
+| Observability Integrations | Prometheus/Grafana readiness |
+| DevOps Tools | Helm, Kustomize, kubectl, Docker CLI, IaC, and runtime tooling |
+| Cloud Readiness | AWS/Azure/GCP readiness without direct cloud writes |
 | Projects | Project and environment ownership |
 | Deployments | Deployment records and safe simulation workflow |
 
@@ -144,6 +152,10 @@ Open:
 - `/dashboard/integrations/docker`
 - `/dashboard/integrations/kubernetes`
 - `/dashboard/integrations/infrastructure`
+- `/dashboard/integrations/github-actions`
+- `/dashboard/integrations/observability`
+- `/dashboard/integrations/devops-tools`
+- `/dashboard/integrations/cloud`
 - `/dashboard/projects`
 - `/dashboard/deployments`
 
@@ -166,6 +178,13 @@ Start with [Documentation Home](./docs/README.md).
 - [CI and Release Gates](./docs/CI_AND_RELEASE_GATES.md)
 - [Controlled Operations Overview](./docs/CONTROLLED_OPERATIONS_OVERVIEW.md)
 - [Infrastructure Automation Center](./docs/INFRASTRUCTURE_AUTOMATION_CENTER.md)
+- [Final Release Checklist](./docs/FINAL_RELEASE_CHECKLIST.md)
+- [Company Handoff Package](./docs/COMPANY_HANDOFF_PACKAGE.md)
+- [Final Evaluator Report](./docs/FINAL_EVALUATOR_REPORT.md)
+- [GitHub Release and Tagging](./docs/GITHUB_RELEASE_AND_TAGGING.md)
+- [Final Screenshot Checklist](./docs/FINAL_SCREENSHOT_CHECKLIST.md)
+- [Final Demo Script](./docs/FINAL_DEMO_SCRIPT.md)
+- [Final Route and API Verification](./docs/FINAL_ROUTE_AND_API_VERIFICATION.md)
 - [Limitations and Roadmap](./docs/LIMITATIONS_AND_ROADMAP.md)
 - [Demo Data Safety](./docs/DEMO_DATA_SAFETY.md)
 
@@ -194,6 +213,7 @@ Local release checks:
 ```powershell
 .\scripts\check-release.ps1
 .\scripts\scan-secrets.ps1
+.\scripts\final-smoke-check.ps1
 ```
 
 See [CI and Release Gates](./docs/CI_AND_RELEASE_GATES.md).

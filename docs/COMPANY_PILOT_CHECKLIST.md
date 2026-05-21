@@ -90,6 +90,11 @@ Use this checklist to evaluate AutoOps as a local-first, production-style DevOps
 - [ ] No arbitrary shell command input is exposed.
 - [ ] No arbitrary path input is exposed.
 - [ ] No Terraform state, cloud credentials, SSH keys, or Ansible vault data are exposed.
+- [ ] GitHub Actions readiness page reports real status or `NOT_CONFIGURED`.
+- [ ] Prometheus/Grafana readiness page reports real status without fake metrics.
+- [ ] DevOps Tools page reports Helm/Kustomize/kubectl/IaC tooling honestly.
+- [ ] Cloud Readiness page shows AWS/Azure/GCP readiness without direct cloud writes.
+- [ ] Final smoke check passes.
 
 ## Worker/Runtime Validation
 
