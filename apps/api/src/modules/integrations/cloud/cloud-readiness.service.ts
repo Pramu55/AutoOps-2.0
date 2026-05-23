@@ -1,6 +1,6 @@
 import type { CloudProviderReadiness, CloudReadinessStatusResponse } from '@autoops/types';
 import { CloudReadinessStatus, ProviderConnectionStatus } from '@autoops/types';
-import { awsService } from '../aws/aws.service.js';
+import { awsService, mapAwsToProviderStatus } from '../aws/aws.service.js';
 
 export class CloudReadinessService {
   async getStatus(): Promise<CloudReadinessStatusResponse> {
@@ -17,16 +17,16 @@ export class CloudReadinessService {
       return this._provider('aws', 'AWS', CloudReadinessStatus.NOT_CONFIGURED, false, 'AWS readiness is disabled. Enable only with read-only credentials.', null, process.env.AWS_REGION?.trim() || null);
     }
 
-    const status = await awsService.getStatus();
-    const mapped = this._mapProviderStatus(status.status);
+    const identity = await awsService.getIdentity();
+    const mapped = this._mapProviderStatus(mapAwsToProviderStatus(identity.status));
     return this._provider(
       'aws',
       'AWS',
       mapped,
-      status.configured,
-      status.message,
-      status.accountId ? `Account ${status.accountId}` : null,
-      status.region ?? null,
+      identity.configured,
+      'AWS provider identity fetched.',
+      identity.accountId ? `Account ${identity.accountId}` : null,
+      identity.region ?? null,
     );
   }
 

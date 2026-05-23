@@ -2,7 +2,7 @@ import {
   CloudWatchClient,
   DescribeAlarmsCommand,
 } from '@aws-sdk/client-cloudwatch';
-import { EC2Client, DescribeInstancesCommand } from '@aws-sdk/client-ec2';
+import { EC2Client, DescribeInstancesCommand, DescribeVpcsCommand, DescribeSubnetsCommand, DescribeSecurityGroupsCommand } from '@aws-sdk/client-ec2';
 import {
   ECRClient,
   DescribeRepositoriesCommand,
@@ -13,9 +13,15 @@ import {
   DescribeServicesCommand,
   ListClustersCommand,
   ListServicesCommand,
+  ListTaskDefinitionsCommand,
 } from '@aws-sdk/client-ecs';
 import { LambdaClient, ListFunctionsCommand } from '@aws-sdk/client-lambda';
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
+import { CloudWatchLogsClient, DescribeLogGroupsCommand } from '@aws-sdk/client-cloudwatch-logs';
+import { ElasticLoadBalancingV2Client, DescribeLoadBalancersCommand } from '@aws-sdk/client-elastic-load-balancing-v2';
+import { IAMClient, GetUserCommand } from '@aws-sdk/client-iam';
+import { S3Client, HeadBucketCommand } from '@aws-sdk/client-s3';
+import { DynamoDBClient, DescribeTableCommand } from '@aws-sdk/client-dynamodb';
 import { ProviderConnectionStatus } from '@autoops/types';
 
 export {
@@ -34,6 +40,20 @@ export {
   ListFunctionsCommand,
   ListServicesCommand,
   STSClient,
+  DescribeVpcsCommand,
+  DescribeSubnetsCommand,
+  DescribeSecurityGroupsCommand,
+  ListTaskDefinitionsCommand,
+  CloudWatchLogsClient,
+  DescribeLogGroupsCommand,
+  ElasticLoadBalancingV2Client,
+  DescribeLoadBalancersCommand,
+  IAMClient,
+  GetUserCommand,
+  S3Client,
+  HeadBucketCommand,
+  DynamoDBClient,
+  DescribeTableCommand,
 };
 
 export interface AwsClientBundle {
@@ -44,6 +64,11 @@ export interface AwsClientBundle {
   ecr: ECRClient;
   cloudWatch: CloudWatchClient;
   lambda: LambdaClient;
+  cloudWatchLogs: CloudWatchLogsClient;
+  elb: ElasticLoadBalancingV2Client;
+  iam: IAMClient;
+  s3: S3Client;
+  dynamoDb: DynamoDBClient;
 }
 
 export function getAwsConfiguration(): { configured: boolean; region?: string; message: string } {
@@ -85,6 +110,11 @@ export function createAwsClients(): AwsClientBundle | null {
     ecr: new ECRClient({ region: config.region }),
     cloudWatch: new CloudWatchClient({ region: config.region }),
     lambda: new LambdaClient({ region: config.region }),
+    cloudWatchLogs: new CloudWatchLogsClient({ region: config.region }),
+    elb: new ElasticLoadBalancingV2Client({ region: config.region }),
+    iam: new IAMClient({ region: config.region }),
+    s3: new S3Client({ region: config.region }),
+    dynamoDb: new DynamoDBClient({ region: config.region }),
   };
 }
 

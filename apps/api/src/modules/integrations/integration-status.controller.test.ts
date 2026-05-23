@@ -14,6 +14,7 @@ vi.mock('../../../config/env.js', () => ({
   isDev: false,
 }));
 import type { Request, Response } from 'express';
+import { AwsIntegrationStatus } from '@autoops/types';
 
 import { jenkinsController } from './jenkins/jenkins.controller.js';
 import { jenkinsService } from './jenkins/jenkins.service.js';
@@ -100,14 +101,11 @@ describe('Integration Status Controllers Zero-Trust Sanitization', () => {
 
   it('AWS status does not include accountId or arn', async () => {
     vi.spyOn(awsService, 'getStatus').mockResolvedValue({
-      status: 'CONNECTED',
+      status: AwsIntegrationStatus.CONNECTED,
       configured: true,
-      accountId: '123456789012',
-      region: 'us-east-1',
-      callerArn: 'arn:aws:iam::123456789012:user/ops',
       message: 'OK',
       checkedAt: '2023-01-01',
-    });
+    } as any);
 
     let responseData: any;
     const mockRes = { json: vi.fn((data) => { responseData = data; }) } as unknown as Response;

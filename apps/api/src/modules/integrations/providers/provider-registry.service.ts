@@ -4,7 +4,7 @@ import {
   ProviderKey,
   type IntegrationProvider,
 } from '@autoops/types';
-import { awsService } from '../aws/aws.service.js';
+import { awsService, mapAwsToProviderStatus } from '../aws/aws.service.js';
 import { dockerService } from '../docker/docker.service.js';
 import { jenkinsService } from '../jenkins/jenkins.service.js';
 import { kubernetesService } from '../kubernetes/kubernetes.service.js';
@@ -19,6 +19,8 @@ export class ProviderRegistryService {
       jenkinsService.getStatus(),
       dockerService.getStatus(),
     ]);
+
+    const awsMappedStatus = mapAwsToProviderStatus(awsStatus.status);
 
     return [
       {
@@ -52,7 +54,7 @@ export class ProviderRegistryService {
         key: ProviderKey.AWS,
         displayName: 'AWS',
         category: ProviderCategory.CLOUD,
-        status: awsStatus.status,
+        status: awsMappedStatus,
         configured: awsStatus.configured,
         capabilities: [
           'aws.read.account',
