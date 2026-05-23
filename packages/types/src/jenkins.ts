@@ -17,7 +17,7 @@ export interface JenkinsStatusResponse {
   configured: boolean;
   baseUrl?: string;
   username?: string;
-  allowedJobs: string[];
+  allowedJobs?: string[];
   triggerEnabled: boolean;
   version?: string;
   mode?: string;

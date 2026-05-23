@@ -12,23 +12,37 @@ import {
 } from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { jenkinsService } from './jenkins.service.js';
+import { requireProviderInventoryAccess } from '../integration-access.service.js';
 
 type BuildParams = { jobName: string };
 
 export class JenkinsController {
   status = async (_req: Request, res: Response<{ data: JenkinsStatusResponse }>): Promise<void> => {
-    res.json({ data: await jenkinsService.getStatus() });
+    const raw = await jenkinsService.getStatus();
+    // PROVIDER_STATUS: strict sanitization for zero-trust (no secrets, URLs, or inventory details)
+    const safeStatus = {
+      status: raw.status,
+      configured: raw.configured,
+      version: raw.version,
+      triggerEnabled: raw.triggerEnabled,
+      message: raw.message,
+      checkedAt: raw.checkedAt,
+    };
+    res.json({ data: safeStatus as unknown as JenkinsStatusResponse });
   };
 
-  summary = async (_req: Request, res: Response<{ data: JenkinsSummaryResponse }>): Promise<void> => {
+  summary = async (req: Request, res: Response<{ data: JenkinsSummaryResponse }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await jenkinsService.getSummary() });
   };
 
-  jobs = async (_req: Request, res: Response<{ data: JenkinsListResponse<JenkinsJob> }>): Promise<void> => {
+  jobs = async (req: Request, res: Response<{ data: JenkinsListResponse<JenkinsJob> }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await jenkinsService.listJobs() });
   };
 
-  builds = async (_req: Request, res: Response<{ data: JenkinsListResponse<JenkinsBuild> }>): Promise<void> => {
+  builds = async (req: Request, res: Response<{ data: JenkinsListResponse<JenkinsBuild> }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await jenkinsService.listBuilds() });
   };
 
@@ -62,4 +76,3 @@ export class JenkinsController {
 }
 
 export const jenkinsController = new JenkinsController();
-

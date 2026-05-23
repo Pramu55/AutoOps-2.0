@@ -80,7 +80,7 @@ export function GitHubActionsClient() {
         </section>
         <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase text-slate-500">Allowed workflows</p>
-          <p className="mt-2 font-semibold text-slate-950">{status?.allowedWorkflows.join(', ') || '-'}</p>
+          <p className="mt-2 font-semibold text-slate-950">{(status?.allowedWorkflows ?? []).join(', ') || '-'}</p>
           <p className="mt-1 text-sm text-slate-600">Configured by environment only.</p>
         </section>
         <section className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">

@@ -1,6 +1,6 @@
 import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
-import { requireAuth } from '../../../middleware/auth.js';
+import { requireAuth, requireRole } from '../../../middleware/auth.js';
 import { validate } from '../../../middleware/validate.js';
 import { jenkinsOperationsQuerySchema, jenkinsTriggerBuildInputSchema } from '@autoops/types';
 import { jenkinsController } from './jenkins.controller.js';
@@ -17,16 +17,23 @@ function asyncHandler(handler: RequestHandler): RequestHandler {
   };
 }
 
+// PROVIDER_STATUS — accessible to all authenticated users (secret-free)
 jenkinsRouter.get('/status', requireAuth, asyncHandler(jenkinsController.status as unknown as RequestHandler));
-jenkinsRouter.get('/summary', requireAuth, asyncHandler(jenkinsController.summary as unknown as RequestHandler));
-jenkinsRouter.get('/jobs', requireAuth, asyncHandler(jenkinsController.jobs as unknown as RequestHandler));
-jenkinsRouter.get('/builds', requireAuth, asyncHandler(jenkinsController.builds as unknown as RequestHandler));
+
+// PROVIDER_INVENTORY — restricted to OWNER/ADMIN
+jenkinsRouter.get('/summary', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(jenkinsController.summary as unknown as RequestHandler));
+jenkinsRouter.get('/jobs', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(jenkinsController.jobs as unknown as RequestHandler));
+jenkinsRouter.get('/builds', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(jenkinsController.builds as unknown as RequestHandler));
+
+// TENANT_DATA — organization-scoped operation history
 jenkinsRouter.get(
   '/operations',
   requireAuth,
   validate({ query: jenkinsOperationsQuerySchema }),
   asyncHandler(jenkinsController.operations as unknown as RequestHandler),
 );
+
+// MUTATION — governed build trigger (creates org-scoped operation)
 jenkinsRouter.post(
   '/jobs/:jobName/build',
   requireAuth,

@@ -4,7 +4,7 @@ import {
   infrastructureConfirmationSchema,
   terraformWorkspaceParamsSchema,
 } from '@autoops/types';
-import { requireAuth } from '../../../middleware/auth.js';
+import { requireAuth, requireRole } from '../../../middleware/auth.js';
 import { validate } from '../../../middleware/validate.js';
 import { infrastructureController } from './infrastructure.controller.js';
 
@@ -16,9 +16,15 @@ function asyncHandler(handler: RequestHandler): RequestHandler {
   };
 }
 
+// PROVIDER_STATUS — accessible to all authenticated users (safe tool detection)
 infrastructureRouter.get('/status', requireAuth, asyncHandler(infrastructureController.status as unknown as RequestHandler));
 infrastructureRouter.get('/summary', requireAuth, asyncHandler(infrastructureController.summary as unknown as RequestHandler));
-infrastructureRouter.get('/terraform/workspaces', requireAuth, asyncHandler(infrastructureController.terraformWorkspaces as unknown as RequestHandler));
+
+// PROVIDER_INVENTORY — restricted to OWNER/ADMIN (exposes workspace/playbook paths)
+infrastructureRouter.get('/terraform/workspaces', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(infrastructureController.terraformWorkspaces as unknown as RequestHandler));
+infrastructureRouter.get('/ansible/playbooks', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(infrastructureController.ansiblePlaybooks as unknown as RequestHandler));
+
+// MUTATIONS — governed IaC operations (creates org-scoped operations via approval workflow)
 infrastructureRouter.post(
   '/terraform/:workspaceSlug/validate',
   requireAuth,
@@ -37,7 +43,6 @@ infrastructureRouter.post(
   validate({ params: terraformWorkspaceParamsSchema, body: infrastructureConfirmationSchema }),
   asyncHandler(infrastructureController.terraformApply as unknown as RequestHandler),
 );
-infrastructureRouter.get('/ansible/playbooks', requireAuth, asyncHandler(infrastructureController.ansiblePlaybooks as unknown as RequestHandler));
 infrastructureRouter.post(
   '/ansible/:playbookSlug/syntax-check',
   requireAuth,

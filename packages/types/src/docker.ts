@@ -12,8 +12,8 @@ export interface DockerStatusResponse {
   apiVersion?: string;
   os?: string;
   architecture?: string;
-  containers: number;
-  images: number;
+  containers?: number;
+  images?: number;
   checkedAt: string;
   message: string;
 }

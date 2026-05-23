@@ -134,7 +134,7 @@ export class JenkinsService {
       return {
         status: status.status,
         configured: status.configured,
-        allowedJobs: status.allowedJobs,
+        allowedJobs: status.allowedJobs ?? [],
         triggerEnabled: false,
         jobCount: 0,
         buildableJobCount: 0,
@@ -158,8 +158,8 @@ export class JenkinsService {
       return {
         status: ProviderConnectionStatus.CONNECTED,
         configured: true,
-        allowedJobs: status.allowedJobs,
-        triggerEnabled: status.allowedJobs.length > 0,
+        allowedJobs: status.allowedJobs ?? [],
+        triggerEnabled: (status.allowedJobs ?? []).length > 0,
         jobCount: jobs.length,
         buildableJobCount: jobs.filter((job) => job.buildable === true && job.disabled !== true).length,
         disabledJobCount: jobs.filter((job) => job.disabled === true).length,
@@ -176,7 +176,7 @@ export class JenkinsService {
       return {
         status: classifyJenkinsError(error),
         configured: true,
-        allowedJobs: status.allowedJobs,
+        allowedJobs: status.allowedJobs ?? [],
         triggerEnabled: false,
         jobCount: 0,
         buildableJobCount: 0,
@@ -263,10 +263,10 @@ export class JenkinsService {
     if (status.status !== ProviderConnectionStatus.CONNECTED) {
       throw new BadRequestError(status.message || 'Jenkins must be connected before triggering builds');
     }
-    if (!status.allowedJobs.length) {
+    if (!status.allowedJobs?.length) {
       throw new BadRequestError('Jenkins build triggering is disabled because JENKINS_ALLOWED_JOBS is empty');
     }
-    if (!status.allowedJobs.includes(jobName)) {
+    if (!status.allowedJobs?.includes(jobName)) {
       throw new BadRequestError('Jenkins job is not allowlisted for AutoOps triggering');
     }
 

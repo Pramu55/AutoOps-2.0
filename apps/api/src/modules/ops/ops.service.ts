@@ -667,7 +667,7 @@ export class OpsService {
           description:
             jenkinsStatus.status === ProviderConnectionStatus.CONNECTED
               ? jenkinsStatus.triggerEnabled
-                ? `Jenkins ${jenkinsStatus.version ?? ''} connected as ${jenkinsStatus.username ?? 'configured user'}. Real CI/CD trigger enabled for ${jenkinsStatus.allowedJobs.length} allowlisted job(s).`
+                ? `Jenkins ${jenkinsStatus.version ?? ''} connected as ${jenkinsStatus.username ?? 'configured user'}. Real CI/CD trigger enabled for ${jenkinsStatus.allowedJobs?.length ?? 0} allowlisted job(s).`
                 : `Jenkins ${jenkinsStatus.version ?? ''} connected as ${jenkinsStatus.username ?? 'configured user'}. No jobs are allowlisted for triggering.`
               : jenkinsStatus.message,
           href: '/dashboard/integrations/jenkins',
@@ -675,7 +675,7 @@ export class OpsService {
           metrics: {
             version: jenkinsStatus.version ?? null,
             executors: jenkinsStatus.numExecutors ?? null,
-            allowedJobs: jenkinsStatus.allowedJobs.length,
+            allowedJobs: jenkinsStatus.allowedJobs?.length ?? 0,
             triggerEnabled: jenkinsStatus.triggerEnabled,
           },
         };
@@ -722,8 +722,8 @@ export class OpsService {
           lastCheckedAt: dockerStatus.checkedAt,
           metrics: {
             version: dockerStatus.version ?? null,
-            containers: dockerStatus.containers,
-            images: dockerStatus.images,
+            containers: dockerStatus.containers ?? null,
+            images: dockerStatus.images ?? null,
           },
         };
       }

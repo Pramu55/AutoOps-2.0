@@ -12,41 +12,57 @@ import type {
   AwsDeploymentPlanRequest,
 } from '@autoops/types';
 import { awsService } from './aws.service.js';
+import { requireProviderInventoryAccess } from '../integration-access.service.js';
 
 export class AwsController {
   status = async (_req: Request, res: Response<{ data: AwsStatus }>): Promise<void> => {
-    res.json({ data: await awsService.getStatus() });
+    const raw = await awsService.getStatus();
+    const safeStatus = {
+      status: raw.status,
+      configured: raw.configured,
+      message: raw.message,
+      checkedAt: raw.checkedAt,
+    };
+    res.json({ data: safeStatus as unknown as AwsStatus });
   };
 
-  summary = async (_req: Request, res: Response<{ data: AwsSummary }>): Promise<void> => {
+  summary = async (req: Request, res: Response<{ data: AwsSummary }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.getSummary() });
   };
 
-  ec2Instances = async (_req: Request, res: Response<{ data: AwsListResponse<AwsEc2Instance> }>): Promise<void> => {
+  ec2Instances = async (req: Request, res: Response<{ data: AwsListResponse<AwsEc2Instance> }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listEc2Instances() });
   };
 
-  ecsClusters = async (_req: Request, res: Response<{ data: AwsListResponse<AwsEcsCluster> }>): Promise<void> => {
+  ecsClusters = async (req: Request, res: Response<{ data: AwsListResponse<AwsEcsCluster> }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listEcsClusters() });
   };
 
-  ecsServices = async (_req: Request, res: Response<{ data: AwsListResponse<AwsEcsService> }>): Promise<void> => {
+  ecsServices = async (req: Request, res: Response<{ data: AwsListResponse<AwsEcsService> }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listEcsServices() });
   };
 
-  ecrRepositories = async (_req: Request, res: Response<{ data: AwsListResponse<AwsEcrRepository> }>): Promise<void> => {
+  ecrRepositories = async (req: Request, res: Response<{ data: AwsListResponse<AwsEcrRepository> }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listEcrRepositories() });
   };
 
-  cloudWatchAlarms = async (_req: Request, res: Response<{ data: AwsListResponse<AwsCloudWatchAlarm> }>): Promise<void> => {
+  cloudWatchAlarms = async (req: Request, res: Response<{ data: AwsListResponse<AwsCloudWatchAlarm> }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listCloudWatchAlarms() });
   };
 
-  identity = async (_req: Request, res: Response<{ data: AwsStatus }>): Promise<void> => {
+  identity = async (req: Request, res: Response<{ data: AwsStatus }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.getStatus() });
   };
 
-  deploymentTargets = async (_req: Request, res: Response<{ data: AwsListResponse<AwsDeploymentTarget> }>): Promise<void> => {
+  deploymentTargets = async (req: Request, res: Response<{ data: AwsListResponse<AwsDeploymentTarget> }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listDeploymentTargets() });
   };
 
