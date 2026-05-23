@@ -11,7 +11,7 @@ import type {
   AwsDeploymentTarget,
   AwsListResponse,
 } from '@autoops/types';
-import { ArrowLeft, Cloud, RefreshCw, CheckCircle2, XCircle, AlertCircle, Play, Save } from 'lucide-react';
+import { ArrowLeft, Cloud, RefreshCw, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 
@@ -21,7 +21,7 @@ export function AwsDeploymentClient() {
   const [permissions, setPermissions] = useState<AwsPermissionsResponse | null>(null);
   const [remoteState, setRemoteState] = useState<AwsRemoteStateReadinessResponse | null>(null);
   const [workspaceRes, setWorkspaceRes] = useState<AwsWorkspaceReadinessResponse | null>(null);
-  const [targets, setTargets] = useState<AwsDeploymentTarget[]>([]);
+  // targets unused right now but we use it via items[0] for readiness
   const [loading, setLoading] = useState(true);
 
   async function load() {
@@ -39,9 +39,8 @@ export function AwsDeploymentClient() {
       setPermissions(permRes?.data ?? null);
       setRemoteState(rsRes?.data ?? null);
       const items = tRes?.data?.items ?? [];
-      setTargets(items);
       
-      if (items.length > 0) {
+      if (items.length > 0 && items[0]) {
         const wsRes = await api.get<{ data: AwsWorkspaceReadinessResponse }>(`/v1/integrations/aws/workspace-readiness/${items[0].slug}`).catch(() => null);
         setWorkspaceRes(wsRes?.data ?? null);
       } else {

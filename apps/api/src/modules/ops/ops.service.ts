@@ -14,15 +14,12 @@ import {
   ProviderConnectionStatus,
   RuntimeStatus,
   type Deployment,
-  type DeploymentSummary,
   type GovernanceEvidenceFilters,
   type GovernanceEvidenceItem,
   type GovernanceEvidenceResponse,
   type GovernanceExportResponse,
   type GovernanceSummaryResponse,
   type IncidentSeverity,
-  type JenkinsStatusResponse,
-  type KubernetesStatusResponse,
   type OperationActivityItem,
   type OperationActivityResponse,
   type OperationDetailResponse,
@@ -698,7 +695,7 @@ export class OpsService {
           description:
             mappedAwsStatus === ProviderConnectionStatus.CONNECTED
               ? `AWS account ${awsIdentity.accountId ?? 'unknown'} connected in ${awsIdentity.region ?? 'unknown region'}.`
-              : awsIdentity.message,
+              : 'AWS identity could not be verified.',
           href: '/dashboard/operations',
           lastCheckedAt: awsIdentity.checkedAt,
           metrics: {

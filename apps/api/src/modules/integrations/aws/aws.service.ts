@@ -14,11 +14,9 @@ import type {
   AwsRemoteStateReadinessResponse,
   AwsWorkspaceReadinessResponse,
   AwsDeploymentTarget,
-  AwsDeploymentTargetsResponse,
   AwsPermissionDiagnostic,
-  AwsDeploymentTargetType,
 } from '@autoops/types';
-import { ProviderConnectionStatus, AwsIntegrationStatus, AwsReadinessStatus, AwsDiagnosticStatus } from '@autoops/types';
+import { ProviderConnectionStatus, AwsIntegrationStatus, AwsReadinessStatus, AwsDiagnosticStatus, AwsDeploymentTargetType } from '@autoops/types';
 import {
   DescribeAlarmsCommand,
   DescribeClustersCommand,
@@ -401,15 +399,17 @@ export class AwsService {
   }
 
   async getSummary(): Promise<AwsSummary> {
-    const status = await this.getStatus();
+    const identity = await this.getIdentity();
     const partialFailures: AwsPartialFailure[] = [];
 
-    if (status.status !== ProviderConnectionStatus.CONNECTED) {
+    const mappedStatus = mapAwsToProviderStatus(identity.status);
+
+    if (mappedStatus !== ProviderConnectionStatus.CONNECTED) {
       return {
-        status: status.status,
-        accountId: status.accountId,
-        region: status.region,
-        checkedAt: status.checkedAt,
+        status: mappedStatus,
+        accountId: identity.accountId,
+        region: identity.region,
+        checkedAt: identity.checkedAt,
         partialFailures,
       };
     }
@@ -435,9 +435,9 @@ export class AwsService {
     ]);
 
     return {
-      status: status.status,
-      accountId: status.accountId,
-      region: status.region,
+      status: mappedStatus,
+      accountId: identity.accountId,
+      region: identity.region,
       checkedAt: new Date().toISOString(),
       ec2: instances
         ? {
@@ -744,9 +744,10 @@ export class AwsService {
     loader: (clients: NonNullable<ReturnType<typeof createAwsClients>>) => Promise<T[]>,
   ): Promise<AwsListResponse<T>> {
     const status = await this.getStatus();
-    if (status.status !== ProviderConnectionStatus.CONNECTED) {
+    const mappedStatus = mapAwsToProviderStatus(status.status);
+    if (mappedStatus !== ProviderConnectionStatus.CONNECTED) {
       return {
-        status: status.status,
+        status: mappedStatus,
         configured: status.configured,
         region: status.region,
         message: status.message,
@@ -767,7 +768,7 @@ export class AwsService {
     }
 
     return {
-      status: status.status,
+      status: mappedStatus,
       configured: status.configured,
       region: status.region,
       message: status.message,
@@ -783,5 +784,5 @@ export function mapAwsToProviderStatus(status: AwsIntegrationStatus): ProviderCo
   if (status === AwsIntegrationStatus.CONNECTED) return ProviderConnectionStatus.CONNECTED;
   if (status === AwsIntegrationStatus.AUTH_FAILED) return ProviderConnectionStatus.AUTH_FAILED;
   if (status === AwsIntegrationStatus.NOT_CONFIGURED) return ProviderConnectionStatus.NOT_CONFIGURED;
-  return ProviderConnectionStatus.ERROR;
+  return ProviderConnectionStatus.UNKNOWN_ERROR;
 }
