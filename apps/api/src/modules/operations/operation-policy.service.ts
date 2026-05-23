@@ -82,21 +82,21 @@ export function evaluateOperationPolicy(input: OperationPolicyInput): OperationP
   }
 
   if (
-    input.provider === OperationProvider.INFRASTRUCTURE &&
+    (input.provider === OperationProvider.INFRASTRUCTURE || input.provider === OperationProvider.AWS) &&
     input.operationType === OperationType.TERRAFORM_VALIDATE
   ) {
     return confirmationOnly(OperationRiskLevel.LOW, 'VALIDATE');
   }
 
   if (
-    input.provider === OperationProvider.INFRASTRUCTURE &&
+    (input.provider === OperationProvider.INFRASTRUCTURE || input.provider === OperationProvider.AWS) &&
     input.operationType === OperationType.TERRAFORM_PLAN
   ) {
     return confirmationOnly(OperationRiskLevel.LOW, 'PLAN');
   }
 
   if (
-    input.provider === OperationProvider.INFRASTRUCTURE &&
+    (input.provider === OperationProvider.INFRASTRUCTURE || input.provider === OperationProvider.AWS) &&
     input.operationType === OperationType.TERRAFORM_APPLY
   ) {
     return approvalRequired(

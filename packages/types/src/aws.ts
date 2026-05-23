@@ -108,3 +108,28 @@ export interface AwsListResponse<T> {
   checkedAt: string;
   items: T[];
 }
+
+export interface AwsDeploymentTarget {
+  slug: string;
+  displayName: string;
+  absolutePath: string;
+  relativePath: string;
+}
+
+export interface AwsDeploymentPlanRequest {
+  confirmationToken: string;
+}
+
+export interface AwsDeploymentOperationResponse {
+  operationId: string;
+  status: string;
+  provider: string;
+  type: string;
+}
+
+export interface AwsDeploymentSummary {
+  workspaceSlug: string;
+  status: string;
+  lastOperationId?: string;
+  lastOperationType?: string;
+}

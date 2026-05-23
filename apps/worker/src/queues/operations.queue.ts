@@ -168,7 +168,7 @@ async function executeOperation(operation: {
   }
 
   if (
-    operation.provider === OperationProvider.INFRASTRUCTURE &&
+    (operation.provider === OperationProvider.INFRASTRUCTURE || operation.provider === OperationProvider.AWS) &&
     (operation.operationType === OperationType.TERRAFORM_VALIDATE ||
       operation.operationType === OperationType.TERRAFORM_PLAN ||
       operation.operationType === OperationType.TERRAFORM_APPLY)

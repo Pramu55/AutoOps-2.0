@@ -25,6 +25,10 @@ import {
   getAwsConfiguration,
   safeAwsMessage,
 } from './aws.client.js';
+import { prisma, type Prisma } from '@autoops/database';
+import { OperationProvider, OperationType, type AwsDeploymentTarget, type AwsDeploymentOperationResponse, type AwsDeploymentSummary } from '@autoops/types';
+import { listTerraformWorkspaces, getTerraformWorkspaceBySlug, detectTerraformTool } from '@autoops/utils';
+import { operationService } from '../../operations/operation.service.js';
 
 export class AwsService {
   async getStatus(): Promise<AwsStatus> {
@@ -138,6 +142,142 @@ export class AwsService {
         : undefined,
       lambda: functions ? { functions: functions.length } : undefined,
       partialFailures,
+    };
+  }
+
+  async listDeploymentTargets(): Promise<AwsListResponse<AwsDeploymentTarget>> {
+    return this._listResponse(async () => {
+      const allWorkspaces = await listTerraformWorkspaces();
+      const allowedEnv = process.env.AWS_ALLOWED_DEPLOYMENT_WORKSPACES ?? '';
+      const allowedSlugs = new Set(allowedEnv.split(',').map((s) => s.trim()).filter(Boolean));
+
+      return allWorkspaces
+        .filter((w) => allowedSlugs.has(w.slug))
+        .map((w) => ({
+          slug: w.slug,
+          displayName: w.displayName,
+          absolutePath: w.absolutePath,
+          relativePath: w.relativePath,
+        }));
+    });
+  }
+
+  async listDeployments(organizationId: string): Promise<AwsListResponse<AwsDeploymentSummary>> {
+    return this._listResponse(async () => {
+      const targets = await this.listDeploymentTargets();
+      if (!targets.items || targets.items.length === 0) return [];
+
+      const targetSlugs = targets.items.map(t => t.slug);
+
+      const operations = await prisma.operation.findMany({
+        where: {
+          organizationId,
+          provider: OperationProvider.AWS,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const summaries: AwsDeploymentSummary[] = [];
+      for (const slug of targetSlugs) {
+        const op = operations.find(o => (o.input as Record<string, unknown>)?.workspaceSlug === slug);
+        summaries.push({
+          workspaceSlug: slug,
+          status: op ? op.status : 'NOT_DEPLOYED',
+          lastOperationId: op?.id,
+          lastOperationType: op?.operationType,
+        });
+      }
+      return summaries;
+    });
+  }
+
+  async planDeployment(organizationId: string, userId: string, targetSlug: string): Promise<AwsDeploymentOperationResponse> {
+    const toolStatus = await detectTerraformTool();
+    if (toolStatus.status !== 'CONNECTED') {
+      throw new Error(toolStatus.message);
+    }
+
+    const workspace = await getTerraformWorkspaceBySlug(targetSlug);
+    if (!workspace) throw new Error(`Deployment target ${targetSlug} not found.`);
+
+    const targets = await this.listDeploymentTargets();
+    if (!targets.items.some(t => t.slug === targetSlug)) {
+      throw new Error(`Deployment target ${targetSlug} is not an allowed AWS deployment workspace.`);
+    }
+
+    const operation = await operationService.createQueuedOperation(
+      {
+        organizationId,
+        userId,
+        provider: OperationProvider.AWS,
+        operationType: OperationType.TERRAFORM_PLAN,
+        confirmationToken: 'PLAN',
+        idempotencyKey: `aws-deploy-plan-${workspace.slug}-${Date.now()}`,
+        input: {
+          tool: toolStatus.tool,
+          action: 'plan',
+          workspaceSlug: workspace.slug,
+          displayName: workspace.displayName,
+          relativePath: workspace.relativePath,
+          commandSummary: `${toolStatus.tool} plan (AWS)`,
+          requestedAt: new Date().toISOString(),
+        } as Prisma.InputJsonObject,
+      },
+      {}
+    );
+
+    return {
+      operationId: operation.id,
+      status: operation.status,
+      provider: operation.provider,
+      type: operation.operationType,
+    };
+  }
+
+  async applyDeployment(organizationId: string, userId: string, targetSlug: string): Promise<AwsDeploymentOperationResponse> {
+    if (process.env.AWS_DEPLOYMENT_APPLY_ENABLED !== 'true') {
+      throw new Error('AWS deployment apply is disabled in this environment.');
+    }
+
+    const toolStatus = await detectTerraformTool();
+    if (toolStatus.status !== 'CONNECTED') {
+      throw new Error(toolStatus.message);
+    }
+
+    const workspace = await getTerraformWorkspaceBySlug(targetSlug);
+    if (!workspace) throw new Error(`Deployment target ${targetSlug} not found.`);
+
+    const targets = await this.listDeploymentTargets();
+    if (!targets.items.some(t => t.slug === targetSlug)) {
+      throw new Error(`Deployment target ${targetSlug} is not an allowed AWS deployment workspace.`);
+    }
+
+    const operation = await operationService.createQueuedOperation(
+      {
+        organizationId,
+        userId,
+        provider: OperationProvider.AWS,
+        operationType: OperationType.TERRAFORM_APPLY,
+        confirmationToken: 'APPLY',
+        idempotencyKey: `aws-deploy-apply-${workspace.slug}-${Date.now()}`,
+        input: {
+          tool: toolStatus.tool,
+          action: 'apply',
+          workspaceSlug: workspace.slug,
+          displayName: workspace.displayName,
+          relativePath: workspace.relativePath,
+          commandSummary: `${toolStatus.tool} apply (AWS)`,
+          requestedAt: new Date().toISOString(),
+        } as Prisma.InputJsonObject,
+      },
+      {}
+    );
+
+    return {
+      operationId: operation.id,
+      status: operation.status,
+      provider: operation.provider,
+      type: operation.operationType,
     };
   }
 
