@@ -98,16 +98,19 @@ AutoOps intentionally avoids unsafe generic automation. The backend enforces:
 
 AutoOps does not expose provider secrets, kubeconfig content, tokens, raw operation metadata, Kubernetes Secret data, Docker shell/exec controls, Kubernetes shell/exec/apply/delete controls, or ungoverned Jenkins mutations.
 
+Tenant-owned resources are scoped by organization. API handlers use authenticated organization membership, not frontend-supplied `organizationId`, and local demo includes an isolated tenant account for confidentiality checks.
+
 ## Local Demo Accounts
 
 These accounts are for local AutoOps demo/testing only. Do not use them in a real company deployment.
 
-| Demo role | Email | Purpose |
-| --- | --- | --- |
-| Operator / Requester | `pramod.local@autoops.dev` | Trigger governed operations and request approvals |
-| Admin / Approver | `approver.local@autoops.dev` | Review, approve, reject, acknowledge, and resolve |
+| Demo role | Email | Organization | Purpose |
+| --- | --- | --- | --- |
+| Operator / Requester | `pramod.local@autoops.dev` | AutoOps Demo (Org A) | Trigger governed operations and request approvals |
+| Admin / Approver | `approver.local@autoops.dev` | AutoOps Demo (Org A) | Review, approve, reject, acknowledge, and resolve |
+| Isolated Tenant User | `isolated.local@autoops.dev` | AutoOps Isolated Demo (Org B) | Verify cross-organization tenant isolation |
 
-The local demo password is shown in the login page and `.env.example`. Production should use real organization invites and managed users.
+The local demo password is `StrongPass123` (shown in the login page and `.env.example`). Production should use real organization invites and managed users. Org A and Org B are separate organizations and must not share project, operation, incident, or governance data.
 
 ## Quick Start
 
@@ -175,6 +178,7 @@ Start with [Documentation Home](./docs/README.md).
 - [LinkedIn and Resume Content](./docs/LINKEDIN_AND_RESUME_CONTENT.md)
 - [Production Deployment Readiness](./docs/PRODUCTION_DEPLOYMENT_READINESS.md)
 - [Security Checklist](./docs/SECURITY_CHECKLIST.md)
+- [Tenant Isolation and Authorization](./docs/TENANT_ISOLATION_AND_AUTHORIZATION.md)
 - [CI and Release Gates](./docs/CI_AND_RELEASE_GATES.md)
 - [Controlled Operations Overview](./docs/CONTROLLED_OPERATIONS_OVERVIEW.md)
 - [Infrastructure Automation Center](./docs/INFRASTRUCTURE_AUTOMATION_CENTER.md)

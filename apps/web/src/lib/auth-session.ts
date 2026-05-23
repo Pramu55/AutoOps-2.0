@@ -32,6 +32,7 @@ export function clearCookie(name: string): void {
 export function setAuthSession(session: AuthSession): void {
   const { user, tokens, organizations } = session;
 
+  clearAuthSession();
   window.sessionStorage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken);
   window.sessionStorage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken);
   window.sessionStorage.setItem(USER_KEY, JSON.stringify(user));
@@ -76,11 +77,14 @@ export function updateAuthTokens(tokens: AuthTokens): void {
 
 export function clearAuthSession(): void {
   if (typeof window !== 'undefined') {
-    window.sessionStorage.removeItem(ACCESS_TOKEN_KEY);
-    window.sessionStorage.removeItem(REFRESH_TOKEN_KEY);
-    window.sessionStorage.removeItem(USER_KEY);
-    window.sessionStorage.removeItem(ORGANIZATIONS_KEY);
-    window.sessionStorage.removeItem(ZUSTAND_AUTH_KEY);
+    for (const storage of [window.sessionStorage, window.localStorage]) {
+      for (let index = storage.length - 1; index >= 0; index -= 1) {
+        const key = storage.key(index);
+        if (key?.startsWith('autoops')) {
+          storage.removeItem(key);
+        }
+      }
+    }
   }
 
   clearCookie('refresh_token');

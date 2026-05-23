@@ -2,6 +2,28 @@
 
 Use this checklist before a company pilot, demo, or production-like deployment.
 
+## CIA And Authorization Model
+
+Confidentiality:
+- Tenant-owned resources are scoped by authenticated organization membership.
+- Cross-organization project, deployment, operation, governance, incident, and audit-log visibility is blocked in the API layer.
+- Secrets, tokens, kubeconfig content, and provider credentials must not appear in UI, API responses, logs, screenshots, or exports.
+
+Integrity:
+- Tenant-owned mutations verify organization ownership before update.
+- Approval and rejection are organization-scoped.
+- Requester self-approval remains blocked.
+- AutoOps does not expose arbitrary command execution.
+
+Availability:
+- Health checks, worker heartbeat, queues, backups, and smoke checks are non-destructive.
+- Tenant actions must not delete global runtime data, Docker volumes, or Kubernetes state.
+
+Authorization:
+- JWTs are validated and organization membership is rechecked by API middleware.
+- Roles are evaluated within the authenticated organization.
+- Controllers must use `req.auth.orgId` and must not trust frontend-supplied organization IDs.
+
 ## Environment and Secrets
 
 - Never commit `.env`.
