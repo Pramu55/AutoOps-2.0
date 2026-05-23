@@ -128,6 +128,34 @@
 - Key actions: Refresh readiness.
 - Safety notes: Direct cloud mutations are intentionally not implemented.
 
+## `/dashboard/integrations/aws`
+
+- Purpose: AWS Deployment Foundation diagnostics and readiness.
+- Who uses it: OWNER and ADMIN users only (provider inventory access required).
+- Data shown: AWS Identity (account, ARN, region), Configuration Readiness, IAM Permission Diagnostics, Remote State Storage readiness, Workspace Readiness (Terraform file checks, tooling, local state safety), and Deployment Targets.
+- Key actions: Refresh diagnostics, inspect readiness gates.
+- Safety notes: Read-only diagnostics only. No terraform apply/destroy. No AWS resource creation/mutation. No secrets exposed. Status endpoint is sanitized for all authenticated users.
+
+### AWS API Routes
+
+| Method | Path | Access | Purpose |
+|--------|------|--------|---------|
+| GET | `/v1/integrations/aws/status` | All authenticated | Sanitized AWS connection status (no secrets, no ARN, no account ID) |
+| GET | `/v1/integrations/aws/identity` | OWNER/ADMIN | AWS STS identity (account ID, ARN, region) |
+| GET | `/v1/integrations/aws/readiness` | OWNER/ADMIN | Configuration readiness (env var presence, not values) |
+| GET | `/v1/integrations/aws/permissions` | OWNER/ADMIN | IAM permission diagnostics per service |
+| GET | `/v1/integrations/aws/remote-state` | OWNER/ADMIN | Terraform remote state S3/DynamoDB readiness |
+| GET | `/v1/integrations/aws/workspace-readiness/:targetSlug` | OWNER/ADMIN | Terraform workspace file and tooling checks |
+| GET | `/v1/integrations/aws/deployment-targets` | OWNER/ADMIN | Allowlisted ECS Fargate deployment targets |
+| GET | `/v1/integrations/aws/summary` | OWNER/ADMIN | AWS resource summary (EC2, ECS, ECR, CloudWatch, Lambda) |
+| GET | `/v1/integrations/aws/ec2/instances` | OWNER/ADMIN | EC2 instance inventory |
+| GET | `/v1/integrations/aws/ecs/clusters` | OWNER/ADMIN | ECS cluster inventory |
+| GET | `/v1/integrations/aws/ecs/services` | OWNER/ADMIN | ECS service inventory |
+| GET | `/v1/integrations/aws/ecr/repositories` | OWNER/ADMIN | ECR repository inventory |
+| GET | `/v1/integrations/aws/deployments` | Authenticated | Organization-scoped deployment history |
+| POST | `/v1/integrations/aws/deployments/:targetSlug/plan` | Authenticated | Request Terraform plan (approval-gated) |
+| POST | `/v1/integrations/aws/deployments/:targetSlug/apply` | Authenticated | Request Terraform apply (approval-gated, disabled by default) |
+
 ## `/dashboard/projects`
 
 - Purpose: Project inventory.

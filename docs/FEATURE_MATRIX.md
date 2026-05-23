@@ -28,6 +28,12 @@
 | Observability | Prometheus/Grafana readiness | Complete | Yes | Read-only health/query checks | No fake metrics |
 | DevOps Tools | Helm/Kustomize/tool readiness | Complete | Yes | Version detection only | No apply/mutation |
 | Cloud Readiness | AWS/Azure/GCP readiness center | Complete | Yes when configured | Read-only detection; no direct writes | Cloud writes future via Terraform approval |
+| AWS Foundation | AWS deployment foundation diagnostics | Complete | Yes when configured | OWNER/ADMIN only; read-only STS/IAM/S3/DynamoDB probes | No apply/destroy; no secrets; sanitized status for all users |
+| AWS Foundation | AWS identity verification | Complete | Yes when configured | STS GetCallerIdentity; OWNER/ADMIN only | Account ID, ARN, region returned; no credentials exposed |
+| AWS Foundation | AWS IAM permission diagnostics | Complete | Yes when configured | Read-only permission probes per AWS service | Missing permissions reported; no privilege escalation |
+| AWS Foundation | AWS remote state readiness | Complete | Yes when configured | S3 HeadBucket + DynamoDB DescribeTable | No state file read/write; reachability check only |
+| AWS Foundation | AWS workspace readiness | Complete | Yes when configured | Allowlisted workspace file and tooling checks | Local state/init directory flagged; no execution |
+| AWS Foundation | AWS deployment targets | Complete | Yes when configured | Allowlisted ECS Fargate workspaces only | Plan approval-gated; apply disabled by default |
 | Worker Runtime | BullMQ execution | Complete | Yes | Worker-only execution | API queues accepted work |
 | Worker Runtime | Heartbeat registry | Complete | Yes | Persisted heartbeat rows | Fresh/stale/offline derived |
 | Observability | Operations Hub | Complete | Yes | Safe summaries | Platform/provider/queue/worker/incidents |

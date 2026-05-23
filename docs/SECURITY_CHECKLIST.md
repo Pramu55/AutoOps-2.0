@@ -94,6 +94,22 @@ Authorization:
 - Prometheus/Grafana checks must not expose API tokens or dashboard secrets.
 - Helm/Kustomize readiness must not run `apply`, `delete`, `upgrade`, or cluster-mutating commands.
 
+## AWS Deployment Foundation
+
+- AWS status endpoint must return sanitized data only (status, configured, message, checkedAt). No account ID, ARN, region, or credentials.
+- AWS identity, readiness, permissions, remote-state, workspace-readiness, deployment-targets, summary, and inventory endpoints must require OWNER/ADMIN role.
+- AWS identity endpoint must not return AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, or AWS_SESSION_TOKEN.
+- AWS readiness endpoint must report env var presence (boolean), never env var values.
+- AWS permissions endpoint must perform read-only diagnostic probes only (DescribeRepositories, ListClusters, DescribeVpcs, etc.). No write actions.
+- AWS remote-state endpoint must verify S3 bucket and DynamoDB table reachability only. No state file read/write/delete.
+- AWS workspace-readiness endpoint must check file presence only. No terraform init, plan, apply, or destroy.
+- AWS workspace-readiness must flag checked-in terraform.tfstate or .terraform directory as errors.
+- AWS deployment targets must be restricted to allowlisted workspaces only (AWS_ALLOWED_DEPLOYMENT_WORKSPACES).
+- AWS deployment plan must create an approval-gated TERRAFORM_PLAN operation. No direct execution.
+- AWS deployment apply must be disabled by default (AWS_DEPLOYMENT_APPLY_ENABLED !== 'true'). When enabled, must create an approval-gated TERRAFORM_APPLY operation.
+- AWS deployment history must be organization-scoped.
+- No AWS resource creation, modification, or deletion from any AWS endpoint.
+
 ## Incidents and Runbooks
 
 - Verify failed operations create incidents.
