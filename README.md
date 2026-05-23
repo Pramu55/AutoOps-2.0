@@ -78,6 +78,7 @@ See [Architecture Overview](./docs/ARCHITECTURE_OVERVIEW.md).
 | Observability Integrations | Prometheus/Grafana readiness |
 | DevOps Tools | Helm, Kustomize, kubectl, Docker CLI, IaC, and runtime tooling |
 | Cloud Readiness | AWS/Azure/GCP readiness without direct cloud writes |
+| AWS Deployments | Governed AWS ECS Fargate deployment workflows using safe IaC |
 | Projects | Project and environment ownership |
 | Deployments | Deployment records and safe simulation workflow |
 
@@ -159,6 +160,7 @@ Open:
 - `/dashboard/integrations/observability`
 - `/dashboard/integrations/devops-tools`
 - `/dashboard/integrations/cloud`
+- `/dashboard/integrations/aws`
 - `/dashboard/projects`
 - `/dashboard/deployments`
 

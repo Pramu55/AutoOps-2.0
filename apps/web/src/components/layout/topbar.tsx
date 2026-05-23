@@ -148,6 +148,14 @@ const COMMANDS: CommandItem[] = [
   },
   {
     group: 'Integrations',
+    label: 'AWS Deployments',
+    description: 'Governed AWS ECS Fargate deployments',
+    href: '/dashboard/integrations/aws',
+    icon: Cloud,
+    keywords: ['aws', 'deployments', 'ecs', 'fargate', 'terraform'],
+  },
+  {
+    group: 'Integrations',
     label: 'Observability Integrations',
     description: 'Prometheus and Grafana readiness checks',
     href: '/dashboard/integrations/observability',
@@ -221,6 +229,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/dashboard/integrations/infrastructure', label: 'Infrastructure', icon: Wrench },
       { href: '/dashboard/integrations/github-actions', label: 'GitHub Actions', icon: Github },
       { href: '/dashboard/integrations/cloud', label: 'Cloud Readiness', icon: Cloud },
+      { href: '/dashboard/integrations/aws', label: 'AWS Deployments', icon: Cloud },
     ],
   },
   {
@@ -277,6 +286,7 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
       { href: '/dashboard/integrations/infrastructure', label: 'Infrastructure', icon: Wrench },
       { href: '/dashboard/integrations/github-actions', label: 'GitHub Actions', icon: Github },
       { href: '/dashboard/integrations/cloud', label: 'Cloud Readiness', icon: Cloud },
+      { href: '/dashboard/integrations/aws', label: 'AWS Deployments', icon: Cloud },
       { href: '/dashboard/integrations/observability', label: 'Observability', icon: Gauge },
       { href: '/dashboard/integrations/devops-tools', label: 'DevOps Tools', icon: Wrench },
     ],
