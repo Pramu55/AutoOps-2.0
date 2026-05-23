@@ -19,6 +19,7 @@ import type {
 } from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { kubernetesService } from './kubernetes.service.js';
+import { requireProviderInventoryAccess } from '../integration-access.service.js';
 
 type WorkloadParams = {
   namespace: string;
@@ -27,45 +28,59 @@ type WorkloadParams = {
 
 export class KubernetesController {
   status = async (_req: Request, res: Response<{ data: KubernetesStatus }>): Promise<void> => {
-    res.json({ data: await kubernetesService.getStatus() });
+    const raw = await kubernetesService.getStatus();
+    const safeStatus = {
+      status: raw.status,
+      version: raw.version,
+      readOnly: raw.readOnly,
+      checkedAt: raw.checkedAt,
+      message: raw.message,
+    };
+    res.json({ data: safeStatus as unknown as KubernetesStatus });
   };
 
-  summary = async (_req: Request, res: Response<{ data: KubernetesSummary }>): Promise<void> => {
+  summary = async (req: Request, res: Response<{ data: KubernetesSummary }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await kubernetesService.getSummary() });
   };
 
   namespaces = async (
-    _req: Request,
+    req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesNamespace> }>,
   ): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await kubernetesService.listNamespaces() });
   };
 
   workloads = async (
-    _req: Request,
+    req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesWorkload> }>,
   ): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await kubernetesService.listWorkloads() });
   };
 
   pods = async (
-    _req: Request,
+    req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesPod> }>,
   ): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await kubernetesService.listPods() });
   };
 
   services = async (
-    _req: Request,
+    req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesServiceDto> }>,
   ): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await kubernetesService.listServices() });
   };
 
   nodes = async (
-    _req: Request,
+    req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesNode> }>,
   ): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await kubernetesService.listNodes() });
   };
 
@@ -73,6 +88,7 @@ export class KubernetesController {
     req: Request<WorkloadParams>,
     res: Response<{ data: KubernetesRolloutStatus }>,
   ): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({
       data: await kubernetesService.getRolloutStatus(req.params.namespace, req.params.name),
     });

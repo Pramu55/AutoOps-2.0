@@ -17,8 +17,8 @@ export type GitHubActionsConnectionStatus =
 export interface GitHubActionsStatusResponse {
   status: GitHubActionsConnectionStatus;
   configured: boolean;
-  repository: string;
-  allowedWorkflows: string[];
+  repository?: string;
+  allowedWorkflows?: string[];
   checkedAt: string;
   message: string;
 }

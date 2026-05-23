@@ -10,6 +10,7 @@ import {
 } from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { infrastructureService } from './infrastructure.service.js';
+import { requireProviderInventoryAccess } from '../integration-access.service.js';
 
 type TerraformParams = { workspaceSlug: string };
 type AnsibleParams = { playbookSlug: string };
@@ -22,14 +23,17 @@ export class InfrastructureController {
 
   summary = async (req: Request, res: Response<{ data: InfrastructureAutomationSummaryResponse }>): Promise<void> => {
     const auth = this._requireAuth(req);
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: await infrastructureService.getSummary(auth.orgId) });
   };
 
-  terraformWorkspaces = async (_req: Request, res: Response<{ data: { items: TerraformWorkspaceSummary[] } }>): Promise<void> => {
+  terraformWorkspaces = async (req: Request, res: Response<{ data: { items: TerraformWorkspaceSummary[] } }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: { items: await infrastructureService.listTerraformWorkspaces() } });
   };
 
-  ansiblePlaybooks = async (_req: Request, res: Response<{ data: { items: AnsiblePlaybookSummary[] } }>): Promise<void> => {
+  ansiblePlaybooks = async (req: Request, res: Response<{ data: { items: AnsiblePlaybookSummary[] } }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
     res.json({ data: { items: await infrastructureService.listAnsiblePlaybooks() } });
   };
 

@@ -16,6 +16,7 @@ import {
 } from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { dockerService } from './docker.service.js';
+import { requireProviderInventoryAccess } from '../integration-access.service.js';
 
 type ContainerParams = {
   containerId: string;
@@ -23,31 +24,54 @@ type ContainerParams = {
 
 export class DockerController {
   status = async (_req: Request, res: Response<{ data: DockerStatusResponse }>): Promise<void> => {
-    res.json({ data: await dockerService.getStatus() });
+    const raw = await dockerService.getStatus();
+    const safeStatus = {
+      status: raw.status,
+      configured: raw.configured,
+      version: raw.version,
+      apiVersion: raw.apiVersion,
+      os: raw.os,
+      architecture: raw.architecture,
+      checkedAt: raw.checkedAt,
+      message: raw.message,
+    };
+    res.json({ data: safeStatus as unknown as DockerStatusResponse });
   };
 
-  containers = async (_req: Request, res: Response<{ data: DockerListResponse<DockerContainer> }>): Promise<void> => {
+  containers = async (
+    _req: Request,
+    res: Response<{ data: DockerListResponse<DockerContainer> }>,
+  ): Promise<void> => {
+    requireProviderInventoryAccess(_req.auth);
     res.json({ data: await dockerService.listContainers() });
   };
 
   images = async (_req: Request, res: Response<{ data: DockerListResponse<DockerImage> }>): Promise<void> => {
+    requireProviderInventoryAccess(_req.auth);
     res.json({ data: await dockerService.listImages() });
   };
 
-  networks = async (_req: Request, res: Response<{ data: DockerListResponse<DockerNetwork> }>): Promise<void> => {
+  networks = async (
+    _req: Request,
+    res: Response<{ data: DockerListResponse<DockerNetwork> }>,
+  ): Promise<void> => {
+    requireProviderInventoryAccess(_req.auth);
     res.json({ data: await dockerService.listNetworks() });
   };
 
   volumes = async (_req: Request, res: Response<{ data: DockerListResponse<DockerVolume> }>): Promise<void> => {
+    requireProviderInventoryAccess(_req.auth);
     res.json({ data: await dockerService.listVolumes() });
   };
 
   logs = async (
-    req: Request<ContainerParams>,
+    req: Request<ContainerParams, unknown, unknown, DockerLogsQuery>,
     res: Response<{ data: DockerLogsResponse }>,
   ): Promise<void> => {
-    const query = req.query as unknown as DockerLogsQuery;
-    res.json({ data: await dockerService.getLogs(req.params.containerId, query) });
+    requireProviderInventoryAccess(req.auth);
+    res.json({
+      data: await dockerService.getLogs(req.params.containerId, req.query),
+    });
   };
 
   start = async (

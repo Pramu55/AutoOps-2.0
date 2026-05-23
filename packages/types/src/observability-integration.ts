@@ -11,7 +11,7 @@ export type ObservabilityIntegrationStatus =
 export interface PrometheusIntegrationStatus {
   status: ObservabilityIntegrationStatus;
   configured: boolean;
-  url: string | null;
+  url?: string | null;
   checkedAt: string;
   message: string;
   targets?: {
@@ -28,8 +28,8 @@ export interface PrometheusIntegrationStatus {
 export interface GrafanaIntegrationStatus {
   status: ObservabilityIntegrationStatus;
   configured: boolean;
-  url: string | null;
-  publicUrl: string | null;
+  url?: string | null;
+  publicUrl?: string | null;
   checkedAt: string;
   message: string;
   version?: string | null;

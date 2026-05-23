@@ -31,3 +31,4 @@ export * from './ai.js';
 export * from './common.js';
 export * from './system.js';
 export * from './events.js';
+export * from './integration-access.js';
