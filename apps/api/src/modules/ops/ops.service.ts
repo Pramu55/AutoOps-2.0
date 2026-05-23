@@ -14,12 +14,15 @@ import {
   ProviderConnectionStatus,
   RuntimeStatus,
   type Deployment,
+  type DeploymentSummary,
   type GovernanceEvidenceFilters,
   type GovernanceEvidenceItem,
   type GovernanceEvidenceResponse,
   type GovernanceExportResponse,
   type GovernanceSummaryResponse,
   type IncidentSeverity,
+  type JenkinsStatusResponse,
+  type KubernetesStatusResponse,
   type OperationActivityItem,
   type OperationActivityResponse,
   type OperationDetailResponse,
@@ -43,7 +46,7 @@ import { NotFoundError, UnauthorizedError } from '@autoops/utils';
 import { redis } from '../../lib/redis.js';
 import { deploymentsQueue } from '../deployments/deployment.queue.js';
 import { operationsQueue } from '../operations/operation.queue.js';
-import { awsService } from '../integrations/aws/aws.service.js';
+import { awsService, mapAwsToProviderStatus } from '../integrations/aws/aws.service.js';
 import { dockerService } from '../integrations/docker/docker.service.js';
 import { infrastructureService } from '../integrations/infrastructure/infrastructure.service.js';
 import { jenkinsService } from '../integrations/jenkins/jenkins.service.js';
@@ -332,7 +335,7 @@ export class OpsService {
       latestDeployments,
       queueSummary,
       kubernetesStatus,
-      awsStatus,
+      awsIdentity,
       jenkinsStatus,
       dockerStatus,
       infrastructureStatus,
@@ -392,7 +395,7 @@ export class OpsService {
       }),
       this._getDeploymentQueueSummary(),
       kubernetesService.getStatus(),
-      awsService.getStatus(),
+      awsService.getIdentity(),
       jenkinsService.getStatus(),
       dockerService.getStatus(),
       infrastructureService.getStatus(),
@@ -439,7 +442,7 @@ export class OpsService {
       queues: {
         deployments: queueSummary,
       },
-      integrations: this._withProviderStatus(kubernetesStatus, awsStatus, jenkinsStatus, dockerStatus, infrastructureStatus),
+      integrations: this._withProviderStatus(kubernetesStatus, awsIdentity, jenkinsStatus, dockerStatus, infrastructureStatus),
       operations: {
         total: operationStatusCounts.reduce((total, item) => total + item._count._all, 0),
         pendingApproval:
@@ -603,7 +606,7 @@ export class OpsService {
 
   private _withProviderStatus(
     kubernetesStatus: Awaited<ReturnType<typeof kubernetesService.getStatus>>,
-    awsStatus: Awaited<ReturnType<typeof awsService.getStatus>>,
+    awsIdentity: Awaited<ReturnType<typeof awsService.getIdentity>>,
     jenkinsStatus: Awaited<ReturnType<typeof jenkinsService.getStatus>>,
     dockerStatus: Awaited<ReturnType<typeof dockerService.getStatus>>,
     infrastructureStatus: Awaited<ReturnType<typeof infrastructureService.getStatus>>,
@@ -682,24 +685,25 @@ export class OpsService {
       }
 
       if (integration.key === 'aws') {
+        const mappedAwsStatus = mapAwsToProviderStatus(awsIdentity.status);
         return {
           ...integration,
           status:
-            awsStatus.status === ProviderConnectionStatus.CONNECTED
+            mappedAwsStatus === ProviderConnectionStatus.CONNECTED
               ? IntegrationStatus.CONNECTED
-              : awsStatus.status === ProviderConnectionStatus.UNREACHABLE ||
-                  awsStatus.status === ProviderConnectionStatus.AUTH_FAILED
+              : mappedAwsStatus === ProviderConnectionStatus.UNREACHABLE ||
+                  mappedAwsStatus === ProviderConnectionStatus.AUTH_FAILED
                 ? IntegrationStatus.UNREACHABLE
                 : IntegrationStatus.NOT_CONFIGURED,
           description:
-            awsStatus.status === ProviderConnectionStatus.CONNECTED
-              ? `AWS account ${awsStatus.accountId ?? 'unknown'} connected in ${awsStatus.region ?? 'unknown region'}.`
-              : awsStatus.message,
+            mappedAwsStatus === ProviderConnectionStatus.CONNECTED
+              ? `AWS account ${awsIdentity.accountId ?? 'unknown'} connected in ${awsIdentity.region ?? 'unknown region'}.`
+              : awsIdentity.message,
           href: '/dashboard/operations',
-          lastCheckedAt: awsStatus.checkedAt,
+          lastCheckedAt: awsIdentity.checkedAt,
           metrics: {
-            region: awsStatus.region ?? null,
-            accountId: awsStatus.accountId ?? null,
+            region: awsIdentity.region ?? null,
+            accountId: awsIdentity.accountId ?? null,
           },
         };
       }

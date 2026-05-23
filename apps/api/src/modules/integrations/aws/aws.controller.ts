@@ -6,7 +6,7 @@ import type {
   AwsEcsCluster,
   AwsEcsService,
   AwsListResponse,
-  AwsStatus,
+  AwsStatusResponse,
   AwsSummary,
   AwsDeploymentTarget,
   AwsDeploymentPlanRequest,
@@ -15,7 +15,7 @@ import { awsService } from './aws.service.js';
 import { requireProviderInventoryAccess } from '../integration-access.service.js';
 
 export class AwsController {
-  status = async (_req: Request, res: Response<{ data: AwsStatus }>): Promise<void> => {
+  status = async (_req: Request, res: Response<{ data: AwsStatusResponse }>): Promise<void> => {
     const raw = await awsService.getStatus();
     const safeStatus = {
       status: raw.status,
@@ -23,7 +23,33 @@ export class AwsController {
       message: raw.message,
       checkedAt: raw.checkedAt,
     };
-    res.json({ data: safeStatus as unknown as AwsStatus });
+    res.json({ data: safeStatus as AwsStatusResponse });
+  };
+
+  identity = async (req: Request, res: Response): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
+    res.json({ data: await awsService.getIdentity() });
+  };
+
+  readiness = async (req: Request, res: Response): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
+    res.json({ data: await awsService.getReadiness() });
+  };
+
+  permissions = async (req: Request, res: Response): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
+    res.json({ data: await awsService.getPermissions() });
+  };
+
+  remoteState = async (req: Request, res: Response): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
+    res.json({ data: await awsService.getRemoteStateReadiness() });
+  };
+
+  workspaceReadiness = async (req: Request, res: Response): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
+    const { targetSlug } = req.params;
+    res.json({ data: await awsService.getWorkspaceReadiness(targetSlug!) });
   };
 
   summary = async (req: Request, res: Response<{ data: AwsSummary }>): Promise<void> => {
@@ -54,11 +80,6 @@ export class AwsController {
   cloudWatchAlarms = async (req: Request, res: Response<{ data: AwsListResponse<AwsCloudWatchAlarm> }>): Promise<void> => {
     requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listCloudWatchAlarms() });
-  };
-
-  identity = async (req: Request, res: Response<{ data: AwsStatus }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
-    res.json({ data: await awsService.getStatus() });
   };
 
   deploymentTargets = async (req: Request, res: Response<{ data: AwsListResponse<AwsDeploymentTarget> }>): Promise<void> => {

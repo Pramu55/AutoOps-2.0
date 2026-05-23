@@ -6,10 +6,19 @@ import type {
   AwsEcsService,
   AwsListResponse,
   AwsPartialFailure,
-  AwsStatus,
+  AwsStatusResponse,
   AwsSummary,
+  AwsIdentityResponse,
+  AwsReadinessResponse,
+  AwsPermissionsResponse,
+  AwsRemoteStateReadinessResponse,
+  AwsWorkspaceReadinessResponse,
+  AwsDeploymentTarget,
+  AwsDeploymentTargetsResponse,
+  AwsPermissionDiagnostic,
+  AwsDeploymentTargetType,
 } from '@autoops/types';
-import { ProviderConnectionStatus } from '@autoops/types';
+import { ProviderConnectionStatus, AwsIntegrationStatus, AwsReadinessStatus, AwsDiagnosticStatus } from '@autoops/types';
 import {
   DescribeAlarmsCommand,
   DescribeClustersCommand,
@@ -20,23 +29,34 @@ import {
   ListClustersCommand,
   ListFunctionsCommand,
   ListServicesCommand,
+  DescribeVpcsCommand,
+  DescribeSubnetsCommand,
+  DescribeSecurityGroupsCommand,
+  ListTaskDefinitionsCommand,
+  DescribeLogGroupsCommand,
+  DescribeLoadBalancersCommand,
+  GetUserCommand,
+  HeadBucketCommand,
+  DescribeTableCommand,
   classifyAwsError,
   createAwsClients,
   getAwsConfiguration,
   safeAwsMessage,
 } from './aws.client.js';
 import { prisma, type Prisma } from '@autoops/database';
-import { OperationProvider, OperationType, type AwsDeploymentTarget, type AwsDeploymentOperationResponse, type AwsDeploymentSummary } from '@autoops/types';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { OperationProvider, OperationType, type AwsDeploymentOperationResponse, type AwsDeploymentSummary } from '@autoops/types';
 import { listTerraformWorkspaces, getTerraformWorkspaceBySlug, detectTerraformTool } from '@autoops/utils';
 import { operationService } from '../../operations/operation.service.js';
 
 export class AwsService {
-  async getStatus(): Promise<AwsStatus> {
+  async getStatus(): Promise<AwsStatusResponse> {
     const checkedAt = new Date().toISOString();
     const config = getAwsConfiguration();
     if (!config.configured) {
       return {
-        status: ProviderConnectionStatus.NOT_CONFIGURED,
+        status: AwsIntegrationStatus.NOT_CONFIGURED,
         configured: false,
         region: config.region,
         message: config.message,
@@ -47,7 +67,7 @@ export class AwsService {
     const clients = createAwsClients();
     if (!clients) {
       return {
-        status: ProviderConnectionStatus.NOT_CONFIGURED,
+        status: AwsIntegrationStatus.NOT_CONFIGURED,
         configured: false,
         region: config.region,
         message: config.message,
@@ -56,25 +76,328 @@ export class AwsService {
     }
 
     try {
-      const identity = await clients.sts.send(new GetCallerIdentityCommand({}));
+      await clients.sts.send(new GetCallerIdentityCommand({}));
       return {
-        status: ProviderConnectionStatus.CONNECTED,
+        status: AwsIntegrationStatus.CONNECTED,
         configured: true,
-        accountId: identity.Account,
-        callerArn: identity.Arn,
         region: clients.region,
-        message: 'AWS STS identity verified.',
+        message: 'AWS integration is reachable.',
         checkedAt,
       };
     } catch (error) {
+      const pStatus = classifyAwsError(error);
+      const mStatus = pStatus === ProviderConnectionStatus.AUTH_FAILED ? AwsIntegrationStatus.AUTH_FAILED : AwsIntegrationStatus.ERROR;
       return {
-        status: classifyAwsError(error),
+        status: mStatus,
         configured: true,
         region: clients.region,
         message: safeAwsMessage(error),
         checkedAt,
       };
     }
+  }
+
+  async getIdentity(): Promise<AwsIdentityResponse> {
+    const checkedAt = new Date().toISOString();
+    const config = getAwsConfiguration();
+    if (!config.configured) {
+      return {
+        status: AwsIntegrationStatus.NOT_CONFIGURED,
+        configured: false,
+        region: config.region,
+        checkedAt,
+      };
+    }
+
+    const clients = createAwsClients();
+    if (!clients) {
+      return {
+        status: AwsIntegrationStatus.NOT_CONFIGURED,
+        configured: false,
+        region: config.region,
+        checkedAt,
+      };
+    }
+
+    try {
+      const identity = await clients.sts.send(new GetCallerIdentityCommand({}));
+      return {
+        status: AwsIntegrationStatus.CONNECTED,
+        configured: true,
+        accountId: identity.Account,
+        arn: identity.Arn,
+        userId: identity.UserId,
+        region: clients.region,
+        checkedAt,
+      };
+    } catch (error) {
+      const pStatus = classifyAwsError(error);
+      const mStatus = pStatus === ProviderConnectionStatus.AUTH_FAILED ? AwsIntegrationStatus.AUTH_FAILED : AwsIntegrationStatus.ERROR;
+      return {
+        status: mStatus,
+        configured: true,
+        region: clients.region,
+        checkedAt,
+      };
+    }
+  }
+
+  async getReadiness(): Promise<AwsReadinessResponse> {
+    const checkedAt = new Date().toISOString();
+    
+    const integrationEnabled = process.env.AWS_INTEGRATION_ENABLED === 'true';
+    const regionConfigured = !!process.env.AWS_REGION;
+    const accessKeyConfigured = !!process.env.AWS_ACCESS_KEY_ID;
+    const secretKeyConfigured = !!process.env.AWS_SECRET_ACCESS_KEY;
+    const sessionTokenConfigured = !!process.env.AWS_SESSION_TOKEN;
+    const accountIdConfigured = !!process.env.AWS_ACCOUNT_ID;
+    const allowedWorkspacesConfigured = !!process.env.AWS_ALLOWED_DEPLOYMENT_WORKSPACES;
+    const remoteStateBucketConfigured = !!process.env.AWS_TERRAFORM_STATE_BUCKET;
+    const remoteStateLockTableConfigured = !!process.env.AWS_TERRAFORM_STATE_DYNAMODB_TABLE;
+    const remoteStateRegionConfigured = !!process.env.AWS_TERRAFORM_STATE_REGION;
+    const applyEnabled = process.env.AWS_DEPLOYMENT_APPLY_ENABLED === 'true';
+
+    const missing: string[] = [];
+    if (!process.env.AWS_REGION) missing.push('AWS_REGION');
+    if (!process.env.AWS_ACCESS_KEY_ID) missing.push('AWS_ACCESS_KEY_ID');
+    if (!process.env.AWS_SECRET_ACCESS_KEY) missing.push('AWS_SECRET_ACCESS_KEY');
+    if (!process.env.AWS_ACCOUNT_ID) missing.push('AWS_ACCOUNT_ID');
+
+    const isFullyConfigured = regionConfigured && accessKeyConfigured && secretKeyConfigured && accountIdConfigured;
+    const isNotConfigured = !regionConfigured && !accessKeyConfigured && !secretKeyConfigured && !accountIdConfigured;
+    
+    let status = AwsReadinessStatus.READY;
+    if (isNotConfigured) status = AwsReadinessStatus.NOT_CONFIGURED;
+    else if (!isFullyConfigured) status = AwsReadinessStatus.PARTIAL;
+
+    return {
+      status,
+      integrationEnabled,
+      regionConfigured,
+      accessKeyConfigured,
+      secretKeyConfigured,
+      sessionTokenConfigured,
+      accountIdConfigured,
+      allowedWorkspacesConfigured,
+      remoteStateBucketConfigured,
+      remoteStateLockTableConfigured,
+      remoteStateRegionConfigured,
+      applyEnabled,
+      missing,
+      checkedAt,
+    };
+  }
+
+  async getPermissions(): Promise<AwsPermissionsResponse> {
+    const checkedAt = new Date().toISOString();
+    const config = getAwsConfiguration();
+    const clients = createAwsClients();
+
+    if (!config.configured || !clients) {
+      return {
+        status: AwsIntegrationStatus.NOT_CONFIGURED,
+        diagnostics: [],
+        checkedAt,
+      };
+    }
+
+    const diagnostics: AwsPermissionDiagnostic[] = [];
+
+    const runCheck = async (service: string, action: string, fn: () => Promise<void>) => {
+      try {
+        await fn();
+        diagnostics.push({ service, action, status: AwsDiagnosticStatus.PASS, message: 'Permission granted.', checkedAt });
+      } catch (error: any) {
+        let status = AwsDiagnosticStatus.ERROR;
+        const pStatus = classifyAwsError(error);
+        if (pStatus === ProviderConnectionStatus.AUTH_FAILED) status = AwsDiagnosticStatus.AUTH_FAILED;
+        else if (error?.name === 'AccessDeniedException' || error?.message?.includes('AccessDenied')) status = AwsDiagnosticStatus.MISSING_PERMISSION;
+        
+        diagnostics.push({ service, action, status, message: safeAwsMessage(error), checkedAt });
+      }
+    };
+
+    await runCheck('STS', 'sts:GetCallerIdentity', async () => { await clients.sts.send(new GetCallerIdentityCommand({})); });
+    await runCheck('ECR', 'ecr:DescribeRepositories', async () => { await clients.ecr.send(new DescribeRepositoriesCommand({ maxResults: 1 })); });
+    await runCheck('ECS', 'ecs:ListClusters', async () => { await clients.ecs.send(new ListClustersCommand({ maxResults: 1 })); });
+    await runCheck('ECS', 'ecs:ListTaskDefinitions', async () => { await clients.ecs.send(new ListTaskDefinitionsCommand({ maxResults: 1 })); });
+    await runCheck('CloudWatchLogs', 'logs:DescribeLogGroups', async () => { await clients.cloudWatchLogs.send(new DescribeLogGroupsCommand({ limit: 1 })); });
+    await runCheck('EC2', 'ec2:DescribeVpcs', async () => { await clients.ec2.send(new DescribeVpcsCommand({ MaxResults: 5 })); });
+    await runCheck('EC2', 'ec2:DescribeSubnets', async () => { await clients.ec2.send(new DescribeSubnetsCommand({ MaxResults: 5 })); });
+    await runCheck('EC2', 'ec2:DescribeSecurityGroups', async () => { await clients.ec2.send(new DescribeSecurityGroupsCommand({ MaxResults: 5 })); });
+    await runCheck('ElasticLoadBalancingV2', 'elasticloadbalancing:DescribeLoadBalancers', async () => { await clients.elb.send(new DescribeLoadBalancersCommand({ PageSize: 1 })); });
+    await runCheck('IAM', 'iam:GetUser', async () => { await clients.iam.send(new GetUserCommand({})); });
+
+    const allPass = diagnostics.every(d => d.status === AwsDiagnosticStatus.PASS);
+    const anyAuthFailed = diagnostics.some(d => d.status === AwsDiagnosticStatus.AUTH_FAILED);
+
+    let status = AwsIntegrationStatus.CONNECTED;
+    if (anyAuthFailed) status = AwsIntegrationStatus.AUTH_FAILED;
+    else if (!allPass) status = AwsIntegrationStatus.ERROR;
+
+    return {
+      status,
+      diagnostics,
+      checkedAt,
+    };
+  }
+
+  async getRemoteStateReadiness(): Promise<AwsRemoteStateReadinessResponse> {
+    const checkedAt = new Date().toISOString();
+    const bucket = process.env.AWS_TERRAFORM_STATE_BUCKET;
+    const lockTable = process.env.AWS_TERRAFORM_STATE_DYNAMODB_TABLE;
+    const region = process.env.AWS_TERRAFORM_STATE_REGION;
+
+    const bucketConfigured = !!bucket;
+    const lockTableConfigured = !!lockTable;
+    const stateRegionConfigured = !!region;
+
+    const response: AwsRemoteStateReadinessResponse = {
+      status: AwsReadinessStatus.NOT_CONFIGURED,
+      bucketConfigured,
+      lockTableConfigured,
+      stateRegionConfigured,
+      bucketReachable: null,
+      lockTableReachable: null,
+      checks: [],
+      checkedAt,
+    };
+
+    if (!bucketConfigured && !lockTableConfigured && !stateRegionConfigured) {
+      return response;
+    }
+
+    if (!bucketConfigured || !lockTableConfigured || !stateRegionConfigured) {
+      response.status = AwsReadinessStatus.PARTIAL;
+    }
+
+    const clients = createAwsClients();
+    if (!clients) {
+      response.status = AwsReadinessStatus.AUTH_FAILED;
+      return response;
+    }
+
+    response.status = AwsReadinessStatus.READY;
+
+    if (bucket) {
+      try {
+        await clients.s3.send(new HeadBucketCommand({ Bucket: bucket }));
+        response.bucketReachable = true;
+        response.checks.push({ name: 'S3 state bucket', status: AwsDiagnosticStatus.PASS, message: 'Bucket is reachable.' });
+      } catch (error: any) {
+        response.bucketReachable = false;
+        response.status = AwsReadinessStatus.ERROR;
+        if (error?.name === 'NotFound') {
+           response.checks.push({ name: 'S3 state bucket', status: 'NOT_FOUND', message: 'Bucket not found.' });
+        } else if (error?.name === 'Forbidden') {
+           response.checks.push({ name: 'S3 state bucket', status: AwsDiagnosticStatus.MISSING_PERMISSION, message: 'Access denied to bucket.' });
+        } else {
+           response.checks.push({ name: 'S3 state bucket', status: AwsDiagnosticStatus.ERROR, message: safeAwsMessage(error) });
+        }
+      }
+    } else {
+      response.checks.push({ name: 'S3 state bucket', status: 'MISSING_CONFIG', message: 'Bucket not configured.' });
+    }
+
+    if (lockTable) {
+      try {
+        await clients.dynamoDb.send(new DescribeTableCommand({ TableName: lockTable }));
+        response.lockTableReachable = true;
+        response.checks.push({ name: 'DynamoDB lock table', status: AwsDiagnosticStatus.PASS, message: 'Lock table is reachable.' });
+      } catch (error: any) {
+        response.lockTableReachable = false;
+        response.status = AwsReadinessStatus.ERROR;
+        if (error?.name === 'ResourceNotFoundException') {
+           response.checks.push({ name: 'DynamoDB lock table', status: 'NOT_FOUND', message: 'Table not found.' });
+        } else if (error?.name === 'AccessDeniedException') {
+           response.checks.push({ name: 'DynamoDB lock table', status: AwsDiagnosticStatus.MISSING_PERMISSION, message: 'Access denied to table.' });
+        } else {
+           response.checks.push({ name: 'DynamoDB lock table', status: AwsDiagnosticStatus.ERROR, message: safeAwsMessage(error) });
+        }
+      }
+    } else {
+      response.checks.push({ name: 'DynamoDB lock table', status: 'MISSING_CONFIG', message: 'Lock table not configured.' });
+    }
+
+    return response;
+  }
+
+  async getWorkspaceReadiness(targetSlug: string): Promise<AwsWorkspaceReadinessResponse> {
+    const checkedAt = new Date().toISOString();
+    
+    const targets = await this.listDeploymentTargets();
+    const isAllowed = targets.items.some(t => t.slug === targetSlug);
+
+    const res: AwsWorkspaceReadinessResponse = {
+      status: AwsReadinessStatus.NOT_CONFIGURED,
+      targetSlug,
+      workspaceExists: false,
+      requiredFiles: [],
+      tooling: {
+        tofuAvailable: false,
+        terraformAvailable: false,
+      },
+      checks: [],
+      checkedAt,
+    };
+
+    if (!isAllowed) {
+       res.status = AwsReadinessStatus.ERROR;
+       res.checks.push({ name: 'Allowed Target', status: 'FAIL', message: 'Target slug is not allowlisted.' });
+       return res;
+    }
+
+    const workspace = await getTerraformWorkspaceBySlug(targetSlug);
+    if (!workspace) {
+       res.status = AwsReadinessStatus.ERROR;
+       res.checks.push({ name: 'Workspace Directory', status: 'FAIL', message: 'Workspace directory does not exist.' });
+       return res;
+    }
+
+    res.workspaceExists = true;
+    res.status = AwsReadinessStatus.READY;
+
+    const reqFiles = ['providers.tf', 'main.tf', 'variables.tf', 'outputs.tf', 'backend.tf.example', 'terraform.tfvars.example', 'README.md'];
+    for (const file of reqFiles) {
+      try {
+        await fs.access(path.join(workspace.absolutePath, file));
+        res.requiredFiles.push({ path: file, present: true });
+      } catch {
+        res.requiredFiles.push({ path: file, present: false });
+        res.status = AwsReadinessStatus.PARTIAL;
+      }
+    }
+
+    try {
+      await fs.access(path.join(workspace.absolutePath, 'terraform.tfstate'));
+      res.checks.push({ name: 'Local State', status: 'FAIL', message: 'terraform.tfstate is checked in!' });
+      res.status = AwsReadinessStatus.ERROR;
+    } catch {
+      res.checks.push({ name: 'Local State', status: AwsDiagnosticStatus.PASS, message: 'No local terraform.tfstate found.' });
+    }
+
+    try {
+      await fs.access(path.join(workspace.absolutePath, '.terraform'));
+      res.checks.push({ name: '.terraform Directory', status: 'FAIL', message: '.terraform directory is checked in!' });
+      res.status = AwsReadinessStatus.ERROR;
+    } catch {
+      res.checks.push({ name: '.terraform Directory', status: AwsDiagnosticStatus.PASS, message: 'No local .terraform dir found.' });
+    }
+
+    const toolStatus = await detectTerraformTool();
+    if (toolStatus.tool === 'tofu') res.tooling.tofuAvailable = true;
+    if (toolStatus.tool === 'terraform') res.tooling.terraformAvailable = true;
+
+    if (!res.tooling.tofuAvailable && !res.tooling.terraformAvailable) {
+      res.checks.push({ name: 'Tooling', status: 'FAIL', message: 'Neither tofu nor terraform is available.' });
+      res.status = AwsReadinessStatus.ERROR;
+    } else {
+      res.checks.push({ name: 'Tooling', status: AwsDiagnosticStatus.PASS, message: `${toolStatus.tool} is available.` });
+    }
+
+    res.checks.push({ name: 'tofu fmt -check', status: AwsDiagnosticStatus.SKIPPED, message: 'Skipped formatting check to avoid execution.' });
+
+    return res;
   }
 
   async getSummary(): Promise<AwsSummary> {
@@ -155,9 +478,14 @@ export class AwsService {
         .filter((w) => allowedSlugs.has(w.slug))
         .map((w) => ({
           slug: w.slug,
-          displayName: w.displayName,
-          absolutePath: w.absolutePath,
-          relativePath: w.relativePath,
+          name: w.displayName,
+          type: AwsDeploymentTargetType.ECS_FARGATE,
+          planSupported: true,
+          applySupported: true,
+          applyEnabled: process.env.AWS_DEPLOYMENT_APPLY_ENABLED === 'true',
+          requiresApproval: true,
+          remoteStateRequired: true,
+          status: 'READY',
         }));
     });
   }
@@ -450,3 +778,10 @@ export class AwsService {
 }
 
 export const awsService = new AwsService();
+
+export function mapAwsToProviderStatus(status: AwsIntegrationStatus): ProviderConnectionStatus {
+  if (status === AwsIntegrationStatus.CONNECTED) return ProviderConnectionStatus.CONNECTED;
+  if (status === AwsIntegrationStatus.AUTH_FAILED) return ProviderConnectionStatus.AUTH_FAILED;
+  if (status === AwsIntegrationStatus.NOT_CONFIGURED) return ProviderConnectionStatus.NOT_CONFIGURED;
+  return ProviderConnectionStatus.ERROR;
+}
