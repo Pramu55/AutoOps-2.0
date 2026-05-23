@@ -31,6 +31,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { clearAuthSession } from '@/lib/auth-session';
 import { cn } from '@/lib/cn';
+import { getQueryClient } from '@/lib/query-client';
 import { disconnectSocket } from '@/lib/socket';
 import { useAuthStore } from '@/stores/auth';
 import { useWorkspaceStore } from '@/stores/workspace';
@@ -545,6 +546,7 @@ export function Topbar() {
     clearAuthSession();
     clearAuth();
     resetWorkspace();
+    getQueryClient().clear();
     router.replace('/login');
   }
 

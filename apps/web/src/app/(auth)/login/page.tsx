@@ -7,10 +7,12 @@ import { ArrowRight, CheckCircle2, ChevronDown, Zap } from 'lucide-react';
 import type { AuthSession } from '@autoops/types';
 import { api, ApiError } from '@/lib/api';
 import { setAuthSession } from '@/lib/auth-session';
+import { getQueryClient } from '@/lib/query-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { isAdminConsoleRole } from '@/lib/role';
 import { useAuthStore } from '@/stores/auth';
+import { useWorkspaceStore } from '@/stores/workspace';
 
 type LoginResponse = {
   data: AuthSession;
@@ -30,6 +32,13 @@ const LOCAL_DEMO_ACCOUNTS = [
     email: 'approver.local@autoops.dev',
     password: 'StrongPass123',
     buttonLabel: 'Use Admin account',
+  },
+  {
+    label: 'Isolated Tenant User',
+    description: 'Separate local-only organization for tenant isolation testing.',
+    email: 'isolated.local@autoops.dev',
+    password: 'StrongPass123',
+    buttonLabel: 'Use Isolated account',
   },
 ] as const;
 
@@ -79,6 +88,9 @@ export default function LoginPage() {
   const router = useRouter();
   const setAuth = useAuthStore((state) => state.setAuth);
   const clearAuth = useAuthStore((state) => state.clearAuth);
+  const resetWorkspace = useWorkspaceStore((state) => state.reset);
+  const setCurrentOrg = useWorkspaceStore((state) => state.setCurrentOrg);
+  const setOrgs = useWorkspaceStore((state) => state.setOrgs);
 
   const [email, setEmail] = useState('pramod.local@autoops.dev');
   const [password, setPassword] = useState('StrongPass123');
@@ -119,6 +131,8 @@ export default function LoginPage() {
 
     try {
       clearAuth();
+      resetWorkspace();
+      getQueryClient().clear();
       const response = await api.post<LoginResponse>('/v1/auth/login', {
         email: normalizedEmail,
         password,
@@ -126,6 +140,13 @@ export default function LoginPage() {
 
       setAuthSession(response.data);
       setAuth(response.data.user, response.data.tokens.accessToken);
+      const orgs = response.data.organizations.map((org) => ({
+        id: org.id,
+        name: org.name,
+        slug: org.slug,
+      }));
+      setOrgs(orgs);
+      if (orgs[0]) setCurrentOrg(orgs[0]);
       const role = response.data.organizations[0]?.role ?? null;
       const target = isAdminConsoleRole(role) ? '/dashboard' : getRedirectTarget();
       router.replace(target);

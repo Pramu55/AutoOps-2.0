@@ -42,6 +42,7 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 
 - [Production Deployment Readiness](./PRODUCTION_DEPLOYMENT_READINESS.md)
 - [Security Checklist](./SECURITY_CHECKLIST.md)
+- [Tenant Isolation and Authorization](./TENANT_ISOLATION_AND_AUTHORIZATION.md)
 - [CI and Release Gates](./CI_AND_RELEASE_GATES.md)
 - [GitHub Release and Tagging](./GITHUB_RELEASE_AND_TAGGING.md)
 

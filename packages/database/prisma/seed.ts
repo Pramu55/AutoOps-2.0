@@ -14,6 +14,12 @@ const DEMO_PROJECT = {
   slug: 'hello-autoops',
   description: 'Default seeded project to verify the platform end to end.',
 };
+const ISOLATED_ORG = { name: 'AutoOps Isolated Demo', slug: 'autoops-isolated-demo' };
+const ISOLATED_PROJECT = {
+  name: 'Isolated AutoOps',
+  slug: 'isolated-autoops',
+  description: 'Separate local-only project used to verify tenant isolation.',
+};
 const OPERATOR_USER = {
   email: process.env.SEED_EMAIL ?? 'pramod.local@autoops.dev',
   name: 'Pramod S S',
@@ -22,6 +28,16 @@ const OPERATOR_USER = {
 const APPROVER_USER = {
   email: process.env.SEED_APPROVER_EMAIL ?? 'approver.local@autoops.dev',
   name: 'AutoOps Approver',
+  role: OrgRole.ADMIN,
+} as const;
+const ISOLATED_USER = {
+  email: process.env.SEED_ISOLATED_EMAIL ?? 'isolated.local@autoops.dev',
+  name: 'AutoOps Isolated User',
+  role: OrgRole.OWNER,
+} as const;
+const ISOLATED_APPROVER_USER = {
+  email: process.env.SEED_ISOLATED_APPROVER_EMAIL ?? 'isolated.admin.local@autoops.dev',
+  name: 'AutoOps Isolated Approver',
   role: OrgRole.ADMIN,
 } as const;
 const DEMO_MEMBERSHIP_JOINED_AT = new Date('2000-01-01T00:00:00.000Z');
@@ -133,12 +149,83 @@ async function main(): Promise<void> {
     });
   }
 
+  const isolatedOrg = await prisma.organization.upsert({
+    where: { slug: ISOLATED_ORG.slug },
+    update: {},
+    create: ISOLATED_ORG,
+  });
+
+  for (const demoUser of [ISOLATED_USER, ISOLATED_APPROVER_USER] as const) {
+    const user = await prisma.user.upsert({
+      where: { email: demoUser.email },
+      update: {
+        name: demoUser.name,
+        passwordHash,
+        emailVerified: new Date(),
+        isActive: true,
+      },
+      create: {
+        email: demoUser.email,
+        name: demoUser.name,
+        passwordHash,
+        emailVerified: new Date(),
+      },
+    });
+
+    await prisma.orgMembership.upsert({
+      where: {
+        userId_organizationId: {
+          userId: user.id,
+          organizationId: isolatedOrg.id,
+        },
+      },
+      update: {
+        role: demoUser.role,
+        joinedAt: DEMO_MEMBERSHIP_JOINED_AT,
+      },
+      create: {
+        userId: user.id,
+        organizationId: isolatedOrg.id,
+        role: demoUser.role,
+        joinedAt: DEMO_MEMBERSHIP_JOINED_AT,
+      },
+    });
+  }
+
+  const isolatedProject = await prisma.project.upsert({
+    where: { organizationId_slug: { organizationId: isolatedOrg.id, slug: ISOLATED_PROJECT.slug } },
+    update: {},
+    create: {
+      organizationId: isolatedOrg.id,
+      name: ISOLATED_PROJECT.name,
+      slug: ISOLATED_PROJECT.slug,
+      description: ISOLATED_PROJECT.description,
+      visibility: ProjectVisibility.ORG,
+      defaultBranch: 'main',
+    },
+  });
+
+  await prisma.environment.upsert({
+    where: { projectId_name: { projectId: isolatedProject.id, name: 'development' } },
+    update: {},
+    create: {
+      projectId: isolatedProject.id,
+      name: 'development',
+      slug: 'development',
+      kind: EnvironmentKind.DEVELOPMENT,
+    },
+  });
+
   // eslint-disable-next-line no-console
   console.log('\n[seed] Done.');
   // eslint-disable-next-line no-console
   console.log(`       ${OPERATOR_USER.role}: ${OPERATOR_USER.email} / ${DEMO_PASSWORD}`);
   // eslint-disable-next-line no-console
   console.log(`       ${APPROVER_USER.role}: ${APPROVER_USER.email} / ${DEMO_PASSWORD}`);
+  // eslint-disable-next-line no-console
+  console.log(`       ${ISOLATED_USER.role}: ${ISOLATED_USER.email} / ${DEMO_PASSWORD}`);
+  // eslint-disable-next-line no-console
+  console.log(`       ${ISOLATED_APPROVER_USER.role}: ${ISOLATED_APPROVER_USER.email} / ${DEMO_PASSWORD}`);
   // eslint-disable-next-line no-console
   console.log('');
 }

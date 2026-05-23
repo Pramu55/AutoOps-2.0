@@ -34,13 +34,18 @@ export function createDeploymentsQueue(): Queue<DeploymentJobData> {
 }
 
 async function processDeployment(job: Job<DeploymentJobData>): Promise<void> {
-  const { deploymentId, environmentId } = job.data;
+  const { deploymentId, environmentId, organizationId } = job.data;
   const jobLog = logger.child({ jobId: job.id, deploymentId, queue: DEPLOYMENTS_QUEUE });
 
   jobLog.info('Deployment job started');
 
-  const deployment = await db.deployment.findUnique({
-    where: { id: deploymentId },
+  const deployment = await db.deployment.findFirst({
+    where: {
+      id: deploymentId,
+      project: {
+        organizationId,
+      },
+    },
     select: {
       id: true,
       status: true,
@@ -118,6 +123,9 @@ async function processDeployment(job: Job<DeploymentJobData>): Promise<void> {
   const claimed = await db.deployment.updateMany({
     where: {
       id: deploymentId,
+      project: {
+        organizationId,
+      },
       status: DeploymentStatus.QUEUED,
     },
     data: {
