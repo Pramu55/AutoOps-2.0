@@ -48,7 +48,8 @@ Before applying a promotion or rollback, the background worker performs validati
 1. **Plan Reconciliation**: The worker re-runs `init`, `validate`, and `plan` dynamically inside the temporary directory.
 2. **Block Destructive Actions**: If the generated plan contains any destroy actions (`destroyCount > 0`), the apply is immediately blocked.
 3. **Check Eligibility**: If `applyEligible` is `false` or the plan risk is `HIGH`, execution is aborted and a safe incident is recorded.
-4. **Lineage Linkage**: Upon successful execution, the worker:
+4. **Guardrail Re-Check**: Cost, blast-radius, account, region, Fargate sizing, public load balancer, and desired-count guardrails are re-evaluated immediately before mutation. A `BLOCKED` guardrail result stops promotion or rollback even after approval.
+5. **Lineage Linkage**: Upon successful execution, the worker:
    - Updates the status of the previous `ACTIVE` release in that environment to `SUPERSEDED`.
    - Records the new release as `ACTIVE` and links the promotion or rollback lineage references.
 

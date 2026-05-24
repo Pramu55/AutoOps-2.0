@@ -1894,6 +1894,15 @@ export class OpsService {
     const status = this._stringField(result, 'status') ?? this._stringField(result, 'result');
     const completedAt = this._stringField(result, 'completedAt');
     const restartedAt = this._stringField(result, 'restartedAt');
+    const guardrails = this._toRecord(result.guardrails);
+    const guardrailStatus = this._stringField(guardrails, 'status');
+    const guardrailRisk = this._stringField(guardrails, 'riskLevel');
+    const guardrailCost = this._toRecord(guardrails.costEstimate);
+    const guardrailBlockedReasons = Array.isArray(guardrails.blockedReasons)
+      ? guardrails.blockedReasons
+          .map((item) => this._stringField(this._toRecord(item), 'message'))
+          .filter((item): item is string => item !== null)
+      : [];
 
     if (jobName) safeSummary.push(`Job: ${jobName}`);
     if (workspaceSlug) safeSummary.push(`Terraform workspace: ${workspaceSlug}`);
@@ -1908,6 +1917,14 @@ export class OpsService {
     }
     if (riskLevel) safeSummary.push(`Plan risk: ${riskLevel}`);
     if (applyEligible !== null) safeSummary.push(`Apply eligible: ${applyEligible ? 'yes' : 'no'}`);
+    if (guardrailStatus) safeSummary.push(`Guardrails: ${guardrailStatus}`);
+    if (guardrailRisk) safeSummary.push(`Guardrail risk: ${guardrailRisk}`);
+    if (typeof guardrailCost.estimatedMonthlyDeltaUsd === 'number') {
+      safeSummary.push(`Estimated monthly cost delta: $${guardrailCost.estimatedMonthlyDeltaUsd}`);
+    }
+    if (guardrailBlockedReasons.length > 0) {
+      safeSummary.push(`Blocked by guardrails: ${guardrailBlockedReasons.slice(0, 3).join('; ')}`);
+    }
     if (relativePath) safeSummary.push(`Allowlisted path: ${relativePath}`);
     if (buildNumber !== null) safeSummary.push(`Build: #${buildNumber}`);
     if (buildUrl) safeSummary.push('Jenkins build URL is available.');

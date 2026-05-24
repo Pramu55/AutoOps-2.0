@@ -28,6 +28,7 @@ Real DevOps work is not only clicking buttons. Teams need safe execution, clear 
 - Cloud Provider Readiness Center for AWS/Azure/GCP without unsafe direct cloud writes.
 - AWS ECR image build and push workflows using allowlisted build targets and repositories.
 - AWS ECS Terraform/OpenTofu plan-only workflow using remote state and tenant-scoped pushed ECR image metadata.
+- AWS cost and blast-radius guardrails for account/region allowlists, conservative estimated monthly cost, public load balancer default deny, and blocked mutation evidence.
 - Confirmation tokens for all controlled operations.
 - Policy engine for approval-required operations.
 - RBAC with requester/approver separation.

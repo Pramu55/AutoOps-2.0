@@ -15,6 +15,9 @@ import type {
   AwsEcrImageMetadata,
   AwsTerraformPlanReadinessResponse,
   AwsTerraformApplyReadinessResponse,
+  AwsGuardrailReadinessResponse,
+  AwsGuardrailEvaluationSummary,
+  AwsGuardrailEvaluationResponse,
   AwsDeploymentSummary,
   AwsReleaseSummary,
   AwsReleaseHistoryResponse,
@@ -43,6 +46,8 @@ export function AwsDeploymentClient() {
   const [ecrMessage, setEcrMessage] = useState<string | null>(null);
   const [planReadiness, setPlanReadiness] = useState<AwsTerraformPlanReadinessResponse | null>(null);
   const [applyReadiness, setApplyReadiness] = useState<AwsTerraformApplyReadinessResponse | null>(null);
+  const [guardrailReadiness, setGuardrailReadiness] = useState<AwsGuardrailReadinessResponse | null>(null);
+  const [guardrailEvaluations, setGuardrailEvaluations] = useState<AwsGuardrailEvaluationSummary[]>([]);
   const [deployments, setDeployments] = useState<AwsDeploymentSummary[]>([]);
   const [planMessage, setPlanMessage] = useState<string | null>(null);
   const [applyMessage, setApplyMessage] = useState<string | null>(null);
@@ -63,7 +68,7 @@ export function AwsDeploymentClient() {
   async function load() {
     setLoading(true);
     try {
-      const [idRes, readRes, permRes, rsRes, tRes, ecrReadyRes, ecrRepoRes, ecrImagesRes, planReadyRes, applyReadyRes, deploymentsRes, releasesRes, releaseReadyRes] = await Promise.all([
+      const [idRes, readRes, permRes, rsRes, tRes, ecrReadyRes, ecrRepoRes, ecrImagesRes, planReadyRes, applyReadyRes, guardrailReadyRes, guardrailEvalRes, deploymentsRes, releasesRes, releaseReadyRes] = await Promise.all([
         api.get<{ data: AwsIdentityResponse }>('/v1/integrations/aws/identity').catch((error) => {
           if (error?.status === 403) setInventoryDenied(true);
           return null;
@@ -77,6 +82,8 @@ export function AwsDeploymentClient() {
         api.get<{ data: AwsListResponse<AwsEcrImageMetadata> }>('/v1/integrations/aws/ecr/images').catch(() => null),
         api.get<{ data: AwsTerraformPlanReadinessResponse }>('/v1/integrations/aws/terraform/plan-readiness').catch(() => null),
         api.get<{ data: AwsTerraformApplyReadinessResponse }>('/v1/integrations/aws/apply-readiness').catch(() => null),
+        api.get<{ data: AwsGuardrailReadinessResponse }>('/v1/integrations/aws/guardrails/readiness').catch(() => null),
+        api.get<{ data: AwsGuardrailEvaluationResponse }>('/v1/integrations/aws/guardrails/evaluations').catch(() => null),
         api.get<{ data: AwsListResponse<AwsDeploymentSummary> }>('/v1/integrations/aws/deployments').catch(() => null),
         api.get<{ data: AwsReleaseHistoryResponse }>('/v1/integrations/aws/releases/history').catch(() => null),
         api.get<{ data: AwsReleaseReadinessResponse }>('/v1/integrations/aws/release-readiness').catch(() => null),
@@ -90,6 +97,8 @@ export function AwsDeploymentClient() {
       setEcrImages(ecrImagesRes?.data?.items ?? []);
       setPlanReadiness(planReadyRes?.data ?? null);
       setApplyReadiness(applyReadyRes?.data ?? null);
+      setGuardrailReadiness(guardrailReadyRes?.data ?? null);
+      setGuardrailEvaluations(guardrailEvalRes?.data?.items ?? []);
       setDeployments(deploymentsRes?.data?.items ?? []);
       setReleases(releasesRes?.data?.items ?? []);
       setReleaseReadiness(releaseReadyRes?.data ?? null);
@@ -219,6 +228,11 @@ export function AwsDeploymentClient() {
   };
 
   const pushedImages = ecrImages.filter((image) => image.action === 'push' && image.status === 'SUCCEEDED');
+  const latestGuardrail = guardrailEvaluations[0] ?? null;
+  const guardrailsBlocked =
+    guardrailReadiness?.status === 'BLOCKED' ||
+    latestGuardrail?.status === 'BLOCKED' ||
+    latestGuardrail?.riskLevel === 'BLOCKED';
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -499,7 +513,7 @@ export function AwsDeploymentClient() {
                     <td className="px-4 py-3 font-mono text-xs">{image.imageUri ?? `${image.repositoryName}:${image.imageTag}`}</td>
                     <td className="px-4 py-3">{image.environmentSlug}</td>
                     <td className="px-4 py-3">
-                      <Button type="button" size="sm" onClick={() => void requestTerraformPlan(image)} disabled={planReadiness.status !== 'READY'}>
+                      <Button type="button" size="sm" onClick={() => void requestTerraformPlan(image)} disabled={planReadiness.status !== 'READY' || guardrailsBlocked}>
                         Plan
                       </Button>
                     </td>
@@ -524,6 +538,107 @@ export function AwsDeploymentClient() {
               </div>
             </div>
           )}
+        </section>
+      )}
+
+      {guardrailReadiness && (
+        <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-950">
+                <StatusIcon status={guardrailReadiness.status} /> AWS Cost & Blast-Radius Guardrails
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Estimated monthly cost and blast-radius checks run before plan evidence and immediately before mutation.
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Conservative estimate. Not a billing guarantee.
+              </p>
+            </div>
+            <Button asChild variant="outline" size="sm">
+              <Link href="/dashboard/governance">Governance Evidence</Link>
+            </Button>
+          </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+            <div className="rounded-md border border-slate-100 p-4">
+              <h3 className="text-sm font-semibold text-slate-900">Account and region</h3>
+              <ul className="mt-3 space-y-2 text-sm text-slate-600">
+                <li className="flex items-center justify-between">
+                  <span>Account allowlist</span>
+                  <StatusIcon status={guardrailReadiness.config.allowedAccountIdsConfigured ? 'PASS' : 'FAIL'} />
+                </li>
+                <li className="flex items-center justify-between">
+                  <span>Region allowlist</span>
+                  <StatusIcon status={guardrailReadiness.config.allowedRegionsConfigured ? 'PASS' : 'FAIL'} />
+                </li>
+                <li className="flex items-center justify-between">
+                  <span>Public load balancer default deny</span>
+                  <StatusIcon status={guardrailReadiness.config.blockPublicLoadBalancerByDefault && !guardrailReadiness.config.allowPublicLoadBalancer ? 'PASS' : 'FAIL'} />
+                </li>
+              </ul>
+              {guardrailReadiness.config.missing.length > 0 && (
+                <p className="mt-3 text-xs text-amber-800">
+                  Missing: {guardrailReadiness.config.missing.join(', ')}
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-md border border-slate-100 p-4">
+              <h3 className="text-sm font-semibold text-slate-900">Cost guardrails</h3>
+              <dl className="mt-3 space-y-2 text-sm text-slate-600">
+                <div className="flex items-center justify-between">
+                  <dt>Enabled</dt>
+                  <dd>{guardrailReadiness.config.costGuardrailsEnabled ? 'yes' : 'no'}</dd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <dt>Estimated monthly cost limit</dt>
+                  <dd>${guardrailReadiness.config.maxMonthlyCostDeltaUsd}</dd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <dt>Max desired count</dt>
+                  <dd>{guardrailReadiness.config.maxDesiredCount}</dd>
+                </div>
+              </dl>
+            </div>
+
+            <div className="rounded-md border border-slate-100 p-4">
+              <h3 className="text-sm font-semibold text-slate-900">Latest guardrail evidence</h3>
+              {latestGuardrail ? (
+                <div className="mt-3 space-y-2 text-sm text-slate-600">
+                  <div className="flex items-center justify-between">
+                    <span>Status</span>
+                    <span className="font-semibold text-slate-950">{latestGuardrail.status}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Risk</span>
+                    <span className="font-semibold text-slate-950">{latestGuardrail.riskLevel}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Estimated monthly cost</span>
+                    <span className="font-semibold text-slate-950">${latestGuardrail.costEstimate.estimatedMonthlyDeltaUsd}</span>
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    +{latestGuardrail.blastRadius.addCount} / ~{latestGuardrail.blastRadius.changeCount} / -{latestGuardrail.blastRadius.destroyCount}
+                  </div>
+                  {latestGuardrail.blockedReasons.length > 0 && (
+                    <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-red-700">
+                      {latestGuardrail.blockedReasons.slice(0, 3).map((reason) => <li key={reason.code}>{reason.message}</li>)}
+                    </ul>
+                  )}
+                  {latestGuardrail.warnings.length > 0 && (
+                    <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-amber-700">
+                      {latestGuardrail.warnings.slice(0, 3).map((warning) => <li key={warning.code}>{warning.message}</li>)}
+                    </ul>
+                  )}
+                  <Link className="text-xs font-medium text-slate-900 underline" href={`/dashboard/operations/${latestGuardrail.operationId}`}>
+                    Open operation evidence
+                  </Link>
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-slate-500">No tenant-scoped guardrail evaluations yet.</p>
+              )}
+            </div>
+          </div>
         </section>
       )}
 
@@ -632,7 +747,7 @@ export function AwsDeploymentClient() {
                       void requestTerraformApply(applyReadiness.targetSlug, applyReadiness.environmentSlug);
                     }
                   }}
-                  disabled={applyReadiness.status !== 'READY' || applying || !applyReadiness.targetSlug || !applyReadiness.environmentSlug}
+                  disabled={applyReadiness.status !== 'READY' || applying || guardrailsBlocked || !applyReadiness.targetSlug || !applyReadiness.environmentSlug}
                   className="w-full bg-slate-950 text-white hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-500 flex items-center justify-center gap-2 rounded-full"
                 >
                   <Play className="h-4 w-4" /> Request Gated Apply
@@ -732,7 +847,7 @@ export function AwsDeploymentClient() {
                             type="button"
                             size="sm"
                             onClick={() => void requestPromote(activeStaging.id, activeStaging.targetSlug, 'production')}
-                            disabled={releaseReadiness.status !== 'READY' || promoting}
+                            disabled={releaseReadiness.status !== 'READY' || promoting || guardrailsBlocked}
                             className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-full flex items-center justify-center gap-1 text-xs"
                           >
                             <ArrowRight className="h-3 w-3" /> Request Production Promotion
@@ -777,7 +892,7 @@ export function AwsDeploymentClient() {
                               <Button
                                 type="button"
                                 size="sm"
-                                disabled={rollbackConfirmText !== 'ROLLBACK' || rollingBack || releaseReadiness.status !== 'READY'}
+                                disabled={rollbackConfirmText !== 'ROLLBACK' || rollingBack || releaseReadiness.status !== 'READY' || guardrailsBlocked}
                                 onClick={() => void requestRollback(selectedRollbackReleaseId)}
                                 className="w-full bg-amber-600 hover:bg-amber-700 text-white rounded text-xs"
                               >
@@ -881,7 +996,7 @@ export function AwsDeploymentClient() {
                               <Button
                                 type="button"
                                 size="sm"
-                                disabled={rollbackConfirmText !== 'ROLLBACK' || rollingBack || releaseReadiness.status !== 'READY'}
+                                disabled={rollbackConfirmText !== 'ROLLBACK' || rollingBack || releaseReadiness.status !== 'READY' || guardrailsBlocked}
                                 onClick={() => void requestRollback(selectedRollbackReleaseId)}
                                 className="w-full bg-amber-600 hover:bg-amber-700 text-white rounded text-xs"
                               >

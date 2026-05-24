@@ -29,7 +29,10 @@ The apply route enforces the existence of a fresh, successful `AWS_TERRAFORM_ECS
 ### 4. Worker-Side Pre-Checks
 Immediately before executing the apply, the background worker re-verifies all configuration, remote state availability, plan freshness, image matches, and target allowlisting.
 
-### 5. Plan Summary Verification
+### 5. Guardrail Enforcement
+Apply requires AWS cost and blast-radius guardrails to pass. The worker re-evaluates account and region allowlists, plan counts, conservative estimated monthly cost, public load balancer policy, desired count, and Fargate sizing immediately before mutation. Approval cannot override a `BLOCKED` guardrail result.
+
+### 6. Plan Summary Verification
 If no saved binary planfile exists:
 - The worker executes a fresh `init`, `validate`, and `plan` in a temporary workspace directory.
 - It compares the counts, image URI, environment, and targets of the new plan against the approved plan summary.

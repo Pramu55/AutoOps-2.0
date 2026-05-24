@@ -413,6 +413,99 @@ export interface AwsTerraformApplyReadinessResponse {
   checkedAt: string;
 }
 
+export enum AwsGuardrailStatus {
+  PASSED = 'PASSED',
+  WARNED = 'WARNED',
+  BLOCKED = 'BLOCKED',
+  NOT_CONFIGURED = 'NOT_CONFIGURED',
+}
+
+export enum AwsGuardrailRiskLevel {
+  LOW = 'LOW',
+  MEDIUM = 'MEDIUM',
+  HIGH = 'HIGH',
+  BLOCKED = 'BLOCKED',
+}
+
+export interface AwsGuardrailBlockedReason {
+  code: string;
+  message: string;
+}
+
+export interface AwsGuardrailWarning {
+  code: string;
+  message: string;
+}
+
+export interface AwsGuardrailConfigStatus {
+  costGuardrailsEnabled: boolean;
+  blastRadiusGuardrailsEnabled: boolean;
+  allowedAccountIdsConfigured: boolean;
+  allowedRegionsConfigured: boolean;
+  maxPlanAddCount: number;
+  maxPlanChangeCount: number;
+  maxMonthlyCostDeltaUsd: number;
+  maxFargateCpu: number;
+  maxFargateMemoryMb: number;
+  maxDesiredCount: number;
+  blockPublicLoadBalancerByDefault: boolean;
+  allowPublicLoadBalancer: boolean;
+  missing: string[];
+}
+
+export interface AwsCostEstimateSummary {
+  estimatedMonthlyMinUsd: number;
+  estimatedMonthlyMaxUsd: number;
+  estimatedMonthlyDeltaUsd: number;
+  currency: 'USD';
+  confidence: 'LOW' | 'MEDIUM';
+  notes: string[];
+}
+
+export interface AwsBlastRadiusSummary {
+  addCount: number;
+  changeCount: number;
+  destroyCount: number;
+  replacementCount: number;
+  publicLoadBalancerDetected: boolean;
+  iamChangeDetected: boolean;
+  securityGroupChangeDetected: boolean;
+  networkChangeDetected: boolean;
+  desiredCount: number | null;
+  fargateCpu: number | null;
+  fargateMemoryMb: number | null;
+  unknownHighImpactResources: string[];
+}
+
+export interface AwsGuardrailEvaluationSummary {
+  operationId: string | null;
+  targetSlug: string;
+  environmentSlug: string;
+  status: AwsGuardrailStatus;
+  riskLevel: AwsGuardrailRiskLevel;
+  accountAllowed: boolean | null;
+  regionAllowed: boolean | null;
+  accountIdMasked: string | null;
+  region: string | null;
+  costEstimate: AwsCostEstimateSummary;
+  blastRadius: AwsBlastRadiusSummary;
+  blockedReasons: AwsGuardrailBlockedReason[];
+  warnings: AwsGuardrailWarning[];
+  applyEligible: boolean;
+  evaluatedAt: string;
+}
+
+export interface AwsGuardrailReadinessResponse {
+  status: AwsGuardrailStatus;
+  config: AwsGuardrailConfigStatus;
+  checkedAt: string;
+}
+
+export interface AwsGuardrailEvaluationResponse {
+  items: AwsGuardrailEvaluationSummary[];
+  checkedAt: string;
+}
+
 export const awsTerraformEcsApplyRequestSchema = z.object({
   environmentSlug: z.string().min(2).max(32).regex(/^[a-z][a-z0-9-]+$/).optional(),
   confirmationToken: z.literal('APPLY'),

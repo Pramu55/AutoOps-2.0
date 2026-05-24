@@ -12,6 +12,8 @@ import {
   isSafeEcrImageTag,
   createEcrImageTag,
   isProductionEnvironment,
+  evaluateAwsGuardrails,
+  getAwsGuardrailConfigStatus,
 } from '@autoops/utils';
 import { operationService } from '../../operations/operation.service.js';
 import { operationAuthorizationService } from '../../operations/operation-authorization.service.js';
@@ -31,6 +33,8 @@ vi.mock('@autoops/utils', () => ({
   isSafeEcrImageTag: vi.fn(),
   createEcrImageTag: vi.fn(),
   isProductionEnvironment: vi.fn(),
+  evaluateAwsGuardrails: vi.fn(),
+  getAwsGuardrailConfigStatus: vi.fn(),
   BadRequestError: class BadRequestError extends Error {},
 }));
 
@@ -71,6 +75,43 @@ describe('AwsService', () => {
   let awsService: AwsService;
   const orgId = 'org-1';
   const userId = 'user-1';
+  const passedGuardrails = {
+    operationId: null,
+    targetSlug: 'sample-ecs-app',
+    environmentSlug: 'staging',
+    status: 'PASSED',
+    riskLevel: 'LOW',
+    accountAllowed: true,
+    regionAllowed: true,
+    accountIdMasked: '********9012',
+    region: 'ap-south-1',
+    costEstimate: {
+      estimatedMonthlyMinUsd: 0,
+      estimatedMonthlyMaxUsd: 0,
+      estimatedMonthlyDeltaUsd: 0,
+      currency: 'USD',
+      confidence: 'LOW',
+      notes: ['Conservative local estimate only.', 'Not a billing guarantee.'],
+    },
+    blastRadius: {
+      addCount: 0,
+      changeCount: 0,
+      destroyCount: 0,
+      replacementCount: 0,
+      publicLoadBalancerDetected: false,
+      iamChangeDetected: false,
+      securityGroupChangeDetected: false,
+      networkChangeDetected: false,
+      desiredCount: null,
+      fargateCpu: null,
+      fargateMemoryMb: null,
+      unknownHighImpactResources: [],
+    },
+    blockedReasons: [],
+    warnings: [],
+    applyEligible: true,
+    evaluatedAt: '2026-05-24T00:00:00.000Z',
+  };
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -85,6 +126,34 @@ describe('AwsService', () => {
     process.env.AWS_TERRAFORM_STATE_REGION = 'ap-south-1';
     process.env.AWS_ECR_PUSH_ENABLED = 'true';
     process.env.AWS_ECR_PRODUCTION_PUSH_REQUIRES_APPROVAL = 'true';
+    process.env.AWS_ALLOWED_ACCOUNT_IDS = '123456789012';
+    process.env.AWS_ALLOWED_REGIONS = 'ap-south-1';
+    process.env.AWS_MAX_PLAN_ADD_COUNT = '10';
+    process.env.AWS_MAX_PLAN_CHANGE_COUNT = '20';
+    process.env.AWS_MAX_MONTHLY_COST_DELTA_USD = '100';
+    process.env.AWS_MAX_FARGATE_CPU = '1024';
+    process.env.AWS_MAX_FARGATE_MEMORY_MB = '2048';
+    process.env.AWS_MAX_DESIRED_COUNT = '2';
+    process.env.AWS_BLOCK_PUBLIC_LOAD_BALANCER_BY_DEFAULT = 'true';
+    process.env.AWS_ALLOW_PUBLIC_LOAD_BALANCER = 'false';
+    process.env.AWS_COST_GUARDRAILS_ENABLED = 'true';
+    process.env.AWS_BLAST_RADIUS_GUARDRAILS_ENABLED = 'true';
+    vi.mocked(getAwsGuardrailConfigStatus).mockReturnValue({
+      costGuardrailsEnabled: true,
+      blastRadiusGuardrailsEnabled: true,
+      allowedAccountIdsConfigured: true,
+      allowedRegionsConfigured: true,
+      maxPlanAddCount: 10,
+      maxPlanChangeCount: 20,
+      maxMonthlyCostDeltaUsd: 100,
+      maxFargateCpu: 1024,
+      maxFargateMemoryMb: 2048,
+      maxDesiredCount: 2,
+      blockPublicLoadBalancerByDefault: true,
+      allowPublicLoadBalancer: false,
+      missing: [],
+    });
+    vi.mocked(evaluateAwsGuardrails).mockReturnValue(passedGuardrails as any);
     vi.mocked(listAllowedAwsEcrRepositories).mockReturnValue(['autoops-sample-app']);
     vi.mocked(listAwsEcrBuildTargets).mockReturnValue([
       {
@@ -426,7 +495,50 @@ describe('AwsService', () => {
         result: { destroyCount: 0, applyEligible: true, riskLevel: 'HIGH' },
       } as any);
 
-      await expect(awsService.applyDeployment(orgId, userId, 'sample-ecs-app', 'staging')).rejects.toThrow('blocked due to HIGH risk plan');
+      await expect(awsService.applyDeployment(orgId, userId, 'sample-ecs-app', 'staging')).rejects.toThrow('high-risk or blocked plan');
+    });
+
+    it('blocks apply readiness and requests when guardrail config is missing', async () => {
+      vi.mocked(getAwsGuardrailConfigStatus).mockReturnValue({
+        costGuardrailsEnabled: true,
+        blastRadiusGuardrailsEnabled: true,
+        allowedAccountIdsConfigured: false,
+        allowedRegionsConfigured: false,
+        maxPlanAddCount: 10,
+        maxPlanChangeCount: 20,
+        maxMonthlyCostDeltaUsd: 100,
+        maxFargateCpu: 1024,
+        maxFargateMemoryMb: 2048,
+        maxDesiredCount: 2,
+        blockPublicLoadBalancerByDefault: true,
+        allowPublicLoadBalancer: false,
+        missing: ['AWS_ALLOWED_ACCOUNT_IDS', 'AWS_ALLOWED_REGIONS'],
+      });
+
+      await expect(awsService.applyDeployment(orgId, userId, 'sample-ecs-app', 'staging')).rejects.toThrow('AWS guardrails are blocked');
+    });
+
+    it('blocks apply when latest plan guardrails are BLOCKED even if approval would exist later', async () => {
+      vi.mocked(prisma.operation.findFirst).mockResolvedValue({
+        id: 'plan-123',
+        status: OperationStatus.SUCCEEDED,
+        updatedAt: new Date(),
+        input: { targetSlug: 'sample-ecs-app', environmentSlug: 'staging' },
+        result: {
+          destroyCount: 0,
+          applyEligible: true,
+          riskLevel: 'LOW',
+          guardrails: {
+            ...passedGuardrails,
+            status: 'BLOCKED',
+            riskLevel: 'BLOCKED',
+            applyEligible: false,
+            blockedReasons: [{ code: 'DISALLOWED_REGION', message: 'AWS region is not in the configured allowlist.' }],
+          },
+        },
+      } as any);
+
+      await expect(awsService.applyDeployment(orgId, userId, 'sample-ecs-app', 'staging')).rejects.toThrow('cost and blast-radius guardrails');
     });
 
     it('reports correct state in getTerraformApplyReadiness', async () => {
@@ -444,6 +556,66 @@ describe('AwsService', () => {
       expect(readiness.latestPlanAvailable).toBe(true);
       expect(readiness.destroyCount).toBe(0);
       expect(readiness.applyEligible).toBe(true);
+    });
+  });
+
+  describe('guardrail evaluations', () => {
+    it('returns empty tenant-scoped guardrail evaluations for a new org', async () => {
+      vi.mocked(prisma.operation.findMany).mockResolvedValue([]);
+
+      const res = await awsService.listGuardrailEvaluations('new-org');
+
+      expect(res.items).toEqual([]);
+      expect(prisma.operation.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            organizationId: 'new-org',
+            provider: OperationProvider.AWS,
+          }),
+        }),
+      );
+    });
+
+    it('does not return cross-org guardrail evidence by operation id', async () => {
+      vi.mocked(prisma.operation.findMany).mockResolvedValue([]);
+
+      const res = await awsService.listGuardrailEvaluations(orgId, 'other-org-operation');
+
+      expect(res.items).toEqual([]);
+      expect(prisma.operation.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: 'other-org-operation',
+            organizationId: orgId,
+          }),
+          take: 1,
+        }),
+      );
+    });
+
+    it('surfaces safe guardrail metadata from operation result without raw provider output', async () => {
+      vi.mocked(prisma.operation.findMany).mockResolvedValue([
+        {
+          id: 'plan-123',
+          input: {},
+          result: {
+            guardrails: {
+              ...passedGuardrails,
+              operationId: 'plan-123',
+              costEstimate: {
+                ...passedGuardrails.costEstimate,
+                estimatedMonthlyDeltaUsd: 42,
+              },
+            },
+          },
+        } as any,
+      ]);
+
+      const res = await awsService.listGuardrailEvaluations(orgId, 'plan-123');
+
+      expect(res.items).toHaveLength(1);
+      expect(res.items[0]!.operationId).toBe('plan-123');
+      expect(res.items[0]!.costEstimate.estimatedMonthlyDeltaUsd).toBe(42);
     });
   });
 
@@ -619,6 +791,47 @@ describe('AwsService', () => {
       expect(res.status).toBe('PENDING_APPROVAL');
     });
 
+    it('blocks promotion when AWS guardrails are blocked', async () => {
+      vi.mocked(getAwsGuardrailConfigStatus).mockReturnValue({
+        costGuardrailsEnabled: true,
+        blastRadiusGuardrailsEnabled: true,
+        allowedAccountIdsConfigured: false,
+        allowedRegionsConfigured: true,
+        maxPlanAddCount: 10,
+        maxPlanChangeCount: 20,
+        maxMonthlyCostDeltaUsd: 100,
+        maxFargateCpu: 1024,
+        maxFargateMemoryMb: 2048,
+        maxDesiredCount: 2,
+        blockPublicLoadBalancerByDefault: true,
+        allowPublicLoadBalancer: false,
+        missing: ['AWS_ALLOWED_ACCOUNT_IDS'],
+      });
+      vi.mocked(prisma.awsRelease.findFirst).mockResolvedValue({
+        id: 'release-1',
+        organizationId: orgId,
+        targetSlug: 'aws-sample-ecs-app',
+        environmentSlug: 'staging',
+        imageUri: '12345.dkr.ecr.us-east-1.amazonaws.com/app:tag',
+      } as any);
+      vi.mocked(detectTerraformTool).mockResolvedValue({
+        status: 'CONNECTED',
+        configured: true,
+        tool: 'terraform',
+        version: '1.5.0',
+        checkedAt: new Date().toISOString(),
+        message: 'OK',
+      });
+
+      await expect(
+        awsService.promoteRelease(orgId, userId, 'release-1', {
+          targetSlug: 'aws-sample-ecs-app',
+          targetEnvironmentSlug: 'production',
+          confirmationToken: 'PROMOTE',
+        }),
+      ).rejects.toThrow('AWS guardrails are blocked');
+    });
+
     it('blocks rollback if target release does not exist or belongs to another org', async () => {
       vi.mocked(prisma.awsRelease.findFirst).mockResolvedValue(null);
 
@@ -690,6 +903,53 @@ describe('AwsService', () => {
 
       expect(res.operationId).toBe('op-rollback-123');
       expect(res.status).toBe('PENDING_APPROVAL');
+    });
+
+    it('blocks rollback when AWS guardrails are blocked', async () => {
+      vi.mocked(getAwsGuardrailConfigStatus).mockReturnValue({
+        costGuardrailsEnabled: true,
+        blastRadiusGuardrailsEnabled: true,
+        allowedAccountIdsConfigured: true,
+        allowedRegionsConfigured: false,
+        maxPlanAddCount: 10,
+        maxPlanChangeCount: 20,
+        maxMonthlyCostDeltaUsd: 100,
+        maxFargateCpu: 1024,
+        maxFargateMemoryMb: 2048,
+        maxDesiredCount: 2,
+        blockPublicLoadBalancerByDefault: true,
+        allowPublicLoadBalancer: false,
+        missing: ['AWS_ALLOWED_REGIONS'],
+      });
+      vi.mocked(prisma.awsRelease.findFirst)
+        .mockResolvedValueOnce({
+          id: 'release-target',
+          organizationId: orgId,
+          targetSlug: 'aws-sample-ecs-app',
+          environmentSlug: 'production',
+          imageUri: '12345.dkr.ecr.us-east-1.amazonaws.com/app:v1',
+        } as any)
+        .mockResolvedValueOnce({
+          id: 'release-active',
+          organizationId: orgId,
+          targetSlug: 'aws-sample-ecs-app',
+          environmentSlug: 'production',
+          imageUri: '12345.dkr.ecr.us-east-1.amazonaws.com/app:v2',
+        } as any);
+      vi.mocked(detectTerraformTool).mockResolvedValue({
+        status: 'CONNECTED',
+        configured: true,
+        tool: 'terraform',
+        version: '1.5.0',
+        checkedAt: new Date().toISOString(),
+        message: 'OK',
+      });
+
+      await expect(
+        awsService.rollbackRelease(orgId, userId, 'release-target', {
+          confirmationToken: 'ROLLBACK',
+        }),
+      ).rejects.toThrow('AWS guardrails are blocked');
     });
   });
 });

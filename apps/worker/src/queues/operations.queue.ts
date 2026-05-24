@@ -33,6 +33,7 @@ import {
   isAllowedAwsEcrRepository,
   summarizeCommandOutput,
   summarizeTerraformPlanSafety,
+  evaluateAwsGuardrails,
 } from '@autoops/utils';
 import { createBullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -631,6 +632,17 @@ async function executeAwsTerraformEcsPlan(operationId: string, input: Record<str
       [0, 2],
     );
     const safety = summarizeTerraformPlanSafety(`${init}\n${validate}\n${plan.output}`);
+    const guardrails = evaluateAwsGuardrails({
+      operationId,
+      targetSlug: workspace.slug,
+      environmentSlug,
+      accountId: process.env.AWS_ACCOUNT_ID?.trim() || null,
+      region: process.env.AWS_REGION?.trim() || stateRegion,
+      addCount: safety.addCount,
+      changeCount: safety.changeCount,
+      destroyCount: safety.destroyCount,
+      planOutput: plan.output,
+    });
     const planGeneratedAt = new Date().toISOString();
 
     return {
@@ -645,9 +657,11 @@ async function executeAwsTerraformEcsPlan(operationId: string, input: Record<str
       addCount: safety.addCount,
       changeCount: safety.changeCount,
       destroyCount: safety.destroyCount,
-      riskLevel: safety.riskLevel,
-      blockedReasons: safety.blockedReasons,
-      applyEligible: safety.applyEligible,
+      riskLevel: guardrails.riskLevel,
+      blockedReasons: [...safety.blockedReasons, ...guardrails.blockedReasons.map((reason) => reason.message)],
+      warnings: guardrails.warnings.map((warning) => warning.message),
+      guardrails,
+      applyEligible: safety.applyEligible && guardrails.applyEligible,
       planGeneratedAt,
       status: 'completed',
       safeOutputSummary: safety.safeOutputSummary,
@@ -800,6 +814,8 @@ async function executeAwsTerraformEcsApplyGeneric(
     sourceDestroyCount = safeNumberField(sourcePlanResult, 'destroyCount');
     const sourceApplyEligible = sourcePlanResult.applyEligible === true;
     const sourceRiskLevel = optionalStringField(sourcePlanResult, 'riskLevel') ?? 'LOW';
+    const sourceGuardrails = toRecord(sourcePlanResult.guardrails);
+    const sourceGuardrailStatus = optionalStringField(sourceGuardrails, 'status');
 
     if (
       sourcePlanInput.targetSlug !== targetSlug ||
@@ -814,9 +830,10 @@ async function executeAwsTerraformEcsApplyGeneric(
       sourceDestroyCount > 0 ||
       sourceApplyEligible !== true ||
       sourceRiskLevel === 'HIGH' ||
-      sourceRiskLevel === 'BLOCKED'
+      sourceRiskLevel === 'BLOCKED' ||
+      sourceGuardrailStatus === 'BLOCKED'
     ) {
-      throw new Error('AWS Terraform ECS apply source plan is unsafe (destroy actions or high risk).');
+      throw new Error('AWS Terraform ECS apply source plan is blocked by cost or blast-radius guardrails.');
     }
     hasSourcePlan = true;
   }
@@ -882,6 +899,22 @@ async function executeAwsTerraformEcsApplyGeneric(
     );
 
     const safety = summarizeTerraformPlanSafety(`${init}\n${validate}\n${plan.output}`);
+    const guardrails = evaluateAwsGuardrails({
+      operationId,
+      targetSlug: workspace.slug,
+      environmentSlug,
+      accountId: process.env.AWS_ACCOUNT_ID?.trim() || null,
+      region: process.env.AWS_REGION?.trim() || stateRegion,
+      addCount: safety.addCount,
+      changeCount: safety.changeCount,
+      destroyCount: safety.destroyCount,
+      planOutput: plan.output,
+    });
+    if (guardrails.status === 'BLOCKED') {
+      throw new Error(
+        `AWS guardrails blocked mutation: ${guardrails.blockedReasons.map((reason) => reason.message).join('; ')}`,
+      );
+    }
 
     if (hasSourcePlan) {
       if (
@@ -1014,6 +1047,7 @@ async function executeAwsTerraformEcsApplyGeneric(
       addCount: safety.addCount,
       changeCount: safety.changeCount,
       destroyCount: 0,
+      guardrails,
       applyStartedAt: new Date(startedAt).toISOString(),
       applyCompletedAt,
       result: 'succeeded',

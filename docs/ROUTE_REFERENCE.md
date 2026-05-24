@@ -132,9 +132,9 @@
 
 - Purpose: AWS Deployment Foundation diagnostics, readiness, and governed ECR image operations.
 - Who uses it: OWNER and ADMIN users only (provider inventory access required).
-- Data shown: AWS Identity (account, ARN, region), Configuration Readiness, IAM Permission Diagnostics, Remote State Storage readiness, Workspace Readiness, Deployment Targets, ECR readiness, allowlisted repositories, allowlisted build targets, tenant-scoped ECR image operations, and Terraform ECS plan readiness.
-- Key actions: Refresh diagnostics, inspect readiness gates, request ECR image build with `BUILD`, request ECR image push with `PUSH`, request ECS plan with `PLAN`, open governance evidence.
-- Safety notes: No terraform apply/destroy, ECS apply, AWS resource creation/deletion, arbitrary Dockerfile path, arbitrary build context, arbitrary image tag, arbitrary repository, Docker login password exposure, or AWS credential exposure.
+- Data shown: AWS Identity (account, ARN, region), Configuration Readiness, IAM Permission Diagnostics, Remote State Storage readiness, Workspace Readiness, Deployment Targets, ECR readiness, allowlisted repositories, allowlisted build targets, tenant-scoped ECR image operations, Terraform ECS readiness, release history, and cost/blast-radius guardrail evidence.
+- Key actions: Refresh diagnostics, inspect readiness gates, request ECR image build with `BUILD`, request ECR image push with `PUSH`, request ECS plan with `PLAN`, request approval-gated apply with `APPLY`, request production promotion with `PROMOTE`, request rollback with `ROLLBACK`, open governance evidence.
+- Safety notes: No terraform destroy, arbitrary Terraform execution, arbitrary Dockerfile path, arbitrary build context, arbitrary image tag, arbitrary repository, Docker login password exposure, raw tfstate exposure, or AWS credential exposure. Apply/promotion/rollback are blocked when guardrails are `BLOCKED`; approval cannot override blocked guardrails.
 
 ### AWS API Routes
 
@@ -159,6 +159,9 @@
 | GET | `/v1/integrations/aws/deployments` | Authenticated | Organization-scoped deployment history |
 | GET | `/v1/integrations/aws/terraform/plan-readiness` | OWNER/ADMIN | Plan-only ECS readiness: remote state, workspace, tool, and safe pushed image metadata |
 | GET | `/v1/integrations/aws/apply-readiness` | Authenticated | ECS apply readiness: checks apply status, state storage config, and plan freshness |
+| GET | `/v1/integrations/aws/guardrails/readiness` | OWNER/ADMIN | Cost, blast-radius, account, and region guardrail configuration readiness |
+| GET | `/v1/integrations/aws/guardrails/evaluations` | Authenticated | Organization-scoped safe guardrail evidence from AWS operations |
+| GET | `/v1/integrations/aws/guardrails/evaluations/:operationId` | Authenticated | Organization-scoped safe guardrail evidence for one operation |
 | POST | `/v1/integrations/aws/deployments/:targetSlug/plan` | Authenticated | Request plan-only ECS ECS Terraform/OpenTofu operation with `PLAN`; no apply/destroy |
 | POST | `/v1/integrations/aws/deployments/:targetSlug/apply` | Authenticated | Request ECS Terraform/OpenTofu apply operation (creates a PENDING_APPROVAL operation; requires `APPLY`) |
 | GET | `/v1/integrations/aws/releases` | Authenticated | Organization-scoped list of releases |
