@@ -48,6 +48,10 @@ import { dockerService } from '../integrations/docker/docker.service.js';
 import { infrastructureService } from '../integrations/infrastructure/infrastructure.service.js';
 import { jenkinsService } from '../integrations/jenkins/jenkins.service.js';
 import { kubernetesService } from '../integrations/kubernetes/kubernetes.service.js';
+import {
+  canViewProviderInventory,
+  isProviderInventoryAccessEnabledForOrg,
+} from '../integrations/integration-access.service.js';
 import { incidentService } from '../incidents/incident.service.js';
 import { operationAuthorizationService } from '../operations/operation-authorization.service.js';
 
@@ -321,7 +325,9 @@ export class OpsService {
     return this._toOperationDetail({ ...operation, incident }, role, userId);
   }
 
-  async getSummary(organizationId: string): Promise<OpsSummary> {
+  async getSummary(organizationId: string, userId: string): Promise<OpsSummary> {
+    const role = await operationAuthorizationService.getOrganizationRole({ organizationId, userId });
+    const canViewProviderDetails = await this._canViewProviderInventory(organizationId, role);
     const [
       databaseStatus,
       redisStatus,
@@ -331,11 +337,7 @@ export class OpsService {
       deploymentStatusCounts,
       latestDeployments,
       queueSummary,
-      kubernetesStatus,
-      awsIdentity,
-      jenkinsStatus,
-      dockerStatus,
-      infrastructureStatus,
+      integrations,
       operationStatusCounts,
     ] = await Promise.all([
       this._getDatabaseStatus(),
@@ -391,11 +393,9 @@ export class OpsService {
         take: 8,
       }),
       this._getDeploymentQueueSummary(),
-      kubernetesService.getStatus(),
-      awsService.getIdentity(),
-      jenkinsService.getStatus(),
-      dockerService.getStatus(),
-      infrastructureService.getStatus(),
+      canViewProviderDetails
+        ? this._getDetailedProviderIntegrations()
+        : Promise.resolve(this._restrictedProviderIntegrations()),
       prisma.operation.groupBy({
         by: ['status'],
         where: {
@@ -439,7 +439,7 @@ export class OpsService {
       queues: {
         deployments: queueSummary,
       },
-      integrations: this._withProviderStatus(kubernetesStatus, awsIdentity, jenkinsStatus, dockerStatus, infrastructureStatus),
+      integrations,
       operations: {
         total: operationStatusCounts.reduce((total, item) => total + item._count._all, 0),
         pendingApproval:
@@ -457,6 +457,8 @@ export class OpsService {
 
   async getObservability(organizationId: string, userId: string): Promise<OpsObservabilityResponse> {
     const generatedAt = new Date().toISOString();
+    const role = await operationAuthorizationService.getOrganizationRole({ organizationId, userId });
+    const canViewProviderDetails = await this._canViewProviderInventory(organizationId, role);
     const [
       databaseStatus,
       redisStatus,
@@ -468,7 +470,6 @@ export class OpsService {
       dockerHealth,
       kubernetesHealth,
       infrastructureHealth,
-      role,
       incidentSummary,
     ] = await Promise.all([
       this._getDatabaseStatus(),
@@ -477,11 +478,18 @@ export class OpsService {
       this._getQueueHealth(operationsQueue, 'Operations queue'),
       this._getWorkerRuntime(),
       this._getRecentOperationRecords(organizationId),
-      this._getJenkinsHealth(),
-      this._getDockerHealth(),
-      this._getKubernetesHealth(),
-      this._getInfrastructureHealth(),
-      operationAuthorizationService.getOrganizationRole({ organizationId, userId }),
+      canViewProviderDetails
+        ? this._getJenkinsHealth()
+        : Promise.resolve(this._restrictedProviderHealth('/dashboard/integrations/jenkins')),
+      canViewProviderDetails
+        ? this._getDockerHealth()
+        : Promise.resolve(this._restrictedProviderHealth('/dashboard/integrations/docker')),
+      canViewProviderDetails
+        ? this._getKubernetesHealth()
+        : Promise.resolve(this._restrictedProviderHealth('/dashboard/integrations/kubernetes')),
+      canViewProviderDetails
+        ? this._getInfrastructureHealth()
+        : Promise.resolve(this._restrictedProviderHealth('/dashboard/integrations/infrastructure')),
       incidentService.getSummary(organizationId, userId),
     ]);
 
@@ -599,6 +607,68 @@ export class OpsService {
       evidence: response.evidence,
       summary: response.summary,
     };
+  }
+
+  private async _canViewProviderInventory(
+    organizationId: string,
+    role: string | null,
+  ): Promise<boolean> {
+    return (
+      canViewProviderInventory(role ?? undefined) &&
+      (await isProviderInventoryAccessEnabledForOrg(organizationId))
+    );
+  }
+
+  private async _getDetailedProviderIntegrations(): Promise<OpsIntegrationReadiness[]> {
+    const [
+      kubernetesStatus,
+      awsIdentity,
+      jenkinsStatus,
+      dockerStatus,
+      infrastructureStatus,
+    ] = await Promise.all([
+      kubernetesService.getStatus(),
+      awsService.getIdentity(),
+      jenkinsService.getStatus(),
+      dockerService.getStatus(),
+      infrastructureService.getStatus(),
+    ]);
+
+    return this._withProviderStatus(
+      kubernetesStatus,
+      awsIdentity,
+      jenkinsStatus,
+      dockerStatus,
+      infrastructureStatus,
+    );
+  }
+
+  private _restrictedProviderIntegrations(): OpsIntegrationReadiness[] {
+    return BASE_INTEGRATIONS.map((integration) => ({
+      ...integration,
+      status:
+        integration.key === 'jenkins' ||
+        integration.key === 'docker' ||
+        integration.key === 'kubernetes' ||
+        integration.key === 'aws' ||
+        integration.key === 'github-actions' ||
+        integration.key === 'terraform' ||
+        integration.key === 'ansible'
+          ? IntegrationStatus.NOT_CONFIGURED
+          : integration.status,
+      description:
+        integration.key === 'jenkins' ||
+        integration.key === 'docker' ||
+        integration.key === 'kubernetes' ||
+        integration.key === 'aws' ||
+        integration.key === 'github-actions' ||
+        integration.key === 'terraform' ||
+        integration.key === 'ansible'
+          ? 'Provider inventory is not enabled for this organization. Contact an organization admin.'
+          : integration.description,
+      metrics: undefined,
+      lastCheckedAt: undefined,
+    }));
   }
 
   private _withProviderStatus(
@@ -1287,6 +1357,15 @@ export class OpsService {
     return {
       status: 'UNKNOWN',
       message,
+      href,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  private _restrictedProviderHealth(href: string): OpsProviderHealthSummary {
+    return {
+      status: 'RESTRICTED',
+      message: 'Provider inventory is not enabled for this organization. Contact an organization admin.',
       href,
       checkedAt: new Date().toISOString(),
     };

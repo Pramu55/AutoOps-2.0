@@ -40,33 +40,33 @@ export class AwsController {
   };
 
   identity = async (req: Request, res: Response): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.getIdentity() });
   };
 
   readiness = async (req: Request, res: Response): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.getReadiness() });
   };
 
   permissions = async (req: Request, res: Response): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.getPermissions() });
   };
 
   remoteState = async (req: Request, res: Response): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.getRemoteStateReadiness() });
   };
 
   workspaceReadiness = async (req: Request, res: Response): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     const { targetSlug } = req.params;
     res.json({ data: await awsService.getWorkspaceReadiness(targetSlug!) });
   };
 
   terraformPlanReadiness = async (req: Request, res: Response<{ data: AwsTerraformPlanReadinessResponse }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     const auth = req.auth as { orgId: string; userId: string };
     const targetSlug = typeof req.query.targetSlug === 'string' ? req.query.targetSlug : undefined;
     const environmentSlug = typeof req.query.environmentSlug === 'string' ? req.query.environmentSlug : undefined;
@@ -74,32 +74,32 @@ export class AwsController {
   };
 
   summary = async (req: Request, res: Response<{ data: AwsSummary }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.getSummary() });
   };
 
   ec2Instances = async (req: Request, res: Response<{ data: AwsListResponse<AwsEc2Instance> }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listEc2Instances() });
   };
 
   ecsClusters = async (req: Request, res: Response<{ data: AwsListResponse<AwsEcsCluster> }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listEcsClusters() });
   };
 
   ecsServices = async (req: Request, res: Response<{ data: AwsListResponse<AwsEcsService> }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listEcsServices() });
   };
 
   ecrRepositories = async (req: Request, res: Response<{ data: AwsListResponse<AwsEcrRepository> }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listEcrRepositories() });
   };
 
   ecrReadiness = async (req: Request, res: Response<{ data: AwsEcrReadinessResponse }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.getEcrReadiness() });
   };
 
@@ -109,24 +109,26 @@ export class AwsController {
   };
 
   buildEcrImage = async (req: Request, res: Response): Promise<void> => {
+    await requireProviderInventoryAccess(req.auth);
     const body = awsEcrImageBuildRequestSchema.parse(req.body) as AwsEcrImageBuildRequest;
     const auth = req.auth as { orgId: string; userId: string };
     res.json({ data: await awsService.buildEcrImage(auth.orgId, auth.userId, body) });
   };
 
   pushEcrImage = async (req: Request, res: Response): Promise<void> => {
+    await requireProviderInventoryAccess(req.auth);
     const body = awsEcrImagePushRequestSchema.parse(req.body) as AwsEcrImagePushRequest;
     const auth = req.auth as { orgId: string; userId: string };
     res.json({ data: await awsService.pushEcrImage(auth.orgId, auth.userId, body) });
   };
 
   cloudWatchAlarms = async (req: Request, res: Response<{ data: AwsListResponse<AwsCloudWatchAlarm> }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listCloudWatchAlarms() });
   };
 
   deploymentTargets = async (req: Request, res: Response<{ data: AwsListResponse<AwsDeploymentTarget> }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listDeploymentTargets() });
   };
 
@@ -143,6 +145,7 @@ export class AwsController {
   };
 
   planDeployment = async (req: Request, res: Response): Promise<void> => {
+    await requireProviderInventoryAccess(req.auth);
     const { targetSlug } = req.params;
     const body = awsTerraformEcsPlanRequestSchema.parse({ ...req.body, targetSlug }) as AwsTerraformEcsPlanRequest;
     const auth = req.auth as { orgId: string; userId: string; };
@@ -151,6 +154,7 @@ export class AwsController {
   };
 
   applyDeployment = async (req: Request, res: Response): Promise<void> => {
+    await requireProviderInventoryAccess(req.auth);
     const { targetSlug } = req.params;
     const body = awsTerraformEcsApplyRequestSchema.parse(req.body) as AwsTerraformEcsApplyRequest;
     const auth = req.auth as { orgId: string; userId: string; };

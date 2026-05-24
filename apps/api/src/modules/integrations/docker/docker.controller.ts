@@ -42,12 +42,12 @@ export class DockerController {
     _req: Request,
     res: Response<{ data: DockerListResponse<DockerContainer> }>,
   ): Promise<void> => {
-    requireProviderInventoryAccess(_req.auth);
+    await requireProviderInventoryAccess(_req.auth);
     res.json({ data: await dockerService.listContainers() });
   };
 
   images = async (_req: Request, res: Response<{ data: DockerListResponse<DockerImage> }>): Promise<void> => {
-    requireProviderInventoryAccess(_req.auth);
+    await requireProviderInventoryAccess(_req.auth);
     res.json({ data: await dockerService.listImages() });
   };
 
@@ -55,12 +55,12 @@ export class DockerController {
     _req: Request,
     res: Response<{ data: DockerListResponse<DockerNetwork> }>,
   ): Promise<void> => {
-    requireProviderInventoryAccess(_req.auth);
+    await requireProviderInventoryAccess(_req.auth);
     res.json({ data: await dockerService.listNetworks() });
   };
 
   volumes = async (_req: Request, res: Response<{ data: DockerListResponse<DockerVolume> }>): Promise<void> => {
-    requireProviderInventoryAccess(_req.auth);
+    await requireProviderInventoryAccess(_req.auth);
     res.json({ data: await dockerService.listVolumes() });
   };
 
@@ -68,7 +68,7 @@ export class DockerController {
     req: Request<ContainerParams, unknown, unknown, DockerLogsQuery>,
     res: Response<{ data: DockerLogsResponse }>,
   ): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({
       data: await dockerService.getLogs(req.params.containerId, req.query),
     });
@@ -79,6 +79,7 @@ export class DockerController {
     res: Response<{ data: DockerActionResponse }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const input = req.body as DockerStartContainerInput;
     const data = await dockerService.requestContainerAction(
       req.params.containerId,
@@ -101,6 +102,7 @@ export class DockerController {
     res: Response<{ data: DockerActionResponse }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const input = req.body as DockerStopContainerInput;
     const data = await dockerService.requestContainerAction(
       req.params.containerId,
@@ -123,6 +125,7 @@ export class DockerController {
     res: Response<{ data: DockerActionResponse }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const input = req.body as DockerRestartContainerInput;
     const data = await dockerService.requestContainerAction(
       req.params.containerId,

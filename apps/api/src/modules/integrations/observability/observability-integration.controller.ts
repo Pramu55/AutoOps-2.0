@@ -33,12 +33,12 @@ export class ObservabilityIntegrationController {
   };
 
   prometheus = async (req: Request, res: Response<{ data: PrometheusIntegrationStatus }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await observabilityIntegrationService.getPrometheus() });
   };
 
   grafana = async (req: Request, res: Response<{ data: GrafanaIntegrationStatus }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await observabilityIntegrationService.getGrafana() });
   };
 }

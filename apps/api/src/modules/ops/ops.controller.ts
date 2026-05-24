@@ -34,7 +34,7 @@ export class OpsController {
 
   summary = async (req: Request, res: Response<{ data: OpsSummary }>): Promise<void> => {
     const auth = this._requireAuth(req);
-    const summary = await opsService.getSummary(auth.organizationId);
+    const summary = await opsService.getSummary(auth.organizationId, auth.userId);
     res.json({ data: summary });
   };
 

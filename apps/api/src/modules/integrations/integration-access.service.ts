@@ -11,8 +11,9 @@
  * All enforcement happens at the API layer. UI hiding is not security.
  */
 
+import { prisma } from '@autoops/database';
 import { UnauthorizedError } from '@autoops/utils';
-import { INVENTORY_ACCESS_ROLES } from '@autoops/types';
+import { INVENTORY_ACCESS_ROLES, type IntegrationProviderType } from '@autoops/types';
 
 /** Roles that may view provider inventory data. */
 const ALLOWED_INVENTORY_ROLES: readonly string[] = INVENTORY_ACCESS_ROLES;
@@ -25,16 +26,70 @@ export function canViewProviderInventory(role?: string): boolean {
   return ALLOWED_INVENTORY_ROLES.includes(role);
 }
 
+type AuthContext = {
+  orgId?: string;
+  role?: string;
+};
+
 /**
- * Throws UnauthorizedError if the caller's role is not OWNER or ADMIN.
- * Use as a defense-in-depth guard inside controllers, behind route-level requireRole.
+ * Throws UnauthorizedError if the caller's role/org is not allowed to view shared provider inventory.
+ *
+ * This is intentionally stricter than role checks. A newly registered user is OWNER of their own
+ * organization, but that must not grant visibility into shared local Jenkins, Docker, Kubernetes,
+ * cloud, or observability inventory. Local demo access defaults to the seeded autoops-demo org;
+ * production deployments should set PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS explicitly.
  */
-export function requireProviderInventoryAccess(auth: { role?: string } | undefined): void {
+export async function requireProviderInventoryAccess(
+  auth: AuthContext | undefined,
+  _provider?: IntegrationProviderType,
+): Promise<void> {
   if (!auth || !canViewProviderInventory(auth.role)) {
     throw new UnauthorizedError(
       'Provider inventory access requires OWNER or ADMIN role. Contact your organization admin.',
     );
   }
+
+  if (!auth.orgId) {
+    throw new UnauthorizedError('Organization context is required for provider inventory access.');
+  }
+
+  const organization = await prisma.organization.findUnique({
+    where: { id: auth.orgId },
+    select: { id: true, slug: true },
+  });
+
+  if (!organization || !isProviderInventoryOrgAllowed(organization.slug, organization.id)) {
+    throw new UnauthorizedError(
+      'Provider inventory is not enabled for this organization. Contact an organization admin.',
+    );
+  }
+}
+
+export function isProviderInventoryOrgAllowed(slug: string, organizationId?: string): boolean {
+  const allowed = providerInventoryAllowlist();
+  if (allowed.includes('*')) return true;
+  return allowed.includes(slug) || (organizationId ? allowed.includes(organizationId) : false);
+}
+
+export async function isProviderInventoryAccessEnabledForOrg(organizationId: string): Promise<boolean> {
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { id: true, slug: true },
+  });
+
+  return organization ? isProviderInventoryOrgAllowed(organization.slug, organization.id) : false;
+}
+
+function providerInventoryAllowlist(): string[] {
+  const configured = process.env.PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS?.trim();
+  if (configured) {
+    return configured
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }
+
+  return process.env.NODE_ENV === 'production' ? [] : ['autoops-demo'];
 }
 
 /**
