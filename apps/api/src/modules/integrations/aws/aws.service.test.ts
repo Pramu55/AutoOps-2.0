@@ -14,6 +14,7 @@ import {
   isProductionEnvironment,
 } from '@autoops/utils';
 import { operationService } from '../../operations/operation.service.js';
+import { operationAuthorizationService } from '../../operations/operation-authorization.service.js';
 import { OperationProvider, OperationType, OperationStatus, AwsIntegrationStatus } from '@autoops/types';
 import { awsTerraformEcsPlanRequestSchema } from '@autoops/types';
 import { prisma } from '@autoops/database';
@@ -41,11 +42,27 @@ vi.mock('../../operations/operation.service.js', () => {
   };
 });
 
+vi.mock('../../operations/operation-authorization.service.js', () => {
+  return {
+    operationAuthorizationService: {
+      canTriggerOperation: vi.fn(),
+    },
+  };
+});
+
 vi.mock('@autoops/database', () => ({
   prisma: {
     operation: {
       findFirst: vi.fn(),
       findMany: vi.fn(),
+    },
+    awsRelease: {
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
+    },
+    organization: {
+      findUnique: vi.fn(),
     },
   },
 }));
@@ -490,6 +507,189 @@ describe('AwsService', () => {
           confirmationToken: 'PUSH',
         }),
       ).rejects.toThrow('repository is not allowlisted');
+    });
+  });
+
+  describe('AWS releases, promotion, and rollbacks', () => {
+    beforeEach(() => {
+      process.env.AWS_ALLOWED_DEPLOYMENT_WORKSPACES = 'aws-sample-ecs-app, sample-ecs-app, another-app';
+      vi.mocked(prisma.organization.findUnique).mockResolvedValue({ id: orgId, slug: 'autoops-demo' } as any);
+      vi.mocked(operationAuthorizationService.canTriggerOperation).mockResolvedValue({ allowed: true, reason: null, role: 'OWNER' });
+      vi.mocked(listTerraformWorkspaces).mockResolvedValue([
+        { slug: 'aws-sample-ecs-app', displayName: 'Sample', absolutePath: '/a', relativePath: 'a' },
+      ]);
+    });
+
+    it('returns empty list for listReleases/listReleaseHistory when new user has no releases', async () => {
+      vi.mocked(prisma.awsRelease.findMany).mockResolvedValue([]);
+
+      const res = await awsService.listReleases(orgId);
+      expect(res.items).toEqual([]);
+
+      const history = await awsService.listReleaseHistory(orgId);
+      expect(history.items).toEqual([]);
+    });
+
+    it('scopes listReleases and listReleaseHistory by organizationId', async () => {
+      const mockReleases = [
+        {
+          id: 'release-1',
+          organizationId: orgId,
+          targetSlug: 'aws-sample-ecs-app',
+          environmentSlug: 'staging',
+          imageUri: '12345.dkr.ecr.us-east-1.amazonaws.com/app:tag',
+          releaseVersion: 1,
+          status: 'ACTIVE',
+          createdAt: new Date(),
+          promotedAt: null,
+          rolledBackAt: null,
+        },
+      ];
+      vi.mocked(prisma.awsRelease.findMany).mockResolvedValue(mockReleases as any);
+
+      const res = await awsService.listReleases(orgId);
+      expect(res.items).toHaveLength(1);
+      expect(res.items[0]!.id).toBe('release-1');
+      expect(prisma.awsRelease.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            organizationId: orgId,
+          }),
+        }),
+      );
+    });
+
+    it('blocks cross-org release detail access', async () => {
+      vi.mocked(prisma.awsRelease.findFirst).mockResolvedValue(null);
+
+      await expect(awsService.getRelease(orgId, 'release-other-org')).rejects.toThrow('Release not found');
+    });
+
+    it('blocks promotion if target workspace is not allowlisted', async () => {
+      const mockSourceRelease = {
+        id: 'release-1',
+        organizationId: orgId,
+        targetSlug: 'aws-sample-ecs-app',
+        environmentSlug: 'staging',
+        imageUri: '12345.dkr.ecr.us-east-1.amazonaws.com/app:tag',
+      };
+      vi.mocked(prisma.awsRelease.findFirst).mockResolvedValue(mockSourceRelease as any);
+
+      await expect(
+        awsService.promoteRelease(orgId, userId, 'release-1', {
+          targetSlug: 'not-allowlisted',
+          targetEnvironmentSlug: 'production',
+          confirmationToken: 'PROMOTE',
+        }),
+      ).rejects.toThrow('not allowed');
+    });
+
+    it('creates promotion operation and enforces authorization policy', async () => {
+      const mockSourceRelease = {
+        id: 'release-1',
+        organizationId: orgId,
+        targetSlug: 'aws-sample-ecs-app',
+        environmentSlug: 'staging',
+        imageUri: '12345.dkr.ecr.us-east-1.amazonaws.com/app:tag',
+        imageDigest: 'sha256:123',
+      };
+      vi.mocked(prisma.awsRelease.findFirst).mockResolvedValue(mockSourceRelease as any);
+      vi.mocked(detectTerraformTool).mockResolvedValue({
+        status: 'CONNECTED',
+        configured: true,
+        tool: 'terraform',
+        version: '1.5.0',
+        checkedAt: new Date().toISOString(),
+        message: 'OK',
+      });
+      vi.mocked(operationService.createQueuedOperation).mockResolvedValue({
+        id: 'op-promote-123',
+        status: 'PENDING_APPROVAL',
+        provider: 'AWS',
+        operationType: 'AWS_ECS_RELEASE_PROMOTE',
+      } as any);
+
+      const res = await awsService.promoteRelease(orgId, userId, 'release-1', {
+        targetSlug: 'aws-sample-ecs-app',
+        targetEnvironmentSlug: 'production',
+        confirmationToken: 'PROMOTE',
+      });
+
+      expect(res.operationId).toBe('op-promote-123');
+      expect(res.status).toBe('PENDING_APPROVAL');
+    });
+
+    it('blocks rollback if target release does not exist or belongs to another org', async () => {
+      vi.mocked(prisma.awsRelease.findFirst).mockResolvedValue(null);
+
+      await expect(
+        awsService.rollbackRelease(orgId, userId, 'release-other', {
+          confirmationToken: 'ROLLBACK',
+        }),
+      ).rejects.toThrow('Target rollback release not found');
+    });
+
+    it('blocks rollback if no active release currently exists to rollback from', async () => {
+      const mockTargetRelease = {
+        id: 'release-target',
+        organizationId: orgId,
+        targetSlug: 'aws-sample-ecs-app',
+        environmentSlug: 'production',
+        imageUri: '12345.dkr.ecr.us-east-1.amazonaws.com/app:v1',
+      };
+      vi.mocked(prisma.awsRelease.findFirst)
+        .mockResolvedValueOnce(mockTargetRelease as any)
+        .mockResolvedValueOnce(null);
+
+      await expect(
+        awsService.rollbackRelease(orgId, userId, 'release-target', {
+          confirmationToken: 'ROLLBACK',
+        }),
+      ).rejects.toThrow('No active release found to rollback from');
+    });
+
+    it('creates rollback operation and enforces approval policy', async () => {
+      const mockTargetRelease = {
+        id: 'release-target',
+        organizationId: orgId,
+        targetSlug: 'aws-sample-ecs-app',
+        environmentSlug: 'production',
+        imageUri: '12345.dkr.ecr.us-east-1.amazonaws.com/app:v1',
+        releaseVersion: 1,
+      };
+      const mockActiveRelease = {
+        id: 'release-active',
+        organizationId: orgId,
+        targetSlug: 'aws-sample-ecs-app',
+        environmentSlug: 'production',
+        imageUri: '12345.dkr.ecr.us-east-1.amazonaws.com/app:v2',
+        releaseVersion: 2,
+      };
+      vi.mocked(prisma.awsRelease.findFirst)
+        .mockResolvedValueOnce(mockTargetRelease as any)
+        .mockResolvedValueOnce(mockActiveRelease as any);
+
+      vi.mocked(detectTerraformTool).mockResolvedValue({
+        status: 'CONNECTED',
+        configured: true,
+        tool: 'terraform',
+        version: '1.5.0',
+        checkedAt: new Date().toISOString(),
+        message: 'OK',
+      });
+      vi.mocked(operationService.createQueuedOperation).mockResolvedValue({
+        id: 'op-rollback-123',
+        status: 'PENDING_APPROVAL',
+        provider: 'AWS',
+        operationType: 'AWS_ECS_RELEASE_ROLLBACK',
+      } as any);
+
+      const res = await awsService.rollbackRelease(orgId, userId, 'release-target', {
+        confirmationToken: 'ROLLBACK',
+      });
+
+      expect(res.operationId).toBe('op-rollback-123');
+      expect(res.status).toBe('PENDING_APPROVAL');
     });
   });
 });

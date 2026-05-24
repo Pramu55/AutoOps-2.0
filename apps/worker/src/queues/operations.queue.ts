@@ -12,7 +12,6 @@ import {
   DescribeServicesCommand,
   ListClustersCommand,
   ListServicesCommand,
-  type Deployment,
 } from '@aws-sdk/client-ecs';
 import { CloudWatchLogsClient, DescribeLogGroupsCommand, type LogGroup } from '@aws-sdk/client-cloudwatch-logs';
 import {
@@ -215,12 +214,44 @@ async function executeOperation(operation: {
     operation.provider === OperationProvider.AWS &&
     operation.operationType === OperationType.AWS_TERRAFORM_ECS_APPLY
   ) {
-    return executeAwsTerraformEcsApply(
+    const sourcePlanOperationId = stringField(input, 'sourcePlanOperationId');
+    return executeAwsTerraformEcsApplyGeneric(
       operation.id,
       operation.organizationId,
       input,
       operation.approvedAt ?? null,
       operation.approvedByUserId ?? null,
+      { sourcePlanOperationId }
+    );
+  }
+
+  if (
+    operation.provider === OperationProvider.AWS &&
+    operation.operationType === OperationType.AWS_ECS_RELEASE_PROMOTE
+  ) {
+    const sourceReleaseId = stringField(input, 'sourceReleaseId');
+    return executeAwsTerraformEcsApplyGeneric(
+      operation.id,
+      operation.organizationId,
+      input,
+      operation.approvedAt ?? null,
+      operation.approvedByUserId ?? null,
+      { promotedFromReleaseId: sourceReleaseId }
+    );
+  }
+
+  if (
+    operation.provider === OperationProvider.AWS &&
+    operation.operationType === OperationType.AWS_ECS_RELEASE_ROLLBACK
+  ) {
+    const rolledBackFromReleaseId = stringField(input, 'rolledBackFromReleaseId');
+    return executeAwsTerraformEcsApplyGeneric(
+      operation.id,
+      operation.organizationId,
+      input,
+      operation.approvedAt ?? null,
+      operation.approvedByUserId ?? null,
+      { promotedFromReleaseId: null, rolledBackFromReleaseId }
     );
   }
 
@@ -628,15 +659,86 @@ async function executeAwsTerraformEcsPlan(operationId: string, input: Record<str
   }
 }
 
-async function executeAwsTerraformEcsApply(
+async function recordNewAwsRelease(
+  tx: Omit<typeof db, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>,
+  data: {
+    organizationId: string;
+    targetSlug: string;
+    environmentSlug: string;
+    sourceOperationId?: string | null;
+    planOperationId?: string | null;
+    applyOperationId: string;
+    imageUri: string;
+    imageDigest?: string | null;
+    promotedFromReleaseId?: string | null;
+    rolledBackFromReleaseId?: string | null;
+    approvedByUserId?: string | null;
+  },
+) {
+  const operation = await tx.operation.findUnique({
+    where: { id: data.applyOperationId },
+    select: { requestedByUserId: true },
+  });
+  const createdByUserId = operation?.requestedByUserId ?? null;
+
+  // 1. Mark all previous ACTIVE releases for the same target/environment as SUPERSEDED
+  await tx.awsRelease.updateMany({
+    where: {
+      organizationId: data.organizationId,
+      targetSlug: data.targetSlug,
+      environmentSlug: data.environmentSlug,
+      status: 'ACTIVE',
+    },
+    data: {
+      status: 'SUPERSEDED',
+    },
+  });
+
+  // 2. Get next version number
+  const count = await tx.awsRelease.count({
+    where: {
+      organizationId: data.organizationId,
+      targetSlug: data.targetSlug,
+      environmentSlug: data.environmentSlug,
+    },
+  });
+  const releaseVersion = count + 1;
+
+  // 3. Create the new active release
+  return tx.awsRelease.create({
+    data: {
+      organizationId: data.organizationId,
+      targetSlug: data.targetSlug,
+      environmentSlug: data.environmentSlug,
+      sourceOperationId: data.sourceOperationId ?? null,
+      planOperationId: data.planOperationId ?? null,
+      applyOperationId: data.applyOperationId,
+      imageUri: data.imageUri,
+      imageDigest: data.imageDigest ?? null,
+      releaseVersion,
+      status: 'ACTIVE',
+      promotedFromReleaseId: data.promotedFromReleaseId ?? null,
+      rolledBackFromReleaseId: data.rolledBackFromReleaseId ?? null,
+      createdByUserId,
+      approvedByUserId: data.approvedByUserId ?? null,
+    },
+  });
+}
+
+async function executeAwsTerraformEcsApplyGeneric(
   operationId: string,
   organizationId: string,
   input: Record<string, unknown>,
   approvedAt: Date | null,
   approvedByUserId: string | null,
+  options: {
+    sourcePlanOperationId?: string | null;
+    promotedFromReleaseId?: string | null;
+    rolledBackFromReleaseId?: string | null;
+  },
 ): Promise<Record<string, unknown>> {
   if (!approvedAt) {
-    throw new Error('AWS ECS Apply operation requires approval before execution.');
+    throw new Error('AWS ECS operation requires approval before execution.');
   }
 
   if (process.env.AWS_DEPLOYMENT_APPLY_ENABLED !== 'true') {
@@ -648,10 +750,9 @@ async function executeAwsTerraformEcsApply(
   const environmentSlug = stringField(input, 'environmentSlug');
   const imageUri = stringField(input, 'imageUri');
   const imageDigest = optionalStringField(input, 'imageDigest');
-  const sourcePlanOperationId = stringField(input, 'sourcePlanOperationId');
 
   if (targetSlug !== workspaceSlug) {
-    throw new Error('AWS Terraform ECS apply target is invalid.');
+    throw new Error('AWS Terraform ECS target is invalid.');
   }
   const allowedWorkspaces = parseAllowedJobs(process.env.AWS_ALLOWED_DEPLOYMENT_WORKSPACES);
   if (!allowedWorkspaces.includes(workspaceSlug)) {
@@ -665,50 +766,59 @@ async function executeAwsTerraformEcsApply(
     throw new Error('AWS Terraform remote state is not fully configured.');
   }
 
-  const sourcePlan = await db.operation.findFirst({
-    where: {
-      id: sourcePlanOperationId,
-      organizationId,
-      provider: OperationProvider.AWS,
-      operationType: OperationType.AWS_TERRAFORM_ECS_PLAN,
-    },
-  });
-  if (!sourcePlan) {
-    throw new Error(`AWS Terraform ECS apply source plan operation ${sourcePlanOperationId} not found.`);
-  }
-  if (sourcePlan.status !== OperationStatus.SUCCEEDED) {
-    throw new Error('AWS Terraform ECS apply source plan was not successful.');
-  }
+  // Load and validate source plan if specified
+  let sourceAddCount = 0;
+  let sourceChangeCount = 0;
+  let sourceDestroyCount = 0;
+  let hasSourcePlan = false;
 
-  const sourcePlanAgeSeconds = Math.max(0, Math.floor((Date.now() - sourcePlan.updatedAt.getTime()) / 1000));
-  if (sourcePlanAgeSeconds > 24 * 60 * 60) {
-    throw new Error('AWS Terraform ECS apply source plan is stale (older than 24 hours).');
-  }
+  if (options.sourcePlanOperationId) {
+    const sourcePlan = await db.operation.findFirst({
+      where: {
+        id: options.sourcePlanOperationId,
+        organizationId,
+        provider: OperationProvider.AWS,
+        operationType: OperationType.AWS_TERRAFORM_ECS_PLAN,
+      },
+    });
+    if (!sourcePlan) {
+      throw new Error(`AWS Terraform ECS apply source plan operation ${options.sourcePlanOperationId} not found.`);
+    }
+    if (sourcePlan.status !== OperationStatus.SUCCEEDED) {
+      throw new Error('AWS Terraform ECS apply source plan was not successful.');
+    }
 
-  const sourcePlanInput = toRecord(sourcePlan.input);
-  const sourcePlanResult = toRecord(sourcePlan.result);
-  const sourceAddCount = safeNumberField(sourcePlanResult, 'addCount');
-  const sourceChangeCount = safeNumberField(sourcePlanResult, 'changeCount');
-  const sourceDestroyCount = safeNumberField(sourcePlanResult, 'destroyCount');
-  const sourceApplyEligible = sourcePlanResult.applyEligible === true;
-  const sourceRiskLevel = optionalStringField(sourcePlanResult, 'riskLevel') ?? 'LOW';
+    const sourcePlanAgeSeconds = Math.max(0, Math.floor((Date.now() - sourcePlan.updatedAt.getTime()) / 1000));
+    if (sourcePlanAgeSeconds > 24 * 60 * 60) {
+      throw new Error('AWS Terraform ECS apply source plan is stale (older than 24 hours).');
+    }
 
-  if (
-    sourcePlanInput.targetSlug !== targetSlug ||
-    sourcePlanInput.environmentSlug !== environmentSlug ||
-    sourcePlanInput.imageUri !== imageUri ||
-    (sourcePlanInput.imageDigest ?? null) !== (imageDigest ?? null)
-  ) {
-    throw new Error('AWS Terraform ECS apply variables mismatch against approved plan.');
-  }
+    const sourcePlanInput = toRecord(sourcePlan.input);
+    const sourcePlanResult = toRecord(sourcePlan.result);
+    sourceAddCount = safeNumberField(sourcePlanResult, 'addCount');
+    sourceChangeCount = safeNumberField(sourcePlanResult, 'changeCount');
+    sourceDestroyCount = safeNumberField(sourcePlanResult, 'destroyCount');
+    const sourceApplyEligible = sourcePlanResult.applyEligible === true;
+    const sourceRiskLevel = optionalStringField(sourcePlanResult, 'riskLevel') ?? 'LOW';
 
-  if (
-    sourceDestroyCount > 0 ||
-    sourceApplyEligible !== true ||
-    sourceRiskLevel === 'HIGH' ||
-    sourceRiskLevel === 'BLOCKED'
-  ) {
-    throw new Error('AWS Terraform ECS apply source plan is unsafe (destroy actions or high risk).');
+    if (
+      sourcePlanInput.targetSlug !== targetSlug ||
+      sourcePlanInput.environmentSlug !== environmentSlug ||
+      sourcePlanInput.imageUri !== imageUri ||
+      (sourcePlanInput.imageDigest ?? null) !== (imageDigest ?? null)
+    ) {
+      throw new Error('AWS Terraform ECS apply variables mismatch against approved plan.');
+    }
+
+    if (
+      sourceDestroyCount > 0 ||
+      sourceApplyEligible !== true ||
+      sourceRiskLevel === 'HIGH' ||
+      sourceRiskLevel === 'BLOCKED'
+    ) {
+      throw new Error('AWS Terraform ECS apply source plan is unsafe (destroy actions or high risk).');
+    }
+    hasSourcePlan = true;
   }
 
   const workspace = await getTerraformWorkspaceBySlug(workspaceSlug);
@@ -773,15 +883,21 @@ async function executeAwsTerraformEcsApply(
 
     const safety = summarizeTerraformPlanSafety(`${init}\n${validate}\n${plan.output}`);
 
-    if (
-      safety.addCount !== sourceAddCount ||
-      safety.changeCount !== sourceChangeCount ||
-      safety.destroyCount !== sourceDestroyCount ||
-      safety.destroyCount > 0 ||
-      safety.applyEligible !== true ||
-      safety.riskLevel === 'HIGH'
-    ) {
-      throw new Error('New plan summary does not match approved plan summary or has destroy/high risk actions.');
+    if (hasSourcePlan) {
+      if (
+        safety.addCount !== sourceAddCount ||
+        safety.changeCount !== sourceChangeCount ||
+        safety.destroyCount !== sourceDestroyCount ||
+        safety.destroyCount > 0 ||
+        safety.applyEligible !== true ||
+        safety.riskLevel === 'HIGH'
+      ) {
+        throw new Error('New plan summary does not match approved plan summary or has destroy/high risk actions.');
+      }
+    } else {
+      if (safety.destroyCount > 0 || safety.applyEligible !== true || safety.riskLevel === 'HIGH') {
+        throw new Error('Plan is unsafe (destroy actions or high risk).');
+      }
     }
 
     const applyOutput = await runTool(
@@ -824,7 +940,7 @@ async function executeAwsTerraformEcsApply(
               runningCount: s.runningCount ?? null,
               taskDefinition: s.taskDefinition?.split('/').pop() ?? s.taskDefinition ?? null,
               status: s.status ?? null,
-              deployments: (s.deployments ?? []).map((d: Deployment) => ({
+              deployments: (s.deployments ?? []).map((d: any) => ({
                 id: d.id ?? null,
                 status: d.status ?? null,
                 desiredCount: d.desiredCount ?? null,
@@ -872,14 +988,29 @@ async function executeAwsTerraformEcsApply(
       };
     }
 
+    // Write release metadata to the database
+    await recordNewAwsRelease(db, {
+      organizationId,
+      targetSlug,
+      environmentSlug,
+      sourceOperationId: options.promotedFromReleaseId || options.rolledBackFromReleaseId || null,
+      planOperationId: options.sourcePlanOperationId || null,
+      applyOperationId: operationId,
+      imageUri,
+      imageDigest,
+      promotedFromReleaseId: options.promotedFromReleaseId || null,
+      rolledBackFromReleaseId: options.rolledBackFromReleaseId || null,
+      approvedByUserId,
+    });
+
     return {
-      action: 'ecs-apply',
+      action: options.rolledBackFromReleaseId ? 'ecs-rollback' : options.promotedFromReleaseId ? 'ecs-promote' : 'ecs-apply',
       operationId,
       targetSlug,
       environmentSlug,
       imageUri,
       imageDigest,
-      sourcePlanOperationId,
+      sourcePlanOperationId: options.sourcePlanOperationId || null,
       addCount: safety.addCount,
       changeCount: safety.changeCount,
       destroyCount: 0,

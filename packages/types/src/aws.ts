@@ -462,3 +462,88 @@ export interface AwsApplySummary {
   safeOutputSummary: string;
 }
 
+export enum AwsReleaseStatus {
+  ACTIVE = 'ACTIVE',
+  SUPERSEDED = 'SUPERSEDED',
+  ROLLED_BACK = 'ROLLED_BACK',
+  FAILED = 'FAILED',
+}
+
+export enum AwsReleaseRiskLevel {
+  LOW = 'LOW',
+  MEDIUM = 'MEDIUM',
+  HIGH = 'HIGH',
+}
+
+export interface AwsReleaseSummary {
+  id: string;
+  organizationId: string;
+  targetSlug: string;
+  environmentSlug: string;
+  sourceOperationId: string | null;
+  planOperationId: string | null;
+  applyOperationId: string;
+  imageUri: string;
+  imageDigest: string | null;
+  taskDefinitionArn: string | null;
+  ecsClusterName: string | null;
+  ecsServiceName: string | null;
+  releaseVersion: number;
+  status: AwsReleaseStatus;
+  promotedFromReleaseId: string | null;
+  rolledBackFromReleaseId: string | null;
+  createdByUserId: string | null;
+  approvedByUserId: string | null;
+  createdAt: string;
+  promotedAt: string | null;
+  rolledBackAt: string | null;
+}
+
+export interface AwsReleaseHistoryResponse {
+  items: AwsReleaseSummary[];
+  checkedAt: string;
+}
+
+export interface AwsReleaseReadinessResponse {
+  status: string;
+  awsConfigured: boolean;
+  regionConfigured: boolean;
+  allowedWorkspaceConfigured: boolean;
+  workspaceExists: boolean;
+  terraformToolAvailable: boolean;
+  activeReleaseAvailable: boolean;
+  rollbackEligible: boolean;
+  targetSlug: string | null;
+  environmentSlug: string | null;
+  missing: string[];
+  blockedReasons: string[];
+  checkedAt: string;
+}
+
+export const awsReleasePromoteRequestSchema = z.object({
+  targetEnvironmentSlug: z.string().min(2).max(32).regex(/^[a-z][a-z0-9-]+$/),
+  targetSlug: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]{0,79}$/),
+  confirmationToken: z.literal('PROMOTE'),
+}).strict();
+
+export type AwsReleasePromoteRequest = z.infer<typeof awsReleasePromoteRequestSchema>;
+
+export interface AwsReleasePromoteResponse {
+  operationId: string;
+  status: string;
+  provider: string;
+  type: string;
+}
+
+export const awsReleaseRollbackRequestSchema = z.object({
+  confirmationToken: z.literal('ROLLBACK'),
+}).strict();
+
+export type AwsReleaseRollbackRequest = z.infer<typeof awsReleaseRollbackRequestSchema>;
+
+export interface AwsReleaseRollbackResponse {
+  operationId: string;
+  status: string;
+  provider: string;
+  type: string;
+}

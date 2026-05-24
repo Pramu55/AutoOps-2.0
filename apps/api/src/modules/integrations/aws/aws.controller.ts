@@ -17,12 +17,21 @@ import type {
   AwsTerraformEcsPlanRequest,
   AwsTerraformApplyReadinessResponse,
   AwsTerraformEcsApplyRequest,
+  AwsReleaseSummary,
+  AwsReleaseHistoryResponse,
+  AwsReleaseReadinessResponse,
+  AwsReleasePromoteRequest,
+  AwsReleasePromoteResponse,
+  AwsReleaseRollbackRequest,
+  AwsReleaseRollbackResponse,
 } from '@autoops/types';
 import {
   awsEcrImageBuildRequestSchema,
   awsEcrImagePushRequestSchema,
   awsTerraformEcsApplyRequestSchema,
   awsTerraformEcsPlanRequestSchema,
+  awsReleasePromoteRequestSchema,
+  awsReleaseRollbackRequestSchema,
 } from '@autoops/types';
 import { awsService } from './aws.service.js';
 import { requireProviderInventoryAccess } from '../integration-access.service.js';
@@ -160,6 +169,47 @@ export class AwsController {
     const auth = req.auth as { orgId: string; userId: string; };
     const result = await awsService.applyDeployment(auth.orgId, auth.userId, targetSlug!, body.environmentSlug);
     res.json({ data: result });
+  };
+
+  releases = async (req: Request, res: Response<{ data: AwsReleaseHistoryResponse }>): Promise<void> => {
+    const auth = req.auth as { orgId: string; userId: string };
+    const targetSlug = typeof req.query.targetSlug === 'string' ? req.query.targetSlug : undefined;
+    const environmentSlug = typeof req.query.environmentSlug === 'string' ? req.query.environmentSlug : undefined;
+    res.json({ data: await awsService.listReleases(auth.orgId, targetSlug, environmentSlug) });
+  };
+
+  releaseHistory = async (req: Request, res: Response<{ data: AwsReleaseHistoryResponse }>): Promise<void> => {
+    const auth = req.auth as { orgId: string; userId: string };
+    res.json({ data: await awsService.listReleaseHistory(auth.orgId) });
+  };
+
+  getRelease = async (req: Request, res: Response<{ data: AwsReleaseSummary }>): Promise<void> => {
+    const auth = req.auth as { orgId: string; userId: string };
+    const { releaseId } = req.params;
+    res.json({ data: await awsService.getRelease(auth.orgId, releaseId!) });
+  };
+
+  releaseReadiness = async (req: Request, res: Response<{ data: AwsReleaseReadinessResponse }>): Promise<void> => {
+    const auth = req.auth as { orgId: string; userId: string };
+    const targetSlug = typeof req.query.targetSlug === 'string' ? req.query.targetSlug : undefined;
+    const environmentSlug = typeof req.query.environmentSlug === 'string' ? req.query.environmentSlug : undefined;
+    res.json({ data: await awsService.getReleaseReadiness(auth.orgId, targetSlug, environmentSlug) });
+  };
+
+  promoteRelease = async (req: Request, res: Response<{ data: AwsReleasePromoteResponse }>): Promise<void> => {
+    await requireProviderInventoryAccess(req.auth);
+    const { releaseId } = req.params;
+    const body = awsReleasePromoteRequestSchema.parse(req.body) as AwsReleasePromoteRequest;
+    const auth = req.auth as { orgId: string; userId: string };
+    res.json({ data: await awsService.promoteRelease(auth.orgId, auth.userId, releaseId!, body) });
+  };
+
+  rollbackRelease = async (req: Request, res: Response<{ data: AwsReleaseRollbackResponse }>): Promise<void> => {
+    await requireProviderInventoryAccess(req.auth);
+    const { releaseId } = req.params;
+    const body = awsReleaseRollbackRequestSchema.parse(req.body) as AwsReleaseRollbackRequest;
+    const auth = req.auth as { orgId: string; userId: string };
+    res.json({ data: await awsService.rollbackRelease(auth.orgId, auth.userId, releaseId!, body) });
   };
 }
 

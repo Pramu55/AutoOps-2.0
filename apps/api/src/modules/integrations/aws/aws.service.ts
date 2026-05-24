@@ -52,7 +52,21 @@ import {
 import { prisma, type Prisma } from '@autoops/database';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { OperationProvider, OperationStatus, OperationType, type AwsDeploymentOperationResponse, type AwsDeploymentSummary } from '@autoops/types';
+import {
+  OperationProvider,
+  OperationStatus,
+  OperationType,
+  AwsReleaseStatus,
+  type AwsDeploymentOperationResponse,
+  type AwsDeploymentSummary,
+  type AwsReleaseSummary,
+  type AwsReleaseHistoryResponse,
+  type AwsReleaseReadinessResponse,
+  type AwsReleasePromoteRequest,
+  type AwsReleasePromoteResponse,
+  type AwsReleaseRollbackRequest,
+  type AwsReleaseRollbackResponse,
+} from '@autoops/types';
 import {
   listTerraformWorkspaces,
   getTerraformWorkspaceBySlug,
@@ -67,7 +81,9 @@ import {
   isProductionEnvironment,
 } from '@autoops/utils';
 import { operationService } from '../../operations/operation.service.js';
-import { BadRequestError } from '@autoops/utils';
+import { operationAuthorizationService } from '../../operations/operation-authorization.service.js';
+import { isProviderInventoryAccessEnabledForOrg } from '../integration-access.service.js';
+import { BadRequestError, UnauthorizedError } from '@autoops/utils';
 
 export class AwsService {
   async getStatus(): Promise<AwsStatusResponse> {
@@ -1410,6 +1426,290 @@ export class AwsService {
       message: status.message,
       checkedAt: new Date().toISOString(),
       items: await loader(clients),
+    };
+  }
+
+  async listReleases(
+    organizationId: string,
+    targetSlug?: string,
+    environmentSlug?: string,
+  ): Promise<AwsReleaseHistoryResponse> {
+    const checkedAt = new Date().toISOString();
+    if (!await isProviderInventoryAccessEnabledForOrg(organizationId)) {
+      return { items: [], checkedAt };
+    }
+
+    const releases = await prisma.awsRelease.findMany({
+      where: {
+        organizationId,
+        ...(targetSlug ? { targetSlug } : {}),
+        ...(environmentSlug ? { environmentSlug } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      items: releases.map(r => this._toReleaseSummary(r)),
+      checkedAt,
+    };
+  }
+
+  async listReleaseHistory(organizationId: string): Promise<AwsReleaseHistoryResponse> {
+    const checkedAt = new Date().toISOString();
+    if (!await isProviderInventoryAccessEnabledForOrg(organizationId)) {
+      return { items: [], checkedAt };
+    }
+
+    const releases = await prisma.awsRelease.findMany({
+      where: { organizationId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      items: releases.map(r => this._toReleaseSummary(r)),
+      checkedAt,
+    };
+  }
+
+  async getRelease(organizationId: string, releaseId: string): Promise<AwsReleaseSummary> {
+    const release = await prisma.awsRelease.findFirst({
+      where: { id: releaseId, organizationId },
+    });
+    if (!release) throw new BadRequestError('Release not found');
+    return this._toReleaseSummary(release);
+  }
+
+  async getReleaseReadiness(
+    organizationId: string,
+    targetSlug?: string,
+    environmentSlug?: string,
+  ): Promise<AwsReleaseReadinessResponse> {
+    const checkedAt = new Date().toISOString();
+    const config = getAwsConfiguration();
+    const missing: string[] = [];
+    const blockedReasons: string[] = [];
+
+    if (!config.configured) {
+      missing.push('AWS credentials are not configured.');
+    }
+
+    const workspaceRes = targetSlug ? await getTerraformWorkspaceBySlug(targetSlug) : null;
+    if (targetSlug && !workspaceRes) {
+      blockedReasons.push(`Workspace ${targetSlug} not found.`);
+    }
+
+    const allowedWorkspaces = process.env.AWS_ALLOWED_DEPLOYMENT_WORKSPACES
+      ? process.env.AWS_ALLOWED_DEPLOYMENT_WORKSPACES.split(',').map(s => s.trim())
+      : [];
+    if (targetSlug && !allowedWorkspaces.includes(targetSlug)) {
+      blockedReasons.push(`Workspace ${targetSlug} is not allowlisted.`);
+    }
+
+    // Check active release in the environment
+    const activeRelease = targetSlug && environmentSlug ? await prisma.awsRelease.findFirst({
+      where: {
+        organizationId,
+        targetSlug,
+        environmentSlug,
+        status: 'ACTIVE',
+      },
+    }) : null;
+
+    const rollbackEligible = targetSlug && environmentSlug ? (await prisma.awsRelease.count({
+      where: {
+        organizationId,
+        targetSlug,
+        environmentSlug,
+      },
+    })) > 1 : false;
+
+    const toolStatus = await detectTerraformTool();
+
+    const hasAccess = await isProviderInventoryAccessEnabledForOrg(organizationId);
+    if (!hasAccess) {
+      blockedReasons.push('Provider inventory access is not enabled for this organization.');
+    }
+
+    const isReady =
+      config.configured &&
+      (!targetSlug || !!workspaceRes) &&
+      (!targetSlug || allowedWorkspaces.includes(targetSlug)) &&
+      toolStatus.status === 'CONNECTED' &&
+      hasAccess;
+
+    return {
+      status: isReady ? 'READY' : 'BLOCKED',
+      awsConfigured: config.configured,
+      regionConfigured: !!config.region,
+      allowedWorkspaceConfigured: allowedWorkspaces.length > 0,
+      workspaceExists: !!workspaceRes,
+      terraformToolAvailable: toolStatus.status === 'CONNECTED',
+      activeReleaseAvailable: !!activeRelease,
+      rollbackEligible,
+      targetSlug: targetSlug || null,
+      environmentSlug: environmentSlug || null,
+      missing,
+      blockedReasons,
+      checkedAt,
+    };
+  }
+
+  async promoteRelease(
+    organizationId: string,
+    userId: string,
+    releaseId: string,
+    body: AwsReleasePromoteRequest,
+  ): Promise<AwsReleasePromoteResponse> {
+    // 1. Find source release
+    const sourceRelease = await prisma.awsRelease.findFirst({
+      where: { id: releaseId, organizationId },
+    });
+    if (!sourceRelease) throw new BadRequestError('Source release not found');
+
+    // 2. Validate target workspace is allowed
+    const targets = await this.listDeploymentTargets();
+    if (!targets.items.some(t => t.slug === body.targetSlug)) {
+      throw new BadRequestError(`Target workspace ${body.targetSlug} is not allowed.`);
+    }
+
+    // 3. Create plan operation
+    const toolStatus = await detectTerraformTool();
+
+    // Evaluate trigger eligibility
+    const triggerDecision = await operationAuthorizationService.canTriggerOperation({
+      organizationId,
+      userId,
+      provider: OperationProvider.AWS,
+      operationType: OperationType.AWS_ECS_RELEASE_PROMOTE,
+    });
+    if (!triggerDecision.allowed) {
+      throw new UnauthorizedError(triggerDecision.reason ?? 'You do not have permission to trigger promotion.');
+    }
+
+    // Create operations record directly via operationService
+    const operation = await operationService.createQueuedOperation({
+      organizationId,
+      userId,
+      provider: OperationProvider.AWS,
+      operationType: OperationType.AWS_ECS_RELEASE_PROMOTE,
+      confirmationToken: 'PROMOTE',
+      idempotencyKey: `aws-ecs-promote-${body.targetSlug}-${releaseId}-${Date.now()}`,
+      input: {
+        tool: toolStatus.tool,
+        action: 'ecs-promote',
+        sourceReleaseId: sourceRelease.id,
+        targetSlug: body.targetSlug,
+        environmentSlug: body.targetEnvironmentSlug,
+        imageUri: sourceRelease.imageUri,
+        imageDigest: sourceRelease.imageDigest,
+        commandSummary: `AWS ECS promote from ${sourceRelease.environmentSlug} to ${body.targetEnvironmentSlug}`,
+        requestedAt: new Date().toISOString(),
+      },
+    });
+
+    return {
+      operationId: operation.id,
+      status: operation.status,
+      provider: operation.provider,
+      type: operation.operationType,
+    };
+  }
+
+  async rollbackRelease(
+    organizationId: string,
+    userId: string,
+    releaseId: string,
+    body: AwsReleaseRollbackRequest,
+  ): Promise<AwsReleaseRollbackResponse> {
+    if (body.confirmationToken !== 'ROLLBACK') {
+      throw new BadRequestError('Confirmation token must be "ROLLBACK" to trigger a rollback');
+    }
+
+    // 1. Find target release to rollback to
+    const targetRelease = await prisma.awsRelease.findFirst({
+      where: { id: releaseId, organizationId },
+    });
+    if (!targetRelease) throw new BadRequestError('Target rollback release not found');
+
+    // 2. Find currently ACTIVE release to roll back from
+    const activeRelease = await prisma.awsRelease.findFirst({
+      where: {
+        organizationId,
+        targetSlug: targetRelease.targetSlug,
+        environmentSlug: targetRelease.environmentSlug,
+        status: 'ACTIVE',
+      },
+    });
+    if (!activeRelease) throw new BadRequestError('No active release found to rollback from.');
+    if (activeRelease.id === targetRelease.id) {
+      throw new BadRequestError('The selected release is already the currently active release.');
+    }
+
+    const toolStatus = await detectTerraformTool();
+
+    // Evaluate trigger eligibility
+    const triggerDecision = await operationAuthorizationService.canTriggerOperation({
+      organizationId,
+      userId,
+      provider: OperationProvider.AWS,
+      operationType: OperationType.AWS_ECS_RELEASE_ROLLBACK,
+    });
+    if (!triggerDecision.allowed) {
+      throw new UnauthorizedError(triggerDecision.reason ?? 'You do not have permission to trigger rollback.');
+    }
+
+    const operation = await operationService.createQueuedOperation({
+      organizationId,
+      userId,
+      provider: OperationProvider.AWS,
+      operationType: OperationType.AWS_ECS_RELEASE_ROLLBACK,
+      confirmationToken: 'ROLLBACK',
+      idempotencyKey: `aws-ecs-rollback-${targetRelease.targetSlug}-${releaseId}-${Date.now()}`,
+      input: {
+        tool: toolStatus.tool,
+        action: 'ecs-rollback',
+        targetSlug: targetRelease.targetSlug,
+        environmentSlug: targetRelease.environmentSlug,
+        rollbackToReleaseId: targetRelease.id,
+        rolledBackFromReleaseId: activeRelease.id,
+        imageUri: targetRelease.imageUri,
+        imageDigest: targetRelease.imageDigest,
+        commandSummary: `AWS ECS rollback to version ${targetRelease.releaseVersion}`,
+        requestedAt: new Date().toISOString(),
+      },
+    });
+
+    return {
+      operationId: operation.id,
+      status: operation.status,
+      provider: operation.provider,
+      type: operation.operationType,
+    };
+  }
+
+  private _toReleaseSummary(r: any): AwsReleaseSummary {
+    return {
+      id: r.id,
+      organizationId: r.organizationId,
+      targetSlug: r.targetSlug,
+      environmentSlug: r.environmentSlug,
+      sourceOperationId: r.sourceOperationId,
+      planOperationId: r.planOperationId,
+      applyOperationId: r.applyOperationId,
+      imageUri: r.imageUri,
+      imageDigest: r.imageDigest,
+      taskDefinitionArn: r.taskDefinitionArn,
+      ecsClusterName: r.ecsClusterName,
+      ecsServiceName: r.ecsServiceName,
+      releaseVersion: r.releaseVersion,
+      status: r.status as AwsReleaseStatus,
+      promotedFromReleaseId: r.promotedFromReleaseId,
+      rolledBackFromReleaseId: r.rolledBackFromReleaseId,
+      createdByUserId: r.createdByUserId,
+      approvedByUserId: r.approvedByUserId,
+      createdAt: r.createdAt.toISOString(),
+      promotedAt: r.promotedAt ? r.promotedAt.toISOString() : null,
+      rolledBackAt: r.rolledBackAt ? r.rolledBackAt.toISOString() : null,
     };
   }
 }

@@ -144,6 +144,18 @@ Authorization:
 - ECS verification after apply must be read-only (describe services, list clusters, etc.) and best-effort; no writes.
 - AWS credentials, tfstate, raw planfiles, and raw backend configs must never be stored in operation results or log databases.
 
+## AWS ECS Releases, Promotion, and Rollbacks
+
+- Release records and history must be strictly tenant-scoped (scoped by `organizationId`).
+- Newly registered organizations must start with a completely empty release history; no mock or demo releases.
+- Promotion to `production` or `prod` environments must require Owner/Admin approval.
+- Rollbacks to previous releases must always require Owner/Admin approval.
+- Self-approval is strictly blocked for both promotion and rollback requests.
+- Rollback execution must be blocked if the plan includes destroy actions (`destroyCount > 0`) or if it is not eligible (`applyEligible === false`).
+- All promotion and rollback actions must create controlled operation records (`AWS_ECS_RELEASE_PROMOTE` and `AWS_ECS_RELEASE_ROLLBACK`); no direct mutation of AWS resources or ECS services from the API.
+- All execution must happen inside a temporary isolated workspace on the worker node.
+- AWS credentials, tfstate, raw backend configs, and raw Terraform outputs must never be exposed or stored in operation logs or results.
+
 ## Incidents and Runbooks
 
 - Verify failed operations create incidents.

@@ -19,6 +19,8 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 | AWS ECR | Push image to allowlisted ECR repository | PUSH | MEDIUM/HIGH | Required for production/prod |
 | AWS Terraform ECS | Generate ECS plan from remote state and pushed ECR image | PLAN | MEDIUM/HIGH if destroy detected | Not required for plan |
 | AWS Terraform ECS | Apply ECS deployment from approved plan | APPLY | HIGH | Required |
+| AWS ECS Releases | Promote staging release to production | PROMOTE | HIGH | Required for production/prod |
+| AWS ECS Releases | Rollback active release to previous version | ROLLBACK | HIGH | Required (Always) |
 
 ## Safety Rules
 
@@ -34,6 +36,7 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - AWS ECR image build/push never accepts arbitrary Dockerfile paths, build contexts, tags, repositories, or shell arguments. Build and push are separate worker-executed operations.
 - AWS ECS Terraform/OpenTofu planning requires remote state configuration, an allowlisted workspace, and tenant-scoped ECR push metadata. It runs `init`, `validate`, and `plan` only; apply and destroy are not executed.
 - AWS ECS Terraform/OpenTofu apply is gated by approval, requires `AWS_DEPLOYMENT_APPLY_ENABLED=true`, gates execution on a fresh and matching plan with zero destroys, and runs read-only health checks on the ECS deployment post-apply. Destroy actions are blocked.
+- AWS ECS Release promotion and rollback operations (`AWS_ECS_RELEASE_PROMOTE` and `AWS_ECS_RELEASE_ROLLBACK`) are governed by the control plane. Promotion to production and all rollback requests require Owner/Admin approval (self-approval blocked). They execute inside temporary isolated workspaces on the worker, dynamically validating plan counts to ensure no destructive actions occur.
 
 ## Operation Detail and Recovery
 

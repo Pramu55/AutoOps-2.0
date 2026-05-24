@@ -16,8 +16,12 @@ import type {
   AwsTerraformPlanReadinessResponse,
   AwsTerraformApplyReadinessResponse,
   AwsDeploymentSummary,
+  AwsReleaseSummary,
+  AwsReleaseHistoryResponse,
+  AwsReleaseReadinessResponse,
 } from '@autoops/types';
-import { ArrowLeft, Cloud, RefreshCw, CheckCircle2, XCircle, AlertCircle, Play, ShieldAlert, FileText, Activity } from 'lucide-react';
+import { AwsReleaseStatus } from '@autoops/types';
+import { ArrowLeft, Cloud, RefreshCw, CheckCircle2, XCircle, AlertCircle, Play, ShieldAlert, FileText, Activity, TrendingUp, RotateCcw, Clock, ArrowRight, History, UserCheck } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 
@@ -46,10 +50,20 @@ export function AwsDeploymentClient() {
   const [inventoryDenied, setInventoryDenied] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // New releases state
+  const [releases, setReleases] = useState<AwsReleaseSummary[]>([]);
+  const [releaseReadiness, setReleaseReadiness] = useState<AwsReleaseReadinessResponse | null>(null);
+  const [promoteMessage, setPromoteMessage] = useState<string | null>(null);
+  const [rollbackMessage, setRollbackMessage] = useState<string | null>(null);
+  const [promoting, setPromoting] = useState(false);
+  const [rollingBack, setRollingBack] = useState(false);
+  const [rollbackConfirmText, setRollbackConfirmText] = useState('');
+  const [selectedRollbackReleaseId, setSelectedRollbackReleaseId] = useState<string>('');
+
   async function load() {
     setLoading(true);
     try {
-      const [idRes, readRes, permRes, rsRes, tRes, ecrReadyRes, ecrRepoRes, ecrImagesRes, planReadyRes, applyReadyRes, deploymentsRes] = await Promise.all([
+      const [idRes, readRes, permRes, rsRes, tRes, ecrReadyRes, ecrRepoRes, ecrImagesRes, planReadyRes, applyReadyRes, deploymentsRes, releasesRes, releaseReadyRes] = await Promise.all([
         api.get<{ data: AwsIdentityResponse }>('/v1/integrations/aws/identity').catch((error) => {
           if (error?.status === 403) setInventoryDenied(true);
           return null;
@@ -64,17 +78,21 @@ export function AwsDeploymentClient() {
         api.get<{ data: AwsTerraformPlanReadinessResponse }>('/v1/integrations/aws/terraform/plan-readiness').catch(() => null),
         api.get<{ data: AwsTerraformApplyReadinessResponse }>('/v1/integrations/aws/apply-readiness').catch(() => null),
         api.get<{ data: AwsListResponse<AwsDeploymentSummary> }>('/v1/integrations/aws/deployments').catch(() => null),
+        api.get<{ data: AwsReleaseHistoryResponse }>('/v1/integrations/aws/releases/history').catch(() => null),
+        api.get<{ data: AwsReleaseReadinessResponse }>('/v1/integrations/aws/release-readiness').catch(() => null),
       ]);
       setIdentity(idRes?.data ?? null);
       setReadiness(readRes?.data ?? null);
       setPermissions(permRes?.data ?? null);
       setRemoteState(rsRes?.data ?? null);
       setEcrReadiness(ecrReadyRes?.data ?? null);
-      setEcrRepositories(ecrRepoRes?.data?.items ?? []);
+      setEcrRepositories(repoRes => ecrRepoRes?.data?.items ?? repoRes);
       setEcrImages(ecrImagesRes?.data?.items ?? []);
       setPlanReadiness(planReadyRes?.data ?? null);
       setApplyReadiness(applyReadyRes?.data ?? null);
       setDeployments(deploymentsRes?.data?.items ?? []);
+      setReleases(releasesRes?.data?.items ?? []);
+      setReleaseReadiness(releaseReadyRes?.data ?? null);
       const items = tRes?.data?.items ?? [];
       
       if (items.length > 0 && items[0]) {
@@ -150,6 +168,47 @@ export function AwsDeploymentClient() {
       setApplyMessage(apiErrorMessage(err, 'Failed to request apply.'));
     } finally {
       setApplying(false);
+    }
+  }
+
+  async function requestPromote(releaseId: string, targetSlug: string, targetEnvironmentSlug: string) {
+    setPromoteMessage(null);
+    setPromoting(true);
+    try {
+      const response = await api.post<{ data: { operationId: string; status: string } }>(
+        `/v1/integrations/aws/releases/${encodeURIComponent(releaseId)}/promote`,
+        {
+          targetSlug,
+          targetEnvironmentSlug,
+          confirmationToken: 'PROMOTE',
+        },
+      );
+      setPromoteMessage(`Promotion operation ${response.data.operationId} is ${response.data.status} (Pending Approval if target is Production).`);
+      await load();
+    } catch (err: unknown) {
+      setPromoteMessage(apiErrorMessage(err, 'Failed to request promotion.'));
+    } finally {
+      setPromoting(false);
+    }
+  }
+
+  async function requestRollback(releaseId: string) {
+    setRollbackMessage(null);
+    setRollingBack(true);
+    try {
+      const response = await api.post<{ data: { operationId: string; status: string } }>(
+        `/v1/integrations/aws/releases/${encodeURIComponent(releaseId)}/rollback`,
+        {
+          confirmationToken: 'ROLLBACK',
+        },
+      );
+      setRollbackMessage(`Rollback operation ${response.data.operationId} is ${response.data.status} (Pending Approval).`);
+      await load();
+    } catch (err: unknown) {
+      setRollbackMessage(apiErrorMessage(err, 'Failed to request rollback.'));
+    } finally {
+      setRollingBack(false);
+      setRollbackConfirmText('');
     }
   }
 
@@ -583,6 +642,332 @@ export function AwsDeploymentClient() {
                 </p>
               </div>
             </div>
+          </div>
+        </section>
+      )}
+
+      {releaseReadiness && (
+        <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm space-y-6">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between border-b border-slate-100 pb-4">
+            <div>
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-950">
+                <TrendingUp className="h-5 w-5 text-indigo-500" /> AWS ECS Release Promotion & Rollback Engine
+              </h2>
+              <p className="mt-1 text-sm text-slate-600 font-normal">
+                Manage safe environment promotion pipelines and governed rollbacks using Day 3 plan evidence and Day 4 apply gates.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500">Pipeline status:</span>
+              <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold ${releaseReadiness.status === 'READY' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                {releaseReadiness.status === 'READY' ? 'PIPELINE READY' : 'PIPELINE BLOCKED'}
+              </span>
+            </div>
+          </div>
+
+          {promoteMessage && (
+            <div className={`rounded-md border p-3 text-sm ${promoteMessage.includes('failed') || promoteMessage.includes('Failed') ? 'border-red-200 bg-red-50 text-red-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
+              {promoteMessage}
+            </div>
+          )}
+
+          {rollbackMessage && (
+            <div className={`rounded-md border p-3 text-sm ${rollbackMessage.includes('failed') || rollbackMessage.includes('Failed') ? 'border-red-200 bg-red-50 text-red-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
+              {rollbackMessage}
+            </div>
+          )}
+
+          <div className="grid gap-6 md:grid-cols-2">
+            {/* STAGING ENVIRONMENT CARD */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 space-y-4">
+              <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider">Staging Environment</h3>
+                {releases.find(r => r.environmentSlug === 'staging' && r.status === AwsReleaseStatus.ACTIVE) ? (
+                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded">
+                    ACTIVE RELEASE: v{releases.find(r => r.environmentSlug === 'staging' && r.status === AwsReleaseStatus.ACTIVE)?.releaseVersion}
+                  </span>
+                ) : (
+                  <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded">
+                    NO ACTIVE RELEASE
+                  </span>
+                )}
+              </div>
+
+              {(() => {
+                const activeStaging = releases.find(r => r.environmentSlug === 'staging' && r.status === AwsReleaseStatus.ACTIVE);
+                const prevStaging = releases.filter(r => r.environmentSlug === 'staging' && r.status !== AwsReleaseStatus.ACTIVE);
+
+                return (
+                  <>
+                    {activeStaging ? (
+                      <div className="space-y-3 text-xs text-slate-600">
+                        <div>
+                          <span className="font-semibold block text-slate-700">Image URI:</span>
+                          <span className="font-mono break-all">{activeStaging.imageUri}</span>
+                        </div>
+                        {activeStaging.imageDigest && (
+                          <div>
+                            <span className="font-semibold block text-slate-700">Image Digest:</span>
+                            <span className="font-mono break-all">{activeStaging.imageDigest}</span>
+                          </div>
+                        )}
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          <div>
+                            <span className="font-semibold block text-slate-700">Created:</span>
+                            <span>{new Date(activeStaging.createdAt).toLocaleString()}</span>
+                          </div>
+                          <div>
+                            <span className="font-semibold block text-slate-700">Deployer:</span>
+                            <span className="font-mono text-[10px]">{activeStaging.createdByUserId || 'System'}</span>
+                          </div>
+                        </div>
+
+                        <div className="pt-3 border-t border-slate-100 flex flex-col gap-2">
+                          <div className="flex justify-between items-center">
+                            <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1">
+                              <UserCheck className="h-3 w-3 text-amber-500" /> Promote to Production (Approval Required)
+                            </span>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => void requestPromote(activeStaging.id, activeStaging.targetSlug, 'production')}
+                            disabled={releaseReadiness.status !== 'READY' || promoting}
+                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-full flex items-center justify-center gap-1 text-xs"
+                          >
+                            <ArrowRight className="h-3 w-3" /> Request Production Promotion
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500 py-6 text-center">No active release deployed to staging yet.</p>
+                    )}
+
+                    {prevStaging.length > 0 && (
+                      <div className="pt-4 border-t border-slate-200 space-y-2">
+                        <h4 className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+                          <RotateCcw className="h-3 w-3 text-slate-500" /> Rollback Staging (Requires Approval)
+                        </h4>
+                        <div className="flex flex-col gap-2">
+                          <select
+                            className="w-full text-xs rounded border border-slate-300 bg-white p-2 text-slate-700"
+                            onChange={(e) => setSelectedRollbackReleaseId(e.target.value)}
+                            value={selectedRollbackReleaseId}
+                          >
+                            <option value="">Select a previous release to roll back to...</option>
+                            {prevStaging.map(r => (
+                              <option key={r.id} value={r.id}>
+                                v{r.releaseVersion} - {r.imageUri.substring(r.imageUri.lastIndexOf('/') + 1)} ({new Date(r.createdAt).toLocaleDateString()})
+                              </option>
+                            ))}
+                          </select>
+
+                          {selectedRollbackReleaseId && prevStaging.some(r => r.id === selectedRollbackReleaseId) && (
+                            <div className="bg-slate-100 p-2 rounded space-y-2">
+                              <p className="text-[10px] text-amber-800 font-medium">
+                                Warning: This will create an approval-gated rollback operation.
+                              </p>
+                              <input
+                                type="text"
+                                placeholder="Type 'ROLLBACK' to confirm"
+                                className="w-full text-xs p-1.5 border border-slate-300 rounded font-mono"
+                                value={rollbackConfirmText}
+                                onChange={(e) => setRollbackConfirmText(e.target.value)}
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={rollbackConfirmText !== 'ROLLBACK' || rollingBack || releaseReadiness.status !== 'READY'}
+                                onClick={() => void requestRollback(selectedRollbackReleaseId)}
+                                className="w-full bg-amber-600 hover:bg-amber-700 text-white rounded text-xs"
+                              >
+                                Confirm Staging Rollback
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+
+            {/* PRODUCTION ENVIRONMENT CARD */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 space-y-4">
+              <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider">Production Environment</h3>
+                {releases.find(r => r.environmentSlug === 'production' && r.status === AwsReleaseStatus.ACTIVE) ? (
+                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded">
+                    ACTIVE RELEASE: v{releases.find(r => r.environmentSlug === 'production' && r.status === AwsReleaseStatus.ACTIVE)?.releaseVersion}
+                  </span>
+                ) : (
+                  <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded">
+                    NO ACTIVE RELEASE
+                  </span>
+                )}
+              </div>
+
+              {(() => {
+                const activeProduction = releases.find(r => r.environmentSlug === 'production' && r.status === AwsReleaseStatus.ACTIVE);
+                const prevProduction = releases.filter(r => r.environmentSlug === 'production' && r.status !== AwsReleaseStatus.ACTIVE);
+
+                return (
+                  <>
+                    {activeProduction ? (
+                      <div className="space-y-3 text-xs text-slate-600">
+                        <div>
+                          <span className="font-semibold block text-slate-700">Image URI:</span>
+                          <span className="font-mono break-all">{activeProduction.imageUri}</span>
+                        </div>
+                        {activeProduction.imageDigest && (
+                          <div>
+                            <span className="font-semibold block text-slate-700">Image Digest:</span>
+                            <span className="font-mono break-all">{activeProduction.imageDigest}</span>
+                          </div>
+                        )}
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          <div>
+                            <span className="font-semibold block text-slate-700">Created:</span>
+                            <span>{new Date(activeProduction.createdAt).toLocaleString()}</span>
+                          </div>
+                          <div>
+                            <span className="font-semibold block text-slate-700">Deployer:</span>
+                            <span className="font-mono text-[10px]">{activeProduction.createdByUserId || 'System'}</span>
+                          </div>
+                        </div>
+                        {activeProduction.approvedByUserId && (
+                          <div>
+                            <span className="font-semibold block text-slate-700">Approved By:</span>
+                            <span className="font-mono text-[10px]">{activeProduction.approvedByUserId}</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500 py-6 text-center">No active release deployed to production yet.</p>
+                    )}
+
+                    {prevProduction.length > 0 && (
+                      <div className="pt-4 border-t border-slate-200 space-y-2">
+                        <h4 className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+                          <RotateCcw className="h-3 w-3 text-slate-500" /> Rollback Production (Requires Approval)
+                        </h4>
+                        <div className="flex flex-col gap-2">
+                          <select
+                            className="w-full text-xs rounded border border-slate-300 bg-white p-2 text-slate-700"
+                            onChange={(e) => setSelectedRollbackReleaseId(e.target.value)}
+                            value={selectedRollbackReleaseId}
+                          >
+                            <option value="">Select a previous release to roll back to...</option>
+                            {prevProduction.map(r => (
+                              <option key={r.id} value={r.id}>
+                                v{r.releaseVersion} - {r.imageUri.substring(r.imageUri.lastIndexOf('/') + 1)} ({new Date(r.createdAt).toLocaleDateString()})
+                              </option>
+                            ))}
+                          </select>
+
+                          {selectedRollbackReleaseId && prevProduction.some(r => r.id === selectedRollbackReleaseId) && (
+                            <div className="bg-slate-100 p-2 rounded space-y-2">
+                              <p className="text-[10px] text-amber-800 font-medium">
+                                Warning: This will create an approval-gated rollback operation.
+                              </p>
+                              <input
+                                type="text"
+                                placeholder="Type 'ROLLBACK' to confirm"
+                                className="w-full text-xs p-1.5 border border-slate-300 rounded font-mono"
+                                value={rollbackConfirmText}
+                                onChange={(e) => setRollbackConfirmText(e.target.value)}
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={rollbackConfirmText !== 'ROLLBACK' || rollingBack || releaseReadiness.status !== 'READY'}
+                                onClick={() => void requestRollback(selectedRollbackReleaseId)}
+                                className="w-full bg-amber-600 hover:bg-amber-700 text-white rounded text-xs"
+                              >
+                                Confirm Production Rollback
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* RELEASE TIMELINE LOG */}
+          <div className="pt-4 border-t border-slate-100">
+            <h3 className="text-sm font-semibold text-slate-950 flex items-center gap-2 mb-4">
+              <History className="h-4 w-4 text-indigo-500" /> Governing Release Timeline Log
+            </h3>
+            {releases.length === 0 ? (
+              <p className="text-sm text-slate-500 italic">No releases recorded yet. Only successful apply operations or promotions write release history.</p>
+            ) : (
+              <div className="relative border-l border-slate-200 ml-3 pl-6 space-y-6">
+                {releases.map((release) => {
+                  let badgeColor = 'bg-slate-100 text-slate-800';
+                  if (release.status === AwsReleaseStatus.ACTIVE) badgeColor = 'bg-emerald-100 text-emerald-800';
+                  if (release.status === AwsReleaseStatus.ROLLED_BACK) badgeColor = 'bg-amber-100 text-amber-800';
+                  if (release.status === AwsReleaseStatus.FAILED) badgeColor = 'bg-red-100 text-red-800';
+
+                  return (
+                    <div key={release.id} className="relative">
+                      {/* Timeline dot */}
+                      <span className={`absolute -left-[30px] top-1.5 flex h-3 w-3 items-center justify-center rounded-full ring-4 ring-white ${release.status === AwsReleaseStatus.ACTIVE ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+
+                      <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-xs space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-semibold text-slate-900 text-sm">
+                            Release v{release.releaseVersion} ({release.targetSlug})
+                          </span>
+                          <div className="flex gap-2">
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${badgeColor}`}>
+                              {release.status}
+                            </span>
+                            <span className="bg-indigo-50 text-indigo-700 rounded-full px-2 py-0.5 text-[10px] uppercase font-semibold">
+                              {release.environmentSlug}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1 font-mono text-[10px] text-slate-500">
+                          <div className="break-all">Image: {release.imageUri}</div>
+                          {release.imageDigest && <div className="break-all">Digest: {release.imageDigest}</div>}
+                          {release.promotedFromReleaseId && (
+                            <div className="text-indigo-600 font-medium">Promoted from release ID: {release.promotedFromReleaseId}</div>
+                          )}
+                          {release.rolledBackFromReleaseId && (
+                            <div className="text-amber-600 font-medium">Rolled back from release ID: {release.rolledBackFromReleaseId}</div>
+                          )}
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-200/50 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-500 justify-between items-center">
+                          <div className="flex gap-2">
+                            {release.planOperationId && (
+                              <Link href={`/dashboard/operations/${release.planOperationId}`} className="underline text-indigo-600 hover:text-indigo-800">
+                                Plan Evidence
+                              </Link>
+                            )}
+                            <Link href={`/dashboard/operations/${release.applyOperationId}`} className="underline text-indigo-600 hover:text-indigo-800">
+                              Apply Evidence
+                            </Link>
+                          </div>
+                          <div className="flex gap-2 items-center">
+                            <Clock className="h-3 w-3" />
+                            <span>{new Date(release.createdAt).toLocaleString()}</span>
+                            <span>| Created by: {release.createdByUserId || 'System'}</span>
+                            {release.approvedByUserId && <span>| Approved by: {release.approvedByUserId}</span>}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </section>
       )}

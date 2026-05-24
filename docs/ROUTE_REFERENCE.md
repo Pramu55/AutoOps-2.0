@@ -161,6 +161,12 @@
 | GET | `/v1/integrations/aws/apply-readiness` | Authenticated | ECS apply readiness: checks apply status, state storage config, and plan freshness |
 | POST | `/v1/integrations/aws/deployments/:targetSlug/plan` | Authenticated | Request plan-only ECS ECS Terraform/OpenTofu operation with `PLAN`; no apply/destroy |
 | POST | `/v1/integrations/aws/deployments/:targetSlug/apply` | Authenticated | Request ECS Terraform/OpenTofu apply operation (creates a PENDING_APPROVAL operation; requires `APPLY`) |
+| GET | `/v1/integrations/aws/releases` | Authenticated | Organization-scoped list of releases |
+| GET | `/v1/integrations/aws/releases/history` | Authenticated | Organization-scoped release history |
+| GET | `/v1/integrations/aws/releases/:releaseId` | Authenticated | Specific release details by ID |
+| POST | `/v1/integrations/aws/releases/:releaseId/promote` | Authenticated | Request release promotion (production promotion requires approval) |
+| POST | `/v1/integrations/aws/releases/:releaseId/rollback` | Authenticated | Request rollback to a previous release (always requires approval) |
+| GET | `/v1/integrations/aws/release-readiness` | Authenticated | Release promote/rollback readiness check |
 
 ## `/dashboard/projects`
 
