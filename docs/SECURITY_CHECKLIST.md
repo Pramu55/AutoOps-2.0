@@ -26,6 +26,7 @@ Authorization:
 - Roles are evaluated within the authenticated organization.
 - Controllers must use `req.auth.orgId` and must not trust frontend-supplied organization IDs.
 - Provider inventory uses defense-in-depth: role check plus organization-level provider access allowlist.
+- Demo/company provider inventory must be explicitly scoped with `PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS` or `PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS`; OWNER/ADMIN alone is not enough.
 
 ## Environment and Secrets
 

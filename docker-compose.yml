@@ -73,6 +73,8 @@ services:
       DOCKER_SOCKET_PATH: /var/run/docker.sock
       INFRA_TERRAFORM_ROOT: /app/infra/terraform
       INFRA_ANSIBLE_ROOT: /app/infra/ansible
+      PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS: ${PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS:-autoops-demo,pramod-s-ss-workspace}
+      PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS: ${PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./infra:/app/infra:ro
@@ -108,6 +110,8 @@ services:
       DOCKER_SOCKET_PATH: /var/run/docker.sock
       INFRA_TERRAFORM_ROOT: /app/infra/terraform
       INFRA_ANSIBLE_ROOT: /app/infra/ansible
+      PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS: ${PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS:-autoops-demo,pramod-s-ss-workspace}
+      PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS: ${PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./infra:/app/infra:ro

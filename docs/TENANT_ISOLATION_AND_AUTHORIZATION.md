@@ -107,6 +107,8 @@ Shared local/provider inventory is not tenant-owned data. It is treated as platf
 1. The caller is OWNER or ADMIN in the authenticated organization.
 2. The authenticated organization is enabled for provider inventory access.
 
+Enablement is explicit through `PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS` or `PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS`. Local Docker Compose can allow the seeded `autoops-demo` organization for demo readiness, but newly registered organizations do not inherit provider inventory.
+
 Protected provider inventory includes Jenkins jobs/builds, GitHub Actions workflows/runs/jobs, Docker containers/images/networks/volumes/logs, Kubernetes namespaces/pods/services/workloads/nodes, AWS identity/readiness/permissions/resource inventory, cloud provider details, Prometheus/Grafana details, and allowlisted IaC workspace/playbook discovery.
 
 Safe provider status endpoints may return status, configured flags, messages, and timestamps, but must not return credentials, account secrets, kubeconfig, Docker socket details, Jenkins tokens, raw inventory, or other tenants' operation history.

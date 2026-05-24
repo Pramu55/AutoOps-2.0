@@ -36,8 +36,9 @@ type AuthContext = {
  *
  * This is intentionally stricter than role checks. A newly registered user is OWNER of their own
  * organization, but that must not grant visibility into shared local Jenkins, Docker, Kubernetes,
- * cloud, or observability inventory. Local demo access defaults to the seeded autoops-demo org;
- * production deployments should set PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS explicitly.
+ * cloud, or observability inventory. Local/demo deployments should explicitly allow the seeded
+ * demo organization with PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS or
+ * PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS.
  */
 export async function requireProviderInventoryAccess(
   auth: AuthContext | undefined,
@@ -60,7 +61,7 @@ export async function requireProviderInventoryAccess(
 
   if (!organization || !isProviderInventoryOrgAllowed(organization.slug, organization.id)) {
     throw new UnauthorizedError(
-      'Provider inventory is not enabled for this organization. Contact an organization admin.',
+      'Provider inventory is not enabled for this organization. Enable it for this org using PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS or PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS.',
     );
   }
 }
@@ -81,15 +82,19 @@ export async function isProviderInventoryAccessEnabledForOrg(organizationId: str
 }
 
 function providerInventoryAllowlist(): string[] {
-  const configured = process.env.PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS?.trim();
-  if (configured) {
-    return configured
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean);
-  }
+  return [
+    ...listEnv(process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS),
+    ...listEnv(process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS),
+    // Backward-compatible env name used by the first provider-boundary pass.
+    ...listEnv(process.env.PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS),
+  ];
+}
 
-  return process.env.NODE_ENV === 'production' ? [] : ['autoops-demo'];
+function listEnv(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 /**

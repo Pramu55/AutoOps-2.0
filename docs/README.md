@@ -21,6 +21,7 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 - [Limitations and Roadmap](./LIMITATIONS_AND_ROADMAP.md)
 - [Final Release Checklist](./FINAL_RELEASE_CHECKLIST.md)
 - [Company Handoff Package](./COMPANY_HANDOFF_PACKAGE.md)
+- [Company Provider Connectivity Handoff](./COMPANY_PROVIDER_CONNECTIVITY_HANDOFF.md)
 - [Final Evaluator Report](./FINAL_EVALUATOR_REPORT.md)
 
 ## Demo and Presentation
