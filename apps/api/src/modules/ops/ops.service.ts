@@ -1647,6 +1647,8 @@ export class OpsService {
     if (type === OperationType.ANSIBLE_RUN) return 'Ansible run requested';
     if (type === OperationType.GITHUB_WORKFLOW_DISPATCH) return 'GitHub workflow dispatched';
     if (type === OperationType.AWS_DEPLOYMENT) return 'AWS deployment requested';
+    if (type === OperationType.AWS_ECR_IMAGE_BUILD) return 'AWS ECR image build requested';
+    if (type === OperationType.AWS_ECR_IMAGE_PUSH) return 'AWS ECR image push requested';
     if (type === OperationType.DEPLOYMENT_ROLLBACK) return 'Deployment rollback requested';
     return String(type).replace(/_/g, ' ').toLowerCase();
   }
@@ -1682,6 +1684,14 @@ export class OpsService {
         this._stringField(input, 'playbookSlug') ??
         this._stringField(input, 'relativePath')
       );
+    }
+
+    if (type === OperationType.AWS_ECR_IMAGE_BUILD || type === OperationType.AWS_ECR_IMAGE_PUSH) {
+      const repository = this._stringField(input, 'repositoryName') ?? this._stringField(result, 'repositoryName');
+      const tag = this._stringField(input, 'imageTag') ?? this._stringField(result, 'imageTag');
+      const targetSlug = this._stringField(input, 'targetSlug') ?? this._stringField(result, 'targetSlug');
+      if (repository && tag) return `${repository}:${tag}`;
+      return targetSlug ?? repository;
     }
 
     if (
@@ -1729,7 +1739,9 @@ export class OpsService {
       type === OperationType.TERRAFORM_APPLY ||
       type === OperationType.ANSIBLE_SYNTAX_CHECK ||
       type === OperationType.ANSIBLE_CHECK ||
-      type === OperationType.ANSIBLE_RUN
+      type === OperationType.ANSIBLE_RUN ||
+      type === OperationType.AWS_ECR_IMAGE_BUILD ||
+      type === OperationType.AWS_ECR_IMAGE_PUSH
     ) {
       return this._stringField(result, 'status') ?? this._stringField(result, 'safeOutputSummary');
     }
@@ -1772,6 +1784,12 @@ export class OpsService {
       this._stringField(result, 'workspaceSlug') ?? this._stringField(input, 'workspaceSlug');
     const playbookSlug =
       this._stringField(result, 'playbookSlug') ?? this._stringField(input, 'playbookSlug');
+    const ecrTargetSlug =
+      this._stringField(result, 'targetSlug') ?? this._stringField(input, 'targetSlug');
+    const ecrRepository =
+      this._stringField(result, 'repositoryName') ?? this._stringField(input, 'repositoryName');
+    const imageTag = this._stringField(result, 'imageTag') ?? this._stringField(input, 'imageTag');
+    const imageDigest = this._stringField(result, 'imageDigest');
     const relativePath =
       this._stringField(result, 'relativePath') ?? this._stringField(input, 'relativePath');
     const safeOutputSummary = this._stringField(result, 'safeOutputSummary');
@@ -1785,6 +1803,9 @@ export class OpsService {
     if (jobName) safeSummary.push(`Job: ${jobName}`);
     if (workspaceSlug) safeSummary.push(`Terraform workspace: ${workspaceSlug}`);
     if (playbookSlug) safeSummary.push(`Ansible playbook: ${playbookSlug}`);
+    if (ecrTargetSlug) safeSummary.push(`ECR build target: ${ecrTargetSlug}`);
+    if (ecrRepository && imageTag) safeSummary.push(`Image: ${ecrRepository}:${imageTag}`);
+    if (imageDigest) safeSummary.push(`Digest: ${imageDigest}`);
     if (relativePath) safeSummary.push(`Allowlisted path: ${relativePath}`);
     if (buildNumber !== null) safeSummary.push(`Build: #${buildNumber}`);
     if (buildUrl) safeSummary.push('Jenkins build URL is available.');
@@ -1804,8 +1825,8 @@ export class OpsService {
       operationType: type,
       targetKind:
         targetKind ??
-        (workspaceSlug ? 'Terraform/OpenTofu workspace' : playbookSlug ? 'Ansible playbook' : namespace && targetName ? 'Deployment' : null),
-      targetName: targetName ?? workspaceSlug ?? playbookSlug,
+        (workspaceSlug ? 'Terraform/OpenTofu workspace' : playbookSlug ? 'Ansible playbook' : ecrTargetSlug ? 'AWS ECR image' : namespace && targetName ? 'Deployment' : null),
+      targetName: targetName ?? workspaceSlug ?? playbookSlug ?? (ecrRepository && imageTag ? `${ecrRepository}:${imageTag}` : ecrTargetSlug),
       namespace,
       containerName,
       containerId,
@@ -2131,6 +2152,14 @@ export class OpsService {
 
     if (type === OperationType.ANSIBLE_RUN) {
       return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'RUN', policy.riskLevel ?? OperationRiskLevel.HIGH, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
+    }
+
+    if (type === OperationType.AWS_ECR_IMAGE_BUILD) {
+      return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'BUILD', policy.riskLevel ?? OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
+    }
+
+    if (type === OperationType.AWS_ECR_IMAGE_PUSH) {
+      return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'PUSH', policy.riskLevel ?? OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
     }
 
     if (type === OperationType.GITHUB_WORKFLOW_DISPATCH) {

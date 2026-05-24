@@ -18,6 +18,7 @@
     "@autoops/logger": "workspace:*",
     "@autoops/types": "workspace:*",
     "@autoops/utils": "workspace:*",
+    "@aws-sdk/client-ecr": "^3.1045.0",
     "@kubernetes/client-node": "^1.4.0",
     "bullmq": "^5.13.0",
     "dotenv": "^16.4.5",

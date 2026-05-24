@@ -6,6 +6,7 @@ import { EC2Client, DescribeInstancesCommand, DescribeVpcsCommand, DescribeSubne
 import {
   ECRClient,
   DescribeRepositoriesCommand,
+  GetLifecyclePolicyCommand,
 } from '@aws-sdk/client-ecr';
 import {
   ECSClient,
@@ -30,6 +31,7 @@ export {
   DescribeClustersCommand,
   DescribeInstancesCommand,
   DescribeRepositoriesCommand,
+  GetLifecyclePolicyCommand,
   DescribeServicesCommand,
   EC2Client,
   ECRClient,

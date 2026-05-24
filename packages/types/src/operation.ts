@@ -28,6 +28,8 @@ export const OperationType = {
   ANSIBLE_RUN: 'ANSIBLE_RUN',
   GITHUB_WORKFLOW_DISPATCH: 'GITHUB_WORKFLOW_DISPATCH',
   AWS_DEPLOYMENT: 'AWS_DEPLOYMENT',
+  AWS_ECR_IMAGE_BUILD: 'AWS_ECR_IMAGE_BUILD',
+  AWS_ECR_IMAGE_PUSH: 'AWS_ECR_IMAGE_PUSH',
   DEPLOYMENT_ROLLBACK: 'DEPLOYMENT_ROLLBACK',
 } as const;
 export type OperationType = (typeof OperationType)[keyof typeof OperationType];

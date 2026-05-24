@@ -73,6 +73,7 @@ function severityForOperation(type: OperationType, input: Record<string, unknown
   if (type === OperationType.TERRAFORM_APPLY || type === OperationType.ANSIBLE_RUN) {
     return IncidentSeverity.HIGH;
   }
+  if (type === OperationType.AWS_ECR_IMAGE_PUSH) return IncidentSeverity.MEDIUM;
   return IncidentSeverity.MEDIUM;
 }
 
@@ -98,6 +99,9 @@ function runbookKey(type: OperationType): string {
   ) {
     return 'ansible-operation-failure';
   }
+  if (type === OperationType.AWS_ECR_IMAGE_BUILD || type === OperationType.AWS_ECR_IMAGE_PUSH) {
+    return 'aws-ecr-image-operation-failure';
+  }
   return 'operation-failure';
 }
 
@@ -115,6 +119,8 @@ function titleForOperation(type: OperationType, target: string | null): string {
   if (type === OperationType.ANSIBLE_SYNTAX_CHECK) return `Ansible syntax check failed${label}`;
   if (type === OperationType.ANSIBLE_CHECK) return `Ansible check mode failed${label}`;
   if (type === OperationType.ANSIBLE_RUN) return `Ansible run failed${label}`;
+  if (type === OperationType.AWS_ECR_IMAGE_BUILD) return `AWS ECR image build failed${label}`;
+  if (type === OperationType.AWS_ECR_IMAGE_PUSH) return `AWS ECR image push failed${label}`;
   return `Operation failed${label}`;
 }
 
@@ -150,6 +156,11 @@ function targetForOperation(type: OperationType, input: Record<string, unknown>)
     type === OperationType.ANSIBLE_RUN
   ) {
     return { kind: 'Ansible playbook', label: stringField(input, 'playbookSlug') };
+  }
+  if (type === OperationType.AWS_ECR_IMAGE_BUILD || type === OperationType.AWS_ECR_IMAGE_PUSH) {
+    const repository = stringField(input, 'repositoryName');
+    const tag = stringField(input, 'imageTag');
+    return { kind: 'AWS ECR image', label: repository && tag ? `${repository}:${tag}` : repository };
   }
   return { kind: null, label: null };
 }

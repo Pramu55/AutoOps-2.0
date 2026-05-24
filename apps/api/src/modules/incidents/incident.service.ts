@@ -366,6 +366,7 @@ export class IncidentService {
     if (type === OperationType.TERRAFORM_APPLY || type === OperationType.ANSIBLE_RUN) {
       return DbIncidentSeverity.HIGH;
     }
+    if (type === OperationType.AWS_ECR_IMAGE_PUSH) return DbIncidentSeverity.MEDIUM;
     return DbIncidentSeverity.MEDIUM;
   }
 
@@ -391,6 +392,9 @@ export class IncidentService {
     ) {
       return 'ansible-operation-failure';
     }
+    if (type === OperationType.AWS_ECR_IMAGE_BUILD || type === OperationType.AWS_ECR_IMAGE_PUSH) {
+      return 'aws-ecr-image-operation-failure';
+    }
     return 'operation-failure';
   }
 
@@ -408,6 +412,8 @@ export class IncidentService {
     if (type === OperationType.ANSIBLE_SYNTAX_CHECK) return `Ansible syntax check failed${label}`;
     if (type === OperationType.ANSIBLE_CHECK) return `Ansible check mode failed${label}`;
     if (type === OperationType.ANSIBLE_RUN) return `Ansible run failed${label}`;
+    if (type === OperationType.AWS_ECR_IMAGE_BUILD) return `AWS ECR image build failed${label}`;
+    if (type === OperationType.AWS_ECR_IMAGE_PUSH) return `AWS ECR image push failed${label}`;
     return `Operation failed${label}`;
   }
 
@@ -446,6 +452,11 @@ export class IncidentService {
       type === OperationType.ANSIBLE_RUN
     ) {
       return { kind: 'Ansible playbook', label: this._string(input, 'playbookSlug') };
+    }
+    if (type === OperationType.AWS_ECR_IMAGE_BUILD || type === OperationType.AWS_ECR_IMAGE_PUSH) {
+      const repository = this._string(input, 'repositoryName');
+      const tag = this._string(input, 'imageTag');
+      return { kind: 'AWS ECR image', label: repository && tag ? `${repository}:${tag}` : repository };
     }
     return { kind: null, label: null };
   }

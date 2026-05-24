@@ -1,4 +1,5 @@
 import type { ProviderConnectionStatus } from './provider.js';
+import { z } from 'zod';
 
 export enum AwsIntegrationStatus {
   CONNECTED = 'CONNECTED',
@@ -222,6 +223,52 @@ export interface AwsEcrRepository {
   encryptionType: string | null;
 }
 
+export interface AwsEcrBuildTarget {
+  targetSlug: string;
+  displayName: string;
+  contextPath: string;
+  dockerfilePath: string;
+  defaultRepository: string;
+  allowedEnvironments: string[];
+  allowedPlatforms?: string[];
+}
+
+export interface AwsEcrReadinessResponse {
+  status: AwsReadinessStatus;
+  integrationConfigured: boolean;
+  regionConfigured: boolean;
+  pushEnabled: boolean;
+  productionPushRequiresApproval: boolean;
+  allowedRepositoriesConfigured: boolean;
+  allowedBuildTargetsConfigured: boolean;
+  repositories: Array<{
+    repositoryName: string;
+    repositoryUri: string | null;
+    exists: boolean | null;
+    scanOnPush: boolean | null;
+    encryptionType: string | null;
+    lifecyclePolicyConfigured: boolean | null;
+  }>;
+  buildTargets: AwsEcrBuildTarget[];
+  missing: string[];
+  checkedAt: string;
+}
+
+export interface AwsEcrImageMetadata {
+  operationId: string;
+  targetSlug: string;
+  repositoryName: string;
+  repositoryUri: string | null;
+  imageTag: string;
+  imageUri: string | null;
+  imageDigest?: string | null;
+  environmentSlug: string;
+  status: string;
+  action: 'build' | 'push';
+  requestedAt: string;
+  completedAt?: string | null;
+}
+
 export interface AwsCloudWatchAlarm {
   alarmName: string;
   stateValue: string | null;
@@ -243,6 +290,25 @@ export interface AwsListResponse<T> {
 export interface AwsDeploymentPlanRequest {
   confirmationToken: string;
 }
+
+export const awsEcrImageBuildRequestSchema = z.object({
+  targetSlug: z.string().min(1).max(80),
+  environmentSlug: z.string().min(2).max(32).regex(/^[a-z][a-z0-9-]+$/),
+  platform: z.string().max(32).optional(),
+  confirmationToken: z.literal('BUILD'),
+});
+
+export type AwsEcrImageBuildRequest = z.infer<typeof awsEcrImageBuildRequestSchema>;
+
+export const awsEcrImagePushRequestSchema = z.object({
+  targetSlug: z.string().min(1).max(80),
+  repositoryName: z.string().min(1).max(256),
+  environmentSlug: z.string().min(2).max(32).regex(/^[a-z][a-z0-9-]+$/),
+  imageTag: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9._-]{0,127}$/),
+  confirmationToken: z.literal('PUSH'),
+});
+
+export type AwsEcrImagePushRequest = z.infer<typeof awsEcrImagePushRequestSchema>;
 
 export interface AwsDeploymentOperationResponse {
   operationId: string;

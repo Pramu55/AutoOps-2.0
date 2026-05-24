@@ -127,4 +127,41 @@ describe('evaluateOperationPolicy', () => {
     expect(decision.confirmationTokenLabel).toBe('RUN');
     expect(decision.riskLevel).toBe(OperationRiskLevel.HIGH);
   });
+
+  it('keeps AWS ECR image build confirmation-only', () => {
+    const decision = evaluateOperationPolicy({
+      provider: OperationProvider.AWS,
+      operationType: OperationType.AWS_ECR_IMAGE_BUILD,
+      input: { environmentSlug: 'staging' },
+    });
+
+    expect(decision.approvalRequired).toBe(false);
+    expect(decision.confirmationTokenLabel).toBe('BUILD');
+    expect(decision.riskLevel).toBe(OperationRiskLevel.MEDIUM);
+  });
+
+  it('keeps non-production AWS ECR image push confirmation-only', () => {
+    const decision = evaluateOperationPolicy({
+      provider: OperationProvider.AWS,
+      operationType: OperationType.AWS_ECR_IMAGE_PUSH,
+      input: { environmentSlug: 'staging' },
+    });
+
+    expect(decision.approvalRequired).toBe(false);
+    expect(decision.confirmationTokenLabel).toBe('PUSH');
+    expect(decision.riskLevel).toBe(OperationRiskLevel.MEDIUM);
+  });
+
+  it.each(['production', 'prod'])('requires approval for %s AWS ECR image push', (environmentSlug) => {
+    const decision = evaluateOperationPolicy({
+      provider: OperationProvider.AWS,
+      operationType: OperationType.AWS_ECR_IMAGE_PUSH,
+      input: { environmentSlug },
+    });
+
+    expect(decision.approvalRequired).toBe(true);
+    expect(decision.confirmationTokenLabel).toBe('PUSH');
+    expect(decision.riskLevel).toBe(OperationRiskLevel.HIGH);
+    expect(decision.approvalReason).toContain('production image');
+  });
 });

@@ -1,6 +1,18 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { AwsService } from './aws.service.js';
-import { detectTerraformTool, listTerraformWorkspaces, getTerraformWorkspaceBySlug } from '@autoops/utils';
+import {
+  detectTerraformTool,
+  listTerraformWorkspaces,
+  getTerraformWorkspaceBySlug,
+  getAwsEcrBuildTargetBySlug,
+  listAwsEcrBuildTargets,
+  listAllowedAwsEcrRepositories,
+  isAllowedAwsEcrRepository,
+  isSafeEcrEnvironmentSlug,
+  isSafeEcrImageTag,
+  createEcrImageTag,
+  isProductionEnvironment,
+} from '@autoops/utils';
 import { operationService } from '../../operations/operation.service.js';
 import { OperationProvider, OperationType, OperationStatus } from '@autoops/types';
 
@@ -8,6 +20,15 @@ vi.mock('@autoops/utils', () => ({
   detectTerraformTool: vi.fn(),
   listTerraformWorkspaces: vi.fn(),
   getTerraformWorkspaceBySlug: vi.fn(),
+  getAwsEcrBuildTargetBySlug: vi.fn(),
+  listAwsEcrBuildTargets: vi.fn(),
+  listAllowedAwsEcrRepositories: vi.fn(),
+  isAllowedAwsEcrRepository: vi.fn(),
+  isSafeEcrEnvironmentSlug: vi.fn(),
+  isSafeEcrImageTag: vi.fn(),
+  createEcrImageTag: vi.fn(),
+  isProductionEnvironment: vi.fn(),
+  BadRequestError: class BadRequestError extends Error {},
 }));
 
 vi.mock('../../operations/operation.service.js', () => {
@@ -28,6 +49,38 @@ describe('AwsService', () => {
     awsService = new AwsService();
     process.env.AWS_ALLOWED_DEPLOYMENT_WORKSPACES = 'sample-ecs-app, another-app';
     process.env.AWS_DEPLOYMENT_APPLY_ENABLED = 'true';
+    process.env.AWS_ECR_PUSH_ENABLED = 'true';
+    process.env.AWS_ECR_PRODUCTION_PUSH_REQUIRES_APPROVAL = 'true';
+    vi.mocked(listAllowedAwsEcrRepositories).mockReturnValue(['autoops-sample-app']);
+    vi.mocked(listAwsEcrBuildTargets).mockReturnValue([
+      {
+        targetSlug: 'aws-sample-ecs-app',
+        displayName: 'AWS Sample ECS App',
+        contextPath: 'infra/terraform/aws-sample-ecs-app/app',
+        dockerfilePath: 'infra/terraform/aws-sample-ecs-app/app/Dockerfile',
+        defaultRepository: 'autoops-sample-app',
+        allowedEnvironments: ['development', 'staging', 'production'],
+        allowedPlatforms: ['linux/amd64'],
+        absoluteContextPath: '/repo/infra/terraform/aws-sample-ecs-app/app',
+        absoluteDockerfilePath: '/repo/infra/terraform/aws-sample-ecs-app/app/Dockerfile',
+      },
+    ]);
+    vi.mocked(getAwsEcrBuildTargetBySlug).mockReturnValue({
+      targetSlug: 'aws-sample-ecs-app',
+      displayName: 'AWS Sample ECS App',
+      contextPath: 'infra/terraform/aws-sample-ecs-app/app',
+      dockerfilePath: 'infra/terraform/aws-sample-ecs-app/app/Dockerfile',
+      defaultRepository: 'autoops-sample-app',
+      allowedEnvironments: ['development', 'staging', 'production'],
+      allowedPlatforms: ['linux/amd64'],
+      absoluteContextPath: '/repo/infra/terraform/aws-sample-ecs-app/app',
+      absoluteDockerfilePath: '/repo/infra/terraform/aws-sample-ecs-app/app/Dockerfile',
+    });
+    vi.mocked(isAllowedAwsEcrRepository).mockReturnValue(true);
+    vi.mocked(isSafeEcrEnvironmentSlug).mockReturnValue(true);
+    vi.mocked(isSafeEcrImageTag).mockReturnValue(true);
+    vi.mocked(createEcrImageTag).mockReturnValue('staging-20260524120000');
+    vi.mocked(isProductionEnvironment).mockImplementation((value) => value === 'production' || value === 'prod');
     
     vi.spyOn(awsService as any, '_listResponse').mockImplementation(async (fetcher: any) => {
       const items = await fetcher({});
@@ -157,6 +210,69 @@ describe('AwsService', () => {
     it('rejects apply if AWS_DEPLOYMENT_APPLY_ENABLED is not true', async () => {
       process.env.AWS_DEPLOYMENT_APPLY_ENABLED = 'false';
       await expect(awsService.applyDeployment(orgId, userId, 'sample-ecs-app')).rejects.toThrow('AWS deployment apply is disabled');
+    });
+  });
+
+  describe('ECR image operations', () => {
+    it('creates a separate AWS_ECR_IMAGE_BUILD operation for an allowlisted target', async () => {
+      vi.spyOn(awsService, 'listEcrRepositories').mockResolvedValue({
+        status: 'CONNECTED' as any,
+        configured: true,
+        checkedAt: new Date().toISOString(),
+        items: [
+          {
+            repositoryName: 'autoops-sample-app',
+            repositoryUri: '123456789012.dkr.ecr.ap-south-1.amazonaws.com/autoops-sample-app',
+            createdAt: null,
+            imageTagMutability: 'MUTABLE',
+            scanOnPush: true,
+            encryptionType: 'AES256',
+          },
+        ],
+      });
+      vi.mocked(operationService.createQueuedOperation).mockResolvedValue({
+        id: 'op-build',
+        status: OperationStatus.QUEUED,
+        provider: OperationProvider.AWS,
+        operationType: OperationType.AWS_ECR_IMAGE_BUILD,
+      } as any);
+
+      const res = await awsService.buildEcrImage(orgId, userId, {
+        targetSlug: 'aws-sample-ecs-app',
+        environmentSlug: 'staging',
+        confirmationToken: 'BUILD',
+      });
+
+      expect(res.operationId).toBe('op-build');
+      expect(operationService.createQueuedOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: orgId,
+          userId,
+          provider: OperationProvider.AWS,
+          operationType: OperationType.AWS_ECR_IMAGE_BUILD,
+          confirmationToken: 'BUILD',
+          input: expect.objectContaining({
+            action: 'build',
+            targetSlug: 'aws-sample-ecs-app',
+            repositoryName: 'autoops-sample-app',
+            imageTag: 'staging-20260524120000',
+          }),
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('rejects unknown ECR repositories for push', async () => {
+      vi.mocked(isAllowedAwsEcrRepository).mockReturnValue(false);
+      await expect(
+        awsService.pushEcrImage(orgId, userId, {
+          targetSlug: 'aws-sample-ecs-app',
+          repositoryName: 'unknown-repo',
+          environmentSlug: 'staging',
+          imageTag: 'staging-20260524120000',
+          confirmationToken: 'PUSH',
+        }),
+      ).rejects.toThrow('repository is not allowlisted');
     });
   });
 });

@@ -1,11 +1,12 @@
 import { existsSync } from 'node:fs';
 import { cp, mkdtemp, rm } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { Queue, Worker, type Job } from 'bullmq';
 import * as k8s from '@kubernetes/client-node';
+import { ECRClient, GetAuthorizationTokenCommand } from '@aws-sdk/client-ecr';
 import { prisma as db, type Prisma } from '@autoops/database';
 import { OperationProvider, OperationStatus, OperationType } from '@autoops/types';
 import {
@@ -16,6 +17,8 @@ import {
   getInfrastructureOutputLimit,
   getInfrastructureTimeoutMs,
   getTerraformWorkspaceBySlug,
+  getAwsEcrBuildTargetBySlug,
+  isAllowedAwsEcrRepository,
   summarizeCommandOutput,
 } from '@autoops/utils';
 import { createBullConnection } from '../lib/redis.js';
@@ -174,6 +177,14 @@ async function executeOperation(operation: {
       operation.operationType === OperationType.TERRAFORM_APPLY)
   ) {
     return executeTerraformOperation(operation.operationType, input, operation.approvedAt ?? null);
+  }
+
+  if (
+    operation.provider === OperationProvider.AWS &&
+    (operation.operationType === OperationType.AWS_ECR_IMAGE_BUILD ||
+      operation.operationType === OperationType.AWS_ECR_IMAGE_PUSH)
+  ) {
+    return executeAwsEcrOperation(operation.operationType, input, operation.approvedAt ?? null);
   }
 
   if (
@@ -357,6 +368,120 @@ function dockerActionResult(
   };
 }
 
+async function executeAwsEcrOperation(
+  operationType: OperationType,
+  input: Record<string, unknown>,
+  approvedAt: Date | null,
+): Promise<Record<string, unknown>> {
+  const targetSlug = stringField(input, 'targetSlug');
+  const repositoryName = stringField(input, 'repositoryName');
+  const environmentSlug = stringField(input, 'environmentSlug');
+  const target = getAwsEcrBuildTargetBySlug(targetSlug);
+  if (!target) throw new Error('ECR build target is not allowlisted.');
+  if (!isAllowedAwsEcrRepository(repositoryName) || repositoryName !== target.defaultRepository) {
+    throw new Error('ECR repository is not allowlisted for this build target.');
+  }
+  if (!target.allowedEnvironments.includes(environmentSlug)) {
+    throw new Error('ECR environment is not allowlisted for this build target.');
+  }
+
+  if (operationType === OperationType.AWS_ECR_IMAGE_BUILD) {
+    return buildAwsEcrImage(input, target);
+  }
+
+  if (isProductionSlug(environmentSlug) && !approvedAt) {
+    throw new Error('Production ECR image push requires approval before worker execution.');
+  }
+  return pushAwsEcrImage(input, target);
+}
+
+async function buildAwsEcrImage(
+  input: Record<string, unknown>,
+  target: NonNullable<ReturnType<typeof getAwsEcrBuildTargetBySlug>>,
+): Promise<Record<string, unknown>> {
+  const imageTag = stringField(input, 'imageTag');
+  const imageUri = stringField(input, 'imageUri');
+  const platform = optionalStringField(input, 'platform');
+  if (platform && !(target.allowedPlatforms ?? []).includes(platform)) {
+    throw new Error('ECR image platform is not allowlisted.');
+  }
+
+  const startedAt = Date.now();
+  const args = ['build', '--pull=false', '--file', target.absoluteDockerfilePath, '--tag', imageUri];
+  if (platform) args.push('--platform', platform);
+  args.push(target.absoluteContextPath);
+  const output = await runTool('docker', args, process.cwd());
+  return {
+    action: 'build',
+    targetSlug: target.targetSlug,
+    repositoryName: target.defaultRepository,
+    imageTag,
+    imageUri,
+    status: 'completed',
+    safeOutputSummary: summarizeCommandOutput(output),
+    durationMs: Date.now() - startedAt,
+    completedAt: new Date().toISOString(),
+  };
+}
+
+async function pushAwsEcrImage(
+  input: Record<string, unknown>,
+  target: NonNullable<ReturnType<typeof getAwsEcrBuildTargetBySlug>>,
+): Promise<Record<string, unknown>> {
+  if (process.env.AWS_ECR_PUSH_ENABLED !== 'true') {
+    throw new Error('AWS ECR push is disabled in this environment.');
+  }
+
+  const repositoryUri = stringField(input, 'repositoryUri');
+  const imageUri = stringField(input, 'imageUri');
+  const imageTag = stringField(input, 'imageTag');
+  const registry = repositoryUri.split('/')[0];
+  if (!registry) throw new Error('ECR repository URI is invalid.');
+
+  const startedAt = Date.now();
+  const ecrAuthInput = await getEcrLoginPassword();
+  await runToolWithInput('docker', ['login', '--username', 'AWS', '--password-stdin', registry], process.cwd(), `${ecrAuthInput}\n`);
+  const push = await runTool('docker', ['push', imageUri], process.cwd());
+  const inspect = await runTool('docker', ['inspect', '--format', '{{index .RepoDigests 0}}', imageUri], process.cwd()).catch(() => '');
+  const digest = parseImageDigest(inspect);
+
+  return {
+    action: 'push',
+    targetSlug: target.targetSlug,
+    repositoryName: target.defaultRepository,
+    imageTag,
+    imageUri,
+    imageDigest: digest,
+    status: 'completed',
+    safeOutputSummary: summarizeCommandOutput(push),
+    durationMs: Date.now() - startedAt,
+    completedAt: new Date().toISOString(),
+  };
+}
+
+async function getEcrLoginPassword(): Promise<string> {
+  const region = process.env.AWS_REGION?.trim();
+  if (!region) throw new Error('AWS_REGION is required for ECR push.');
+  const client = new ECRClient({ region });
+  const response = await client.send(new GetAuthorizationTokenCommand({}));
+  const token = response.authorizationData?.[0]?.authorizationToken;
+  if (!token) throw new Error('AWS ECR authorization token was not returned.');
+  const decoded = Buffer.from(token, 'base64').toString('utf8');
+  const separator = decoded.indexOf(':');
+  if (separator < 0) throw new Error('AWS ECR authorization token was invalid.');
+  return decoded.slice(separator + 1);
+}
+
+function parseImageDigest(output: string): string | null {
+  const match = output.match(/@sha256:[a-f0-9]{64}/i);
+  return match ? match[0].slice(1) : null;
+}
+
+function isProductionSlug(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'production' || normalized === 'prod';
+}
+
 async function executeTerraformOperation(
   operationType: OperationType,
   input: Record<string, unknown>,
@@ -478,6 +603,50 @@ async function runTool(command: string, args: string[], cwd: string): Promise<st
     const message = error instanceof Error ? error.message : 'Infrastructure tool execution failed.';
     throw new Error(summarizeCommandOutput(`${message}\n${stdout}\n${stderr}`, 1_000));
   }
+}
+
+async function runToolWithInput(command: string, args: string[], cwd: string, input: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      windowsHide: true,
+      shell: false,
+      env: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        USERPROFILE: process.env.USERPROFILE,
+      },
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error('Tool execution timed out.'));
+    }, getInfrastructureTimeoutMs());
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8');
+      if (stdout.length > getInfrastructureOutputLimit() * 4) stdout = stdout.slice(-getInfrastructureOutputLimit() * 4);
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+      if (stderr.length > getInfrastructureOutputLimit() * 4) stderr = stderr.slice(-getInfrastructureOutputLimit() * 4);
+    });
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve(`${stdout}\n${stderr}`);
+        return;
+      }
+      reject(new Error(summarizeCommandOutput(`Tool failed with exit code ${code}.\n${stdout}\n${stderr}`, 1_000)));
+    });
+    child.stdin.write(input);
+    child.stdin.end();
+  });
 }
 
 async function triggerJenkinsBuild(input: Record<string, unknown>): Promise<Record<string, unknown>> {

@@ -18,6 +18,7 @@ awsRouter.get('/summary', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandl
 awsRouter.get('/ec2/instances', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(awsController.ec2Instances as unknown as RequestHandler));
 awsRouter.get('/ecs/clusters', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(awsController.ecsClusters as unknown as RequestHandler));
 awsRouter.get('/ecs/services', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(awsController.ecsServices as unknown as RequestHandler));
+awsRouter.get('/ecr/readiness', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(awsController.ecrReadiness as unknown as RequestHandler));
 awsRouter.get('/ecr/repositories', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(awsController.ecrRepositories as unknown as RequestHandler));
 awsRouter.get('/identity', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(awsController.identity as unknown as RequestHandler));
 awsRouter.get('/readiness', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(awsController.readiness as unknown as RequestHandler));
@@ -30,3 +31,6 @@ awsRouter.get('/workspace-readiness/:targetSlug', requireAuth, requireRole('OWNE
 awsRouter.get('/deployments', requireAuth, asyncHandler(awsController.deployments as unknown as RequestHandler));
 awsRouter.post('/deployments/:targetSlug/plan', requireAuth, asyncHandler(awsController.planDeployment as unknown as RequestHandler));
 awsRouter.post('/deployments/:targetSlug/apply', requireAuth, asyncHandler(awsController.applyDeployment as unknown as RequestHandler));
+awsRouter.get('/ecr/images', requireAuth, asyncHandler(awsController.ecrImages as unknown as RequestHandler));
+awsRouter.post('/ecr/images/build', requireAuth, asyncHandler(awsController.buildEcrImage as unknown as RequestHandler));
+awsRouter.post('/ecr/images/push', requireAuth, asyncHandler(awsController.pushEcrImage as unknown as RequestHandler));

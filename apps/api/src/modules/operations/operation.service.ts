@@ -307,6 +307,12 @@ export class OperationService {
     if (operationType === OperationType.KUBERNETES_MANIFEST_DRY_RUN) {
       return AuditAction.KUBERNETES_MANIFEST_DRY_RUN_REQUESTED;
     }
+    if (operationType === OperationType.AWS_ECR_IMAGE_BUILD) {
+      return AuditAction.AWS_ECR_IMAGE_BUILD_REQUESTED;
+    }
+    if (operationType === OperationType.AWS_ECR_IMAGE_PUSH) {
+      return AuditAction.AWS_ECR_IMAGE_PUSH_REQUESTED;
+    }
     return AuditAction.UPDATE;
   }
 

@@ -130,11 +130,11 @@
 
 ## `/dashboard/integrations/aws`
 
-- Purpose: AWS Deployment Foundation diagnostics and readiness.
+- Purpose: AWS Deployment Foundation diagnostics, readiness, and governed ECR image operations.
 - Who uses it: OWNER and ADMIN users only (provider inventory access required).
-- Data shown: AWS Identity (account, ARN, region), Configuration Readiness, IAM Permission Diagnostics, Remote State Storage readiness, Workspace Readiness (Terraform file checks, tooling, local state safety), and Deployment Targets.
-- Key actions: Refresh diagnostics, inspect readiness gates.
-- Safety notes: Read-only diagnostics only. No terraform apply/destroy. No AWS resource creation/mutation. No secrets exposed. Status endpoint is sanitized for all authenticated users.
+- Data shown: AWS Identity (account, ARN, region), Configuration Readiness, IAM Permission Diagnostics, Remote State Storage readiness, Workspace Readiness, Deployment Targets, ECR readiness, allowlisted repositories, allowlisted build targets, and tenant-scoped ECR image operations.
+- Key actions: Refresh diagnostics, inspect readiness gates, request ECR image build with `BUILD`, request ECR image push with `PUSH`, open governance evidence.
+- Safety notes: No terraform apply/destroy, ECS apply, AWS resource creation/deletion, arbitrary Dockerfile path, arbitrary build context, arbitrary image tag, arbitrary repository, Docker login password exposure, or AWS credential exposure.
 
 ### AWS API Routes
 
@@ -152,6 +152,10 @@
 | GET | `/v1/integrations/aws/ecs/clusters` | OWNER/ADMIN | ECS cluster inventory |
 | GET | `/v1/integrations/aws/ecs/services` | OWNER/ADMIN | ECS service inventory |
 | GET | `/v1/integrations/aws/ecr/repositories` | OWNER/ADMIN | ECR repository inventory |
+| GET | `/v1/integrations/aws/ecr/readiness` | OWNER/ADMIN | ECR readiness, allowlisted repositories, and build targets |
+| GET | `/v1/integrations/aws/ecr/images` | Authenticated | Organization-scoped ECR image operation history |
+| POST | `/v1/integrations/aws/ecr/images/build` | Authenticated | Request allowlisted Docker image build with `BUILD` |
+| POST | `/v1/integrations/aws/ecr/images/push` | Authenticated | Request allowlisted ECR push with `PUSH`; production requires approval |
 | GET | `/v1/integrations/aws/deployments` | Authenticated | Organization-scoped deployment history |
 | POST | `/v1/integrations/aws/deployments/:targetSlug/plan` | Authenticated | Request Terraform plan (approval-gated) |
 | POST | `/v1/integrations/aws/deployments/:targetSlug/apply` | Authenticated | Request Terraform apply (approval-gated, disabled by default) |

@@ -10,7 +10,12 @@ import type {
   AwsSummary,
   AwsDeploymentTarget,
   AwsDeploymentPlanRequest,
+  AwsEcrReadinessResponse,
+  AwsEcrImageBuildRequest,
+  AwsEcrImagePushRequest,
+  AwsEcrImageMetadata,
 } from '@autoops/types';
+import { awsEcrImageBuildRequestSchema, awsEcrImagePushRequestSchema } from '@autoops/types';
 import { awsService } from './aws.service.js';
 import { requireProviderInventoryAccess } from '../integration-access.service.js';
 
@@ -75,6 +80,28 @@ export class AwsController {
   ecrRepositories = async (req: Request, res: Response<{ data: AwsListResponse<AwsEcrRepository> }>): Promise<void> => {
     requireProviderInventoryAccess(req.auth);
     res.json({ data: await awsService.listEcrRepositories() });
+  };
+
+  ecrReadiness = async (req: Request, res: Response<{ data: AwsEcrReadinessResponse }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
+    res.json({ data: await awsService.getEcrReadiness() });
+  };
+
+  ecrImages = async (req: Request, res: Response<{ data: AwsListResponse<AwsEcrImageMetadata> }>): Promise<void> => {
+    const auth = req.auth as { orgId: string; userId: string };
+    res.json({ data: await awsService.listEcrImages(auth.orgId) });
+  };
+
+  buildEcrImage = async (req: Request, res: Response): Promise<void> => {
+    const body = awsEcrImageBuildRequestSchema.parse(req.body) as AwsEcrImageBuildRequest;
+    const auth = req.auth as { orgId: string; userId: string };
+    res.json({ data: await awsService.buildEcrImage(auth.orgId, auth.userId, body) });
+  };
+
+  pushEcrImage = async (req: Request, res: Response): Promise<void> => {
+    const body = awsEcrImagePushRequestSchema.parse(req.body) as AwsEcrImagePushRequest;
+    const auth = req.auth as { orgId: string; userId: string };
+    res.json({ data: await awsService.pushEcrImage(auth.orgId, auth.userId, body) });
   };
 
   cloudWatchAlarms = async (req: Request, res: Response<{ data: AwsListResponse<AwsCloudWatchAlarm> }>): Promise<void> => {
