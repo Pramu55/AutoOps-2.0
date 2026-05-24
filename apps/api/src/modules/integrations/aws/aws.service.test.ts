@@ -14,7 +14,7 @@ import {
   isProductionEnvironment,
 } from '@autoops/utils';
 import { operationService } from '../../operations/operation.service.js';
-import { OperationProvider, OperationType, OperationStatus } from '@autoops/types';
+import { OperationProvider, OperationType, OperationStatus, AwsIntegrationStatus } from '@autoops/types';
 import { awsTerraformEcsPlanRequestSchema } from '@autoops/types';
 import { prisma } from '@autoops/database';
 
@@ -61,6 +61,8 @@ describe('AwsService', () => {
     process.env.AWS_ALLOWED_DEPLOYMENT_WORKSPACES = 'sample-ecs-app, another-app';
     process.env.AWS_DEPLOYMENT_APPLY_ENABLED = 'true';
     process.env.AWS_REGION = 'ap-south-1';
+    process.env.AWS_ACCESS_KEY_ID = 'placeholder-key';
+    process.env.AWS_SECRET_ACCESS_KEY = 'placeholder-secret';
     process.env.AWS_TERRAFORM_STATE_BUCKET = 'autoops-state';
     process.env.AWS_TERRAFORM_STATE_DYNAMODB_TABLE = 'autoops-locks';
     process.env.AWS_TERRAFORM_STATE_REGION = 'ap-south-1';
@@ -100,6 +102,14 @@ describe('AwsService', () => {
     vi.spyOn(awsService as any, '_listResponse').mockImplementation(async (fetcher: any) => {
       const items = await fetcher({});
       return { status: 'CONNECTED', message: 'OK', items };
+    });
+
+    vi.spyOn(awsService, 'getStatus').mockResolvedValue({
+      status: AwsIntegrationStatus.CONNECTED,
+      configured: true,
+      region: 'ap-south-1',
+      message: 'AWS integration is reachable.',
+      checkedAt: new Date().toISOString(),
     });
   });
 
@@ -269,7 +279,7 @@ describe('AwsService', () => {
   });
 
   describe('applyDeployment', () => {
-    it('creates a TERRAFORM_APPLY operation if enabled', async () => {
+    beforeEach(async () => {
       vi.mocked(detectTerraformTool).mockResolvedValue({
         status: 'CONNECTED',
         configured: true,
@@ -288,21 +298,53 @@ describe('AwsService', () => {
       vi.mocked(listTerraformWorkspaces).mockResolvedValue([
         { slug: 'sample-ecs-app', displayName: 'Sample', absolutePath: '/a', relativePath: 'a' },
       ]);
-      vi.mocked(operationService.createQueuedOperation).mockResolvedValue({
-        id: 'op-2',
-        status: OperationStatus.PENDING_APPROVAL,
+    });
+
+    it('creates an AWS_TERRAFORM_ECS_APPLY operation when enabled and a valid plan exists', async () => {
+      const freshDate = new Date();
+      vi.mocked(prisma.operation.findFirst).mockResolvedValue({
+        id: 'plan-123',
+        status: OperationStatus.SUCCEEDED,
         provider: OperationProvider.AWS,
-        operationType: OperationType.TERRAFORM_APPLY,
+        operationType: OperationType.AWS_TERRAFORM_ECS_PLAN,
+        updatedAt: freshDate,
+        input: {
+          targetSlug: 'sample-ecs-app',
+          environmentSlug: 'staging',
+          imageUri: '123456789012.dkr.ecr.ap-south-1.amazonaws.com/autoops-sample-app:staging-20260524120000',
+        },
+        result: {
+          addCount: 2,
+          changeCount: 1,
+          destroyCount: 0,
+          riskLevel: 'LOW',
+          applyEligible: true,
+        },
       } as any);
 
-      const res = await awsService.applyDeployment(orgId, userId, 'sample-ecs-app');
-      expect(res.operationId).toBe('op-2');
+      vi.mocked(operationService.createQueuedOperation).mockResolvedValue({
+        id: 'op-apply-1',
+        status: OperationStatus.PENDING_APPROVAL,
+        provider: OperationProvider.AWS,
+        operationType: OperationType.AWS_TERRAFORM_ECS_APPLY,
+      } as any);
+
+      const res = await awsService.applyDeployment(orgId, userId, 'sample-ecs-app', 'staging');
+      expect(res.operationId).toBe('op-apply-1');
       expect(res.status).toBe(OperationStatus.PENDING_APPROVAL);
       expect(operationService.createQueuedOperation).toHaveBeenCalledWith(
         expect.objectContaining({
           provider: OperationProvider.AWS,
-          operationType: OperationType.TERRAFORM_APPLY,
-          input: expect.objectContaining({ action: 'apply' }),
+          operationType: OperationType.AWS_TERRAFORM_ECS_APPLY,
+          confirmationToken: 'APPLY',
+          input: expect.objectContaining({
+            action: 'ecs-apply',
+            sourcePlanOperationId: 'plan-123',
+            addCount: 2,
+            changeCount: 1,
+            destroyCount: 0,
+            applyEligible: true,
+          }),
         }),
         expect.anything()
       );
@@ -311,6 +353,80 @@ describe('AwsService', () => {
     it('rejects apply if AWS_DEPLOYMENT_APPLY_ENABLED is not true', async () => {
       process.env.AWS_DEPLOYMENT_APPLY_ENABLED = 'false';
       await expect(awsService.applyDeployment(orgId, userId, 'sample-ecs-app')).rejects.toThrow('AWS deployment apply is disabled');
+    });
+
+    it('rejects apply if remote state is missing', async () => {
+      process.env.AWS_TERRAFORM_STATE_BUCKET = '';
+      await expect(awsService.applyDeployment(orgId, userId, 'sample-ecs-app')).rejects.toThrow('remote state is not fully configured');
+    });
+
+    it('rejects apply if no successful plan exists', async () => {
+      vi.mocked(prisma.operation.findFirst).mockResolvedValue(null);
+      await expect(awsService.applyDeployment(orgId, userId, 'sample-ecs-app')).rejects.toThrow('No successful tenant-scoped ECS plan');
+    });
+
+    it('rejects apply if the plan is stale (older than 24 hours)', async () => {
+      const staleDate = new Date(Date.now() - 25 * 60 * 60 * 1000);
+      vi.mocked(prisma.operation.findFirst).mockResolvedValue({
+        id: 'plan-123',
+        status: OperationStatus.SUCCEEDED,
+        updatedAt: staleDate,
+        input: { targetSlug: 'sample-ecs-app', environmentSlug: 'staging' },
+        result: { destroyCount: 0, applyEligible: true },
+      } as any);
+
+      await expect(awsService.applyDeployment(orgId, userId, 'sample-ecs-app', 'staging')).rejects.toThrow('plan is stale');
+    });
+
+    it('rejects apply if destroyCount > 0', async () => {
+      vi.mocked(prisma.operation.findFirst).mockResolvedValue({
+        id: 'plan-123',
+        status: OperationStatus.SUCCEEDED,
+        updatedAt: new Date(),
+        input: { targetSlug: 'sample-ecs-app', environmentSlug: 'staging' },
+        result: { destroyCount: 1, applyEligible: true },
+      } as any);
+
+      await expect(awsService.applyDeployment(orgId, userId, 'sample-ecs-app', 'staging')).rejects.toThrow('plan includes destroy actions');
+    });
+
+    it('rejects apply if applyEligible=false or riskLevel=HIGH', async () => {
+      vi.mocked(prisma.operation.findFirst).mockResolvedValue({
+        id: 'plan-123',
+        status: OperationStatus.SUCCEEDED,
+        updatedAt: new Date(),
+        input: { targetSlug: 'sample-ecs-app', environmentSlug: 'staging' },
+        result: { destroyCount: 0, applyEligible: false },
+      } as any);
+
+      await expect(awsService.applyDeployment(orgId, userId, 'sample-ecs-app', 'staging')).rejects.toThrow('not eligible for apply');
+
+      vi.mocked(prisma.operation.findFirst).mockResolvedValue({
+        id: 'plan-123',
+        status: OperationStatus.SUCCEEDED,
+        updatedAt: new Date(),
+        input: { targetSlug: 'sample-ecs-app', environmentSlug: 'staging' },
+        result: { destroyCount: 0, applyEligible: true, riskLevel: 'HIGH' },
+      } as any);
+
+      await expect(awsService.applyDeployment(orgId, userId, 'sample-ecs-app', 'staging')).rejects.toThrow('blocked due to HIGH risk plan');
+    });
+
+    it('reports correct state in getTerraformApplyReadiness', async () => {
+      vi.mocked(prisma.operation.findFirst).mockResolvedValue({
+        id: 'plan-123',
+        status: OperationStatus.SUCCEEDED,
+        updatedAt: new Date(),
+        input: { targetSlug: 'sample-ecs-app', environmentSlug: 'staging' },
+        result: { addCount: 1, changeCount: 2, destroyCount: 0, applyEligible: true, riskLevel: 'LOW' },
+      } as any);
+
+      const readiness = await awsService.getTerraformApplyReadiness(orgId, 'sample-ecs-app', 'staging');
+      expect(readiness.status).toBe('READY');
+      expect(readiness.applyEnabled).toBe(true);
+      expect(readiness.latestPlanAvailable).toBe(true);
+      expect(readiness.destroyCount).toBe(0);
+      expect(readiness.applyEligible).toBe(true);
     });
   });
 

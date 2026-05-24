@@ -18,6 +18,7 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 | AWS ECR | Build allowlisted Docker image target | BUILD | MEDIUM | Not required |
 | AWS ECR | Push image to allowlisted ECR repository | PUSH | MEDIUM/HIGH | Required for production/prod |
 | AWS Terraform ECS | Generate ECS plan from remote state and pushed ECR image | PLAN | MEDIUM/HIGH if destroy detected | Not required for plan |
+| AWS Terraform ECS | Apply ECS deployment from approved plan | APPLY | HIGH | Required |
 
 ## Safety Rules
 
@@ -32,6 +33,7 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Infrastructure automation never accepts arbitrary command strings or arbitrary paths. Terraform/OpenTofu and Ansible operations are limited to allowlisted workspaces/playbooks and fixed worker command definitions.
 - AWS ECR image build/push never accepts arbitrary Dockerfile paths, build contexts, tags, repositories, or shell arguments. Build and push are separate worker-executed operations.
 - AWS ECS Terraform/OpenTofu planning requires remote state configuration, an allowlisted workspace, and tenant-scoped ECR push metadata. It runs `init`, `validate`, and `plan` only; apply and destroy are not executed.
+- AWS ECS Terraform/OpenTofu apply is gated by approval, requires `AWS_DEPLOYMENT_APPLY_ENABLED=true`, gates execution on a fresh and matching plan with zero destroys, and runs read-only health checks on the ECS deployment post-apply. Destroy actions are blocked.
 
 ## Operation Detail and Recovery
 

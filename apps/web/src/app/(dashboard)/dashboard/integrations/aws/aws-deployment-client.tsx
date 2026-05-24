@@ -14,11 +14,18 @@ import type {
   AwsEcrRepository,
   AwsEcrImageMetadata,
   AwsTerraformPlanReadinessResponse,
+  AwsTerraformApplyReadinessResponse,
   AwsDeploymentSummary,
 } from '@autoops/types';
-import { ArrowLeft, Cloud, RefreshCw, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
-import { api } from '@/lib/api';
+import { ArrowLeft, Cloud, RefreshCw, CheckCircle2, XCircle, AlertCircle, Play, ShieldAlert, FileText, Activity } from 'lucide-react';
+import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+
+function apiErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return fallback;
+}
 
 export function AwsDeploymentClient() {
   const [identity, setIdentity] = useState<AwsIdentityResponse | null>(null);
@@ -31,16 +38,18 @@ export function AwsDeploymentClient() {
   const [ecrImages, setEcrImages] = useState<AwsEcrImageMetadata[]>([]);
   const [ecrMessage, setEcrMessage] = useState<string | null>(null);
   const [planReadiness, setPlanReadiness] = useState<AwsTerraformPlanReadinessResponse | null>(null);
+  const [applyReadiness, setApplyReadiness] = useState<AwsTerraformApplyReadinessResponse | null>(null);
   const [deployments, setDeployments] = useState<AwsDeploymentSummary[]>([]);
   const [planMessage, setPlanMessage] = useState<string | null>(null);
+  const [applyMessage, setApplyMessage] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
   const [inventoryDenied, setInventoryDenied] = useState(false);
-  // targets unused right now but we use it via items[0] for readiness
   const [loading, setLoading] = useState(true);
 
   async function load() {
     setLoading(true);
     try {
-      const [idRes, readRes, permRes, rsRes, tRes, ecrReadyRes, ecrRepoRes, ecrImagesRes, planReadyRes, deploymentsRes] = await Promise.all([
+      const [idRes, readRes, permRes, rsRes, tRes, ecrReadyRes, ecrRepoRes, ecrImagesRes, planReadyRes, applyReadyRes, deploymentsRes] = await Promise.all([
         api.get<{ data: AwsIdentityResponse }>('/v1/integrations/aws/identity').catch((error) => {
           if (error?.status === 403) setInventoryDenied(true);
           return null;
@@ -53,6 +62,7 @@ export function AwsDeploymentClient() {
         api.get<{ data: AwsListResponse<AwsEcrRepository> }>('/v1/integrations/aws/ecr/repositories').catch(() => null),
         api.get<{ data: AwsListResponse<AwsEcrImageMetadata> }>('/v1/integrations/aws/ecr/images').catch(() => null),
         api.get<{ data: AwsTerraformPlanReadinessResponse }>('/v1/integrations/aws/terraform/plan-readiness').catch(() => null),
+        api.get<{ data: AwsTerraformApplyReadinessResponse }>('/v1/integrations/aws/apply-readiness').catch(() => null),
         api.get<{ data: AwsListResponse<AwsDeploymentSummary> }>('/v1/integrations/aws/deployments').catch(() => null),
       ]);
       setIdentity(idRes?.data ?? null);
@@ -63,6 +73,7 @@ export function AwsDeploymentClient() {
       setEcrRepositories(ecrRepoRes?.data?.items ?? []);
       setEcrImages(ecrImagesRes?.data?.items ?? []);
       setPlanReadiness(planReadyRes?.data ?? null);
+      setApplyReadiness(applyReadyRes?.data ?? null);
       setDeployments(deploymentsRes?.data?.items ?? []);
       const items = tRes?.data?.items ?? [];
       
@@ -120,6 +131,26 @@ export function AwsDeploymentClient() {
     );
     setPlanMessage(`Terraform/OpenTofu ECS plan operation ${response.data.operationId} is ${response.data.status}.`);
     await load();
+  }
+
+  async function requestTerraformApply(targetSlug: string, environmentSlug: string) {
+    setApplyMessage(null);
+    setApplying(true);
+    try {
+      const response = await api.post<{ data: { operationId: string; status: string } }>(
+        `/v1/integrations/aws/deployments/${encodeURIComponent(targetSlug)}/apply`,
+        {
+          confirmationToken: 'APPLY',
+          environmentSlug,
+        },
+      );
+      setApplyMessage(`Terraform/OpenTofu ECS apply operation ${response.data.operationId} is ${response.data.status} (Pending Approval).`);
+      await load();
+    } catch (err: unknown) {
+      setApplyMessage(apiErrorMessage(err, 'Failed to request apply.'));
+    } finally {
+      setApplying(false);
+    }
   }
 
   const StatusIcon = ({ status }: { status: string }) => {
@@ -434,6 +465,125 @@ export function AwsDeploymentClient() {
               </div>
             </div>
           )}
+        </section>
+      )}
+
+      {applyReadiness && (
+        <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm space-y-6">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between border-b border-slate-100 pb-4">
+            <div>
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-950">
+                <StatusIcon status={applyReadiness.status} /> Terraform ECS Apply Control Plane
+              </h2>
+              <p className="mt-1 text-sm text-slate-600 font-normal">
+                Gated deployment execution using the approved plans. All apply actions require explicit approval.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500">Apply state:</span>
+              <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold ${applyReadiness.applyEnabled ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+                {applyReadiness.applyEnabled ? 'ENABLED' : 'DISABLED'}
+              </span>
+            </div>
+          </div>
+
+          {applyMessage && (
+            <div className={`rounded-md border p-3 text-sm ${applyMessage.includes('failed') || applyMessage.includes('Failed') ? 'border-red-200 bg-red-50 text-red-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
+              {applyMessage}
+            </div>
+          )}
+
+          <div className="grid gap-6 md:grid-cols-2">
+            {/* Apply Readiness Card */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
+              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <Activity className="h-4 w-4 text-slate-600" /> Apply Readiness Checks
+              </h3>
+              <ul className="mt-4 space-y-3 text-sm text-slate-600">
+                <li className="flex items-center justify-between">
+                  <span>AWS apply enabled</span>
+                  <StatusIcon status={applyReadiness.applyEnabled ? 'PASS' : 'FAIL'} />
+                </li>
+                <li className="flex items-center justify-between">
+                  <span>Remote state storage</span>
+                  <StatusIcon status={applyReadiness.remoteStateBucketConfigured && applyReadiness.remoteStateLockTableConfigured ? 'PASS' : 'FAIL'} />
+                </li>
+                <li className="flex items-center justify-between">
+                  <span>Terraform/OpenTofu tool</span>
+                  <StatusIcon status={applyReadiness.terraformToolAvailable ? 'PASS' : 'FAIL'} />
+                </li>
+                <li className="flex items-center justify-between">
+                  <span>Latest plan available</span>
+                  <StatusIcon status={applyReadiness.latestPlanAvailable ? 'PASS' : 'FAIL'} />
+                </li>
+              </ul>
+              {applyReadiness.blockedReasons.length > 0 && (
+                <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3">
+                  <div className="flex gap-2">
+                    <ShieldAlert className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="text-xs font-semibold text-amber-900">Apply is currently blocked</h4>
+                      <ul className="mt-1 list-disc pl-4 text-xs text-amber-800 space-y-1">
+                        {applyReadiness.blockedReasons.map(r => <li key={r}>{r}</li>)}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Latest Plan Card */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 flex flex-col justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-950 flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-slate-600" /> Latest Approved Plan
+                </h3>
+                {applyReadiness.latestPlanAvailable ? (
+                  <div className="mt-3 space-y-3">
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded bg-emerald-50/50 p-2 border border-emerald-100">
+                        <div className="text-lg font-semibold text-emerald-700">+{applyReadiness.addCount}</div>
+                        <div className="text-xs text-slate-500">To Add</div>
+                      </div>
+                      <div className="rounded bg-amber-50/50 p-2 border border-amber-100">
+                        <div className="text-lg font-semibold text-amber-700">~{applyReadiness.changeCount}</div>
+                        <div className="text-xs text-slate-500">To Change</div>
+                      </div>
+                      <div className="rounded bg-red-50/50 p-2 border border-red-100">
+                        <div className="text-lg font-semibold text-red-700">-{applyReadiness.destroyCount}</div>
+                        <div className="text-xs text-slate-500">To Destroy</div>
+                      </div>
+                    </div>
+                    <div className="text-xs text-slate-500 space-y-1">
+                      <div>Plan ID: <span className="font-mono text-slate-700">{applyReadiness.latestPlanOperationId}</span></div>
+                      <div>Risk level: <span className={`font-semibold ${applyReadiness.riskLevel === 'HIGH' ? 'text-red-600' : 'text-emerald-600'}`}>{applyReadiness.riskLevel}</span></div>
+                      <div>Age: <span className="text-slate-700">{applyReadiness.latestPlanAgeSeconds ? `${Math.floor(applyReadiness.latestPlanAgeSeconds / 60)}m ago` : 'just now'}</span></div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-4 text-sm text-slate-500">No successful plan is currently available to apply.</p>
+                )}
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <Button
+                  type="button"
+                  onClick={() => {
+                    if (applyReadiness.targetSlug && applyReadiness.environmentSlug) {
+                      void requestTerraformApply(applyReadiness.targetSlug, applyReadiness.environmentSlug);
+                    }
+                  }}
+                  disabled={applyReadiness.status !== 'READY' || applying || !applyReadiness.targetSlug || !applyReadiness.environmentSlug}
+                  className="w-full bg-slate-950 text-white hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-500 flex items-center justify-center gap-2 rounded-full"
+                >
+                  <Play className="h-4 w-4" /> Request Gated Apply
+                </Button>
+                <p className="mt-2 text-center text-[10px] text-slate-500">
+                  Submits a PENDING_APPROVAL operation. Self-approval is blocked.
+                </p>
+              </div>
+            </div>
+          </div>
         </section>
       )}
 

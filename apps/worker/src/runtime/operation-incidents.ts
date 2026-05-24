@@ -70,7 +70,11 @@ function severityForOperation(type: OperationType, input: Record<string, unknown
     const replicas = typeof input.replicas === 'number' ? input.replicas : 0;
     return replicas > 2 ? IncidentSeverity.HIGH : IncidentSeverity.MEDIUM;
   }
-  if (type === OperationType.TERRAFORM_APPLY || type === OperationType.ANSIBLE_RUN) {
+  if (
+    type === OperationType.TERRAFORM_APPLY ||
+    type === OperationType.AWS_TERRAFORM_ECS_APPLY ||
+    type === OperationType.ANSIBLE_RUN
+  ) {
     return IncidentSeverity.HIGH;
   }
   if (type === OperationType.AWS_ECR_IMAGE_PUSH) return IncidentSeverity.MEDIUM;
@@ -88,7 +92,9 @@ function runbookKey(type: OperationType): string {
   if (
     type === OperationType.TERRAFORM_VALIDATE ||
     type === OperationType.TERRAFORM_PLAN ||
-    type === OperationType.TERRAFORM_APPLY
+    type === OperationType.TERRAFORM_APPLY ||
+    type === OperationType.AWS_TERRAFORM_ECS_PLAN ||
+    type === OperationType.AWS_TERRAFORM_ECS_APPLY
   ) {
     return 'terraform-operation-failure';
   }
@@ -116,6 +122,8 @@ function titleForOperation(type: OperationType, target: string | null): string {
   if (type === OperationType.TERRAFORM_VALIDATE) return `Terraform/OpenTofu validate failed${label}`;
   if (type === OperationType.TERRAFORM_PLAN) return `Terraform/OpenTofu plan failed${label}`;
   if (type === OperationType.TERRAFORM_APPLY) return `Terraform/OpenTofu apply failed${label}`;
+  if (type === OperationType.AWS_TERRAFORM_ECS_PLAN) return `AWS Terraform ECS plan failed${label}`;
+  if (type === OperationType.AWS_TERRAFORM_ECS_APPLY) return `AWS Terraform ECS apply failed${label}`;
   if (type === OperationType.ANSIBLE_SYNTAX_CHECK) return `Ansible syntax check failed${label}`;
   if (type === OperationType.ANSIBLE_CHECK) return `Ansible check mode failed${label}`;
   if (type === OperationType.ANSIBLE_RUN) return `Ansible run failed${label}`;
@@ -146,7 +154,9 @@ function targetForOperation(type: OperationType, input: Record<string, unknown>)
   if (
     type === OperationType.TERRAFORM_VALIDATE ||
     type === OperationType.TERRAFORM_PLAN ||
-    type === OperationType.TERRAFORM_APPLY
+    type === OperationType.TERRAFORM_APPLY ||
+    type === OperationType.AWS_TERRAFORM_ECS_PLAN ||
+    type === OperationType.AWS_TERRAFORM_ECS_APPLY
   ) {
     return { kind: 'Terraform/OpenTofu workspace', label: stringField(input, 'workspaceSlug') };
   }

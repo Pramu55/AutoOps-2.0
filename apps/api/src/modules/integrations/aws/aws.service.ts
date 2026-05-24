@@ -21,6 +21,7 @@ import type {
   AwsEcrImageMetadata,
   AwsTerraformEcsPlanRequest,
   AwsTerraformPlanReadinessResponse,
+  AwsTerraformApplyReadinessResponse,
 } from '@autoops/types';
 import { ProviderConnectionStatus, AwsIntegrationStatus, AwsReadinessStatus, AwsDiagnosticStatus, AwsDeploymentTargetType, AwsTerraformPlanStatus } from '@autoops/types';
 import {
@@ -476,6 +477,133 @@ export class AwsService {
     };
   }
 
+  async getTerraformApplyReadiness(
+    organizationId: string,
+    targetSlug?: string,
+    environmentSlug?: string,
+  ): Promise<AwsTerraformApplyReadinessResponse> {
+    const checkedAt = new Date().toISOString();
+    const awsStatus = await this.getStatus();
+    const targets = await this.listDeploymentTargets();
+    const target = targetSlug
+      ? targets.items.find((item) => item.slug === targetSlug)
+      : targets.items[0] ?? null;
+    const missing: string[] = [];
+    const blockedReasons: string[] = [];
+
+    const state = this._remoteStateConfig();
+    if (!awsStatus.configured) missing.push('AWS credentials');
+    if (!awsStatus.region) missing.push('AWS_REGION');
+    if (!state.bucket) missing.push('AWS_TERRAFORM_STATE_BUCKET');
+    if (!state.lockTable) missing.push('AWS_TERRAFORM_STATE_DYNAMODB_TABLE');
+    if (!state.region) missing.push('AWS_TERRAFORM_STATE_REGION');
+    if (!target) missing.push('AWS_ALLOWED_DEPLOYMENT_WORKSPACES');
+    if (targetSlug && !target) blockedReasons.push('Target slug is not allowlisted.');
+
+    const workspace = target ? await getTerraformWorkspaceBySlug(target.slug) : null;
+    if (target && !workspace) blockedReasons.push('Allowlisted Terraform/OpenTofu workspace does not exist.');
+
+    const toolStatus = await detectTerraformTool();
+    if (toolStatus.status !== 'CONNECTED') blockedReasons.push('Terraform/OpenTofu is not available in this runtime.');
+
+    const applyEnabled = process.env.AWS_DEPLOYMENT_APPLY_ENABLED === 'true';
+    if (!applyEnabled) {
+      blockedReasons.push('AWS deployment apply is disabled in this environment.');
+    }
+
+    const latestPlan = target
+      ? await prisma.operation.findFirst({
+          where: {
+            organizationId,
+            provider: OperationProvider.AWS,
+            operationType: OperationType.AWS_TERRAFORM_ECS_PLAN,
+            status: OperationStatus.SUCCEEDED,
+            AND: [
+              { input: { path: ['targetSlug'], equals: target.slug } },
+              ...(environmentSlug ? [{ input: { path: ['environmentSlug'], equals: environmentSlug } }] : []),
+            ],
+          },
+          orderBy: { updatedAt: 'desc' },
+        })
+      : null;
+
+    let latestPlanAvailable = false;
+    let latestPlanApproved = false;
+    let latestPlanOperationId: string | null = null;
+    let latestPlanStatus: string | null = null;
+    let latestPlanAgeSeconds: number | null = null;
+    let addCount: number | null = null;
+    let changeCount: number | null = null;
+    let destroyCount: number | null = null;
+    let riskLevel: string | null = null;
+    let applyEligible: boolean | null = null;
+
+    if (latestPlan) {
+      latestPlanAvailable = true;
+      latestPlanOperationId = latestPlan.id;
+      latestPlanStatus = latestPlan.status;
+      latestPlanAgeSeconds = Math.max(0, Math.floor((Date.now() - latestPlan.updatedAt.getTime()) / 1000));
+
+      const fresh = latestPlanAgeSeconds < 24 * 60 * 60;
+      if (!fresh) {
+        blockedReasons.push('The latest successful ECS plan is stale (older than 24 hours).');
+      }
+
+      latestPlanApproved = true;
+
+      const result = this._record(latestPlan.result);
+      addCount = typeof result.addCount === 'number' ? result.addCount : 0;
+      changeCount = typeof result.changeCount === 'number' ? result.changeCount : 0;
+      destroyCount = typeof result.destroyCount === 'number' ? result.destroyCount : 0;
+      riskLevel = typeof result.riskLevel === 'string' ? result.riskLevel : 'LOW';
+      applyEligible = result.applyEligible === true;
+
+      if (destroyCount > 0) {
+        blockedReasons.push('Terraform plan includes destroy actions. Apply is blocked.');
+      }
+      if (!applyEligible) {
+        blockedReasons.push('The latest plan is not eligible for apply.');
+      }
+      if (riskLevel === 'HIGH') {
+        blockedReasons.push('Apply is blocked due to HIGH risk plan.');
+      }
+    } else {
+      blockedReasons.push('No successful tenant-scoped ECS plan is available for this target/environment.');
+    }
+
+    let status = AwsTerraformPlanStatus.READY;
+    if (missing.length > 0) status = AwsTerraformPlanStatus.NOT_CONFIGURED;
+    else if (blockedReasons.length > 0) status = AwsTerraformPlanStatus.BLOCKED;
+
+    return {
+      status,
+      applyEnabled,
+      awsConfigured: awsStatus.configured,
+      regionConfigured: Boolean(awsStatus.region),
+      remoteStateBucketConfigured: Boolean(state.bucket),
+      remoteStateLockTableConfigured: Boolean(state.lockTable),
+      remoteStateRegionConfigured: Boolean(state.region),
+      allowedWorkspaceConfigured: Boolean(target),
+      workspaceExists: Boolean(workspace),
+      terraformToolAvailable: toolStatus.status === 'CONNECTED',
+      latestPlanAvailable,
+      latestPlanApproved,
+      latestPlanOperationId,
+      latestPlanStatus,
+      latestPlanAgeSeconds,
+      addCount,
+      changeCount,
+      destroyCount,
+      riskLevel,
+      applyEligible,
+      targetSlug: target?.slug ?? targetSlug ?? null,
+      environmentSlug: environmentSlug ?? (latestPlan ? this._string(this._record(latestPlan.input).environmentSlug) : null),
+      missing,
+      blockedReasons,
+      checkedAt,
+    };
+  }
+
   async getSummary(): Promise<AwsSummary> {
     const identity = await this.getIdentity();
     const partialFailures: AwsPartialFailure[] = [];
@@ -905,39 +1033,105 @@ export class AwsService {
     };
   }
 
-  async applyDeployment(organizationId: string, userId: string, targetSlug: string): Promise<AwsDeploymentOperationResponse> {
+  async applyDeployment(
+    organizationId: string,
+    userId: string,
+    targetSlug: string,
+    environmentSlug?: string,
+  ): Promise<AwsDeploymentOperationResponse> {
     if (process.env.AWS_DEPLOYMENT_APPLY_ENABLED !== 'true') {
-      throw new Error('AWS deployment apply is disabled in this environment.');
+      throw new BadRequestError('AWS deployment apply is disabled in this environment.');
+    }
+
+    const state = this._remoteStateConfig();
+    if (!state.bucket || !state.lockTable || !state.region) {
+      throw new BadRequestError('AWS Terraform remote state is not fully configured.');
     }
 
     const toolStatus = await detectTerraformTool();
     if (toolStatus.status !== 'CONNECTED') {
-      throw new Error(toolStatus.message);
+      throw new BadRequestError(toolStatus.message);
     }
 
     const workspace = await getTerraformWorkspaceBySlug(targetSlug);
-    if (!workspace) throw new Error(`Deployment target ${targetSlug} not found.`);
+    if (!workspace) throw new BadRequestError(`Deployment target ${targetSlug} not found.`);
 
     const targets = await this.listDeploymentTargets();
     if (!targets.items.some(t => t.slug === targetSlug)) {
-      throw new Error(`Deployment target ${targetSlug} is not an allowed AWS deployment workspace.`);
+      throw new BadRequestError(`Deployment target ${targetSlug} is not an allowed AWS deployment workspace.`);
     }
+
+    // Find the latest successful plan for this organization, target slug, and environment
+    const latestPlan = await prisma.operation.findFirst({
+      where: {
+        organizationId,
+        provider: OperationProvider.AWS,
+        operationType: OperationType.AWS_TERRAFORM_ECS_PLAN,
+        status: OperationStatus.SUCCEEDED,
+        AND: [
+          { input: { path: ['targetSlug'], equals: targetSlug } },
+          ...(environmentSlug ? [{ input: { path: ['environmentSlug'], equals: environmentSlug } }] : []),
+        ],
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (!latestPlan) {
+      throw new BadRequestError('No successful tenant-scoped ECS plan is available for this target/environment.');
+    }
+
+    const latestPlanInput = this._record(latestPlan.input);
+    const latestPlanResult = this._record(latestPlan.result);
+
+    const planAgeSeconds = Math.max(0, Math.floor((Date.now() - latestPlan.updatedAt.getTime()) / 1000));
+    if (planAgeSeconds > 24 * 60 * 60) {
+      throw new BadRequestError('The latest successful ECS plan is stale (older than 24 hours).');
+    }
+
+    const addCount = typeof latestPlanResult.addCount === 'number' ? latestPlanResult.addCount : 0;
+    const changeCount = typeof latestPlanResult.changeCount === 'number' ? latestPlanResult.changeCount : 0;
+    const destroyCount = typeof latestPlanResult.destroyCount === 'number' ? latestPlanResult.destroyCount : 0;
+    const riskLevel = typeof latestPlanResult.riskLevel === 'string' ? latestPlanResult.riskLevel : 'LOW';
+    const applyEligible = latestPlanResult.applyEligible === true;
+
+    if (destroyCount > 0) {
+      throw new BadRequestError('Terraform plan includes destroy actions. Apply is blocked.');
+    }
+    if (!applyEligible) {
+      throw new BadRequestError('The latest plan is not eligible for apply.');
+    }
+    if (riskLevel === 'HIGH') {
+      throw new BadRequestError('Apply is blocked due to HIGH risk plan.');
+    }
+
+    const planEnvironmentSlug = this._string(latestPlanInput.environmentSlug);
+    const imageUri = this._string(latestPlanInput.imageUri);
+    const imageDigest = this._string(latestPlanInput.imageDigest);
 
     const operation = await operationService.createQueuedOperation(
       {
         organizationId,
         userId,
         provider: OperationProvider.AWS,
-        operationType: OperationType.TERRAFORM_APPLY,
+        operationType: OperationType.AWS_TERRAFORM_ECS_APPLY,
         confirmationToken: 'APPLY',
-        idempotencyKey: `aws-deploy-apply-${workspace.slug}-${Date.now()}`,
+        idempotencyKey: `aws-ecs-apply-${workspace.slug}-${latestPlan.id}-${Date.now()}`,
         input: {
           tool: toolStatus.tool,
-          action: 'apply',
+          action: 'ecs-apply',
+          targetSlug: workspace.slug,
           workspaceSlug: workspace.slug,
           displayName: workspace.displayName,
           relativePath: workspace.relativePath,
-          commandSummary: `${toolStatus.tool} apply (AWS)`,
+          environmentSlug: planEnvironmentSlug,
+          imageUri,
+          imageDigest,
+          sourcePlanOperationId: latestPlan.id,
+          addCount,
+          changeCount,
+          destroyCount: 0,
+          applyEligible: true,
+          commandSummary: `${toolStatus.tool} apply (AWS ECS)`,
           requestedAt: new Date().toISOString(),
         } as Prisma.InputJsonObject,
       },

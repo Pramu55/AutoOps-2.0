@@ -413,3 +413,52 @@ export interface AwsTerraformApplyReadinessResponse {
   checkedAt: string;
 }
 
+export const awsTerraformEcsApplyRequestSchema = z.object({
+  environmentSlug: z.string().min(2).max(32).regex(/^[a-z][a-z0-9-]+$/).optional(),
+  confirmationToken: z.literal('APPLY'),
+}).strict();
+
+export type AwsTerraformEcsApplyRequest = z.infer<typeof awsTerraformEcsApplyRequestSchema>;
+
+export interface AwsEcsVerificationSummary {
+  status: 'SUCCESS' | 'PARTIAL_VERIFIED' | 'SKIPPED';
+  clusters?: Array<{
+    clusterName: string;
+    services: Array<{
+      serviceName: string | null;
+      desiredCount: number | null;
+      runningCount: number | null;
+      taskDefinition: string | null;
+      status: string | null;
+      deployments: Array<{
+        id: string | null;
+        status: string | null;
+        desiredCount: number | null;
+        runningCount: number | null;
+        createdAt: string | null;
+      }>;
+    }>;
+  }>;
+  logGroups?: string[];
+  loadBalancers?: string[];
+  message?: string;
+  checkedAt?: string;
+}
+
+export interface AwsApplySummary {
+  operationId: string;
+  targetSlug: string;
+  environmentSlug: string;
+  imageUri: string;
+  imageDigest: string | null;
+  sourcePlanOperationId: string;
+  addCount: number;
+  changeCount: number;
+  destroyCount: number;
+  applyStartedAt: string;
+  applyCompletedAt: string;
+  result: 'succeeded' | 'failed';
+  ecsVerification: AwsEcsVerificationSummary;
+  safeOutputSummary: string;
+}
+

@@ -301,9 +301,18 @@ importers:
       '@autoops/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@aws-sdk/client-cloudwatch-logs':
+        specifier: ^3.1053.0
+        version: 3.1053.0
       '@aws-sdk/client-ecr':
         specifier: ^3.1045.0
         version: 3.1045.0
+      '@aws-sdk/client-ecs':
+        specifier: ^3.1045.0
+        version: 3.1045.0
+      '@aws-sdk/client-elastic-load-balancing-v2':
+        specifier: ^3.1053.0
+        version: 3.1053.0
       '@kubernetes/client-node':
         specifier: ^1.4.0
         version: 1.4.0

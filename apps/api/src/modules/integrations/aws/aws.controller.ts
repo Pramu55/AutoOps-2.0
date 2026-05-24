@@ -9,15 +9,21 @@ import type {
   AwsStatusResponse,
   AwsSummary,
   AwsDeploymentTarget,
-  AwsDeploymentPlanRequest,
   AwsEcrReadinessResponse,
   AwsEcrImageBuildRequest,
   AwsEcrImagePushRequest,
   AwsEcrImageMetadata,
   AwsTerraformPlanReadinessResponse,
   AwsTerraformEcsPlanRequest,
+  AwsTerraformApplyReadinessResponse,
+  AwsTerraformEcsApplyRequest,
 } from '@autoops/types';
-import { awsEcrImageBuildRequestSchema, awsEcrImagePushRequestSchema, awsTerraformEcsPlanRequestSchema } from '@autoops/types';
+import {
+  awsEcrImageBuildRequestSchema,
+  awsEcrImagePushRequestSchema,
+  awsTerraformEcsApplyRequestSchema,
+  awsTerraformEcsPlanRequestSchema,
+} from '@autoops/types';
 import { awsService } from './aws.service.js';
 import { requireProviderInventoryAccess } from '../integration-access.service.js';
 
@@ -124,6 +130,13 @@ export class AwsController {
     res.json({ data: await awsService.listDeploymentTargets() });
   };
 
+  applyReadiness = async (req: Request, res: Response<{ data: AwsTerraformApplyReadinessResponse }>): Promise<void> => {
+    const auth = req.auth as { orgId: string; userId: string };
+    const targetSlug = typeof req.query.targetSlug === 'string' ? req.query.targetSlug : undefined;
+    const environmentSlug = typeof req.query.environmentSlug === 'string' ? req.query.environmentSlug : undefined;
+    res.json({ data: await awsService.getTerraformApplyReadiness(auth.orgId, targetSlug, environmentSlug) });
+  };
+
   deployments = async (req: Request, res: Response): Promise<void> => {
     const auth = req.auth as { orgId: string; userId: string; };
     res.json({ data: await awsService.listDeployments(auth.orgId) });
@@ -139,13 +152,9 @@ export class AwsController {
 
   applyDeployment = async (req: Request, res: Response): Promise<void> => {
     const { targetSlug } = req.params;
-    const body = req.body as AwsDeploymentPlanRequest;
-    if (body.confirmationToken !== 'APPLY') {
-      res.status(400).json({ error: { code: 'INVALID_INPUT', message: 'Confirmation token "APPLY" is required.' } });
-      return;
-    }
+    const body = awsTerraformEcsApplyRequestSchema.parse(req.body) as AwsTerraformEcsApplyRequest;
     const auth = req.auth as { orgId: string; userId: string; };
-    const result = await awsService.applyDeployment(auth.orgId, auth.userId, targetSlug!);
+    const result = await awsService.applyDeployment(auth.orgId, auth.userId, targetSlug!, body.environmentSlug);
     res.json({ data: result });
   };
 }

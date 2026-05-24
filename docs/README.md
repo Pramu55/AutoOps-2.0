@@ -16,6 +16,7 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 - [Infrastructure Automation Center](./INFRASTRUCTURE_AUTOMATION_CENTER.md)
 - [AWS ECR Image Build and Push](./AWS_ECR_IMAGE_BUILD_AND_PUSH.md)
 - [AWS Terraform ECS Plan](./AWS_TERRAFORM_ECS_PLAN.md)
+- [AWS ECS Gated Apply](./AWS_APPROVAL_GATED_ECS_APPLY.md)
 - [Route Reference](./ROUTE_REFERENCE.md)
 - [Limitations and Roadmap](./LIMITATIONS_AND_ROADMAP.md)
 - [Final Release Checklist](./FINAL_RELEASE_CHECKLIST.md)
@@ -35,6 +36,7 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 - [Infrastructure Automation Center](./INFRASTRUCTURE_AUTOMATION_CENTER.md)
 - [AWS ECR Image Build and Push](./AWS_ECR_IMAGE_BUILD_AND_PUSH.md)
 - [AWS Terraform ECS Plan](./AWS_TERRAFORM_ECS_PLAN.md)
+- [AWS ECS Gated Apply](./AWS_APPROVAL_GATED_ECS_APPLY.md)
 
 ## Company Pilot Evaluation
 
