@@ -3,18 +3,18 @@
 | Area | Feature | Status | Real Data? | Safety Model | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Authentication | Login/register | Complete | Yes | Real auth API | Demo buttons only prefill |
-| Organizations | Membership and tenant scope | Complete | Yes | Organization ID scoping | Demo users share local org |
+| Organizations | Membership and tenant scope | Complete | Yes | Organization ID scoping | New registration creates a new organization |
 | RBAC | Trigger authorization | Complete | Yes | OWNER/ADMIN/MEMBER trigger | VIEWER denied |
 | RBAC | Approval authorization | Complete | Yes | OWNER/ADMIN approve | Requester self-approval blocked |
 | Operations | Operation records | Complete | Yes | Durable lifecycle | No fake records |
 | Operations | Operation detail | Complete | Yes | Safe DTOs | No raw input/result/error |
 | Approvals | Pending approval workflow | Complete | Yes | Policy + RBAC | Not enqueued before approval |
-| Jenkins | Status/jobs/builds | Complete | Yes when configured | Read-only inventory | Optional connector |
+| Jenkins | Status/jobs/builds | Complete | Yes when configured | Status sanitized; inventory requires org provider access | Optional connector |
 | Jenkins | Governed build trigger | Complete | Yes | BUILD confirmation + allowlisted jobs | No arbitrary Jenkins mutation |
-| Docker | Engine inventory | Complete | Yes | Read-only lists | Containers/images/networks/volumes/logs |
+| Docker | Engine inventory | Complete | Yes | OWNER/ADMIN plus org provider access | Containers/images/networks/volumes/logs |
 | Docker | Start container | Complete | Yes | START confirmation | No approval by local policy |
 | Docker | Stop/restart container | Complete | Yes | STOP/RESTART confirmation + approval | No exec/delete/create |
-| Kubernetes | Cluster inventory | Complete | Yes | Read-only lists | Namespaces/workloads/pods/services |
+| Kubernetes | Cluster inventory | Complete | Yes | OWNER/ADMIN plus org provider access | Namespaces/workloads/pods/services |
 | Kubernetes | Metrics API status | Complete | Yes when configured | Read-only metrics | Honest unavailable state |
 | Kubernetes | Scale deployment | Complete | Yes | SCALE confirmation + approval threshold | Protected namespaces blocked |
 | Kubernetes | Rollout restart | Complete | Yes | ROLLOUT confirmation | No apply/delete/exec |
@@ -24,10 +24,10 @@
 | Infrastructure | Ansible playbook discovery | Complete | Yes | Allowlisted playbooks and inventory only | Local smoke playbook included |
 | Infrastructure | Ansible syntax-check and check mode | Complete | Yes when tool installed | SYNTAX/CHECK confirmation + worker execution | No SSH keys or vault secrets |
 | Infrastructure | Ansible run | Complete | Yes when tool installed | RUN confirmation + approval required | No arbitrary playbook path |
-| GitHub Actions | Workflow/run readiness | Complete | Yes when token configured | Read-only env-configured repo | No arbitrary dispatch |
-| Observability | Prometheus/Grafana readiness | Complete | Yes | Read-only health/query checks | No fake metrics |
+| GitHub Actions | Workflow/run readiness | Complete | Yes when token configured | Status sanitized; inventory requires org provider access | No arbitrary dispatch |
+| Observability | Prometheus/Grafana readiness | Complete | Yes | Status sanitized; details require org provider access | No fake metrics |
 | DevOps Tools | Helm/Kustomize/tool readiness | Complete | Yes | Version detection only | No apply/mutation |
-| Cloud Readiness | AWS/Azure/GCP readiness center | Complete | Yes when configured | Read-only detection; no direct writes | Cloud writes future via Terraform approval |
+| Cloud Readiness | AWS/Azure/GCP readiness center | Complete | Yes when configured | Status sanitized; details require org provider access; no direct writes | Cloud writes future via Terraform approval |
 | AWS Foundation | AWS deployment foundation diagnostics | Complete | Yes when configured | OWNER/ADMIN only; read-only STS/IAM/S3/DynamoDB probes | No apply/destroy; no secrets; sanitized status for all users |
 | AWS Foundation | AWS identity verification | Complete | Yes when configured | STS GetCallerIdentity; OWNER/ADMIN only | Account ID, ARN, region returned; no credentials exposed |
 | AWS Foundation | AWS IAM permission diagnostics | Complete | Yes when configured | Read-only permission probes per AWS service | Missing permissions reported; no privilege escalation |

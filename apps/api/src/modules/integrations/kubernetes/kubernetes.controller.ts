@@ -40,7 +40,7 @@ export class KubernetesController {
   };
 
   summary = async (req: Request, res: Response<{ data: KubernetesSummary }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await kubernetesService.getSummary() });
   };
 
@@ -48,7 +48,7 @@ export class KubernetesController {
     req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesNamespace> }>,
   ): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await kubernetesService.listNamespaces() });
   };
 
@@ -56,7 +56,7 @@ export class KubernetesController {
     req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesWorkload> }>,
   ): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await kubernetesService.listWorkloads() });
   };
 
@@ -64,7 +64,7 @@ export class KubernetesController {
     req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesPod> }>,
   ): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await kubernetesService.listPods() });
   };
 
@@ -72,7 +72,7 @@ export class KubernetesController {
     req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesServiceDto> }>,
   ): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await kubernetesService.listServices() });
   };
 
@@ -80,7 +80,7 @@ export class KubernetesController {
     req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesNode> }>,
   ): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await kubernetesService.listNodes() });
   };
 
@@ -88,7 +88,7 @@ export class KubernetesController {
     req: Request<WorkloadParams>,
     res: Response<{ data: KubernetesRolloutStatus }>,
   ): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({
       data: await kubernetesService.getRolloutStatus(req.params.namespace, req.params.name),
     });
@@ -99,6 +99,7 @@ export class KubernetesController {
     res: Response<{ data: Operation }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const operation = await kubernetesService.requestDeploymentRestart(
       req.params.namespace,
       req.params.name,
@@ -116,6 +117,7 @@ export class KubernetesController {
     res: Response<{ data: KubernetesActionResponse }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const data = await kubernetesService.requestDeploymentScale(
       req.params.namespace,
       req.params.name,
@@ -133,6 +135,7 @@ export class KubernetesController {
     res: Response<{ data: KubernetesActionResponse }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const data = await kubernetesService.requestDeploymentRolloutRestart(
       req.params.namespace,
       req.params.name,
@@ -150,6 +153,7 @@ export class KubernetesController {
     res: Response<{ data: KubernetesApplyDryRunResult | Operation }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const result = await kubernetesService.applyManifest(
       auth.orgId,
       auth.userId,
