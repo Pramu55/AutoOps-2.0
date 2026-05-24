@@ -316,6 +316,9 @@ export class OperationService {
     if (operationType === OperationType.AWS_TERRAFORM_ECS_PLAN) {
       return AuditAction.AWS_TERRAFORM_ECS_PLAN_REQUESTED;
     }
+    if (operationType === OperationType.AWS_TERRAFORM_ECS_APPLY) {
+      return AuditAction.AWS_TERRAFORM_ECS_APPLY_REQUESTED;
+    }
     return AuditAction.UPDATE;
   }
 

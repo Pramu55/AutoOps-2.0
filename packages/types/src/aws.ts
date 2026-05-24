@@ -384,3 +384,32 @@ export interface AwsDeploymentSummary {
   lastOperationId?: string;
   lastOperationType?: string;
 }
+
+export interface AwsTerraformApplyReadinessResponse {
+  status: AwsTerraformPlanStatus;
+  applyEnabled: boolean;
+  awsConfigured: boolean;
+  regionConfigured: boolean;
+  remoteStateBucketConfigured: boolean;
+  remoteStateLockTableConfigured: boolean;
+  remoteStateRegionConfigured: boolean;
+  allowedWorkspaceConfigured: boolean;
+  workspaceExists: boolean;
+  terraformToolAvailable: boolean;
+  latestPlanAvailable: boolean;
+  latestPlanApproved: boolean;
+  latestPlanOperationId: string | null;
+  latestPlanStatus: string | null;
+  latestPlanAgeSeconds: number | null;
+  addCount: number | null;
+  changeCount: number | null;
+  destroyCount: number | null;
+  riskLevel: string | null;
+  applyEligible: boolean | null;
+  targetSlug: string | null;
+  environmentSlug: string | null;
+  missing: string[];
+  blockedReasons: string[];
+  checkedAt: string;
+}
+

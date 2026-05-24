@@ -31,6 +31,7 @@ export const OperationType = {
   AWS_ECR_IMAGE_BUILD: 'AWS_ECR_IMAGE_BUILD',
   AWS_ECR_IMAGE_PUSH: 'AWS_ECR_IMAGE_PUSH',
   AWS_TERRAFORM_ECS_PLAN: 'AWS_TERRAFORM_ECS_PLAN',
+  AWS_TERRAFORM_ECS_APPLY: 'AWS_TERRAFORM_ECS_APPLY',
   DEPLOYMENT_ROLLBACK: 'DEPLOYMENT_ROLLBACK',
 } as const;
 export type OperationType = (typeof OperationType)[keyof typeof OperationType];
