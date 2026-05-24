@@ -130,6 +130,13 @@ export function evaluateOperationPolicy(input: OperationPolicyInput): OperationP
   }
 
   if (
+    input.provider === OperationProvider.AWS &&
+    input.operationType === OperationType.AWS_TERRAFORM_ECS_PLAN
+  ) {
+    return confirmationOnly(OperationRiskLevel.MEDIUM, 'PLAN');
+  }
+
+  if (
     input.provider === OperationProvider.INFRASTRUCTURE &&
     input.operationType === OperationType.ANSIBLE_SYNTAX_CHECK
   ) {

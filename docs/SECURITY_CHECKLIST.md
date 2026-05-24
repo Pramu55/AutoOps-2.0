@@ -119,6 +119,10 @@ Authorization:
 - Push operations must require `PUSH` confirmation and create `AWS_ECR_IMAGE_PUSH`.
 - Production/prod push must enter `PENDING_APPROVAL` when `AWS_ECR_PRODUCTION_PUSH_REQUIRES_APPROVAL=true`.
 - `AWS_ECR_PUSH_ENABLED=false` must prevent worker push execution by default.
+- AWS ECS Terraform/OpenTofu plan must require `AWS_TERRAFORM_STATE_BUCKET`, `AWS_TERRAFORM_STATE_DYNAMODB_TABLE`, and `AWS_TERRAFORM_STATE_REGION`.
+- AWS ECS Terraform/OpenTofu plan must use only allowlisted workspaces and tenant-scoped successful ECR push metadata.
+- AWS ECS Terraform/OpenTofu plan must store only safe summaries, add/change/destroy counts, risk, blocked reasons, and apply eligibility.
+- Terraform/OpenTofu plan output must be redacted and limited; raw state, backend config, tfvars secrets, `.terraform`, and `terraform.tfstate` must never be written into the repository.
 - Docker login password, AWS credentials, and Docker socket details must never appear in logs, API responses, UI, screenshots, operation evidence, or governance export.
 - ECR operation history must remain organization-scoped.
 

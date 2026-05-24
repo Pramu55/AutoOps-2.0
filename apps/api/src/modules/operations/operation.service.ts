@@ -313,6 +313,9 @@ export class OperationService {
     if (operationType === OperationType.AWS_ECR_IMAGE_PUSH) {
       return AuditAction.AWS_ECR_IMAGE_PUSH_REQUESTED;
     }
+    if (operationType === OperationType.AWS_TERRAFORM_ECS_PLAN) {
+      return AuditAction.AWS_TERRAFORM_ECS_PLAN_REQUESTED;
+    }
     return AuditAction.UPDATE;
   }
 
