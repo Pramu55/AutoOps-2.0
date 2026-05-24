@@ -19,8 +19,10 @@ import type {
   AwsEcrImageBuildRequest,
   AwsEcrImagePushRequest,
   AwsEcrImageMetadata,
+  AwsTerraformEcsPlanRequest,
+  AwsTerraformPlanReadinessResponse,
 } from '@autoops/types';
-import { ProviderConnectionStatus, AwsIntegrationStatus, AwsReadinessStatus, AwsDiagnosticStatus, AwsDeploymentTargetType } from '@autoops/types';
+import { ProviderConnectionStatus, AwsIntegrationStatus, AwsReadinessStatus, AwsDiagnosticStatus, AwsDeploymentTargetType, AwsTerraformPlanStatus } from '@autoops/types';
 import {
   DescribeAlarmsCommand,
   DescribeClustersCommand,
@@ -416,6 +418,64 @@ export class AwsService {
     return res;
   }
 
+  async getTerraformPlanReadiness(
+    organizationId: string,
+    targetSlug?: string,
+    environmentSlug?: string,
+  ): Promise<AwsTerraformPlanReadinessResponse> {
+    const checkedAt = new Date().toISOString();
+    const awsStatus = await this.getStatus();
+    const targets = await this.listDeploymentTargets();
+    const target = targetSlug
+      ? targets.items.find((item) => item.slug === targetSlug)
+      : targets.items[0] ?? null;
+    const missing: string[] = [];
+    const blockedReasons: string[] = [];
+
+    const state = this._remoteStateConfig();
+    if (!awsStatus.configured) missing.push('AWS credentials');
+    if (!awsStatus.region) missing.push('AWS_REGION');
+    if (!state.bucket) missing.push('AWS_TERRAFORM_STATE_BUCKET');
+    if (!state.lockTable) missing.push('AWS_TERRAFORM_STATE_DYNAMODB_TABLE');
+    if (!state.region) missing.push('AWS_TERRAFORM_STATE_REGION');
+    if (!target) missing.push('AWS_ALLOWED_DEPLOYMENT_WORKSPACES');
+    if (targetSlug && !target) blockedReasons.push('Target slug is not allowlisted.');
+
+    const workspace = target ? await getTerraformWorkspaceBySlug(target.slug) : null;
+    if (target && !workspace) blockedReasons.push('Allowlisted Terraform/OpenTofu workspace does not exist.');
+
+    const toolStatus = await detectTerraformTool();
+    if (toolStatus.status !== 'CONNECTED') blockedReasons.push('Terraform/OpenTofu is not available in this runtime.');
+
+    const image = target
+      ? await this._latestPushedEcrImage(organizationId, target.slug, environmentSlug)
+      : null;
+    if (!image) blockedReasons.push('No successful tenant-scoped ECR push metadata is available for this target/environment.');
+
+    let status = AwsTerraformPlanStatus.READY;
+    if (missing.length > 0) status = AwsTerraformPlanStatus.NOT_CONFIGURED;
+    else if (blockedReasons.length > 0) status = AwsTerraformPlanStatus.BLOCKED;
+
+    return {
+      status,
+      awsConfigured: awsStatus.configured,
+      regionConfigured: Boolean(awsStatus.region),
+      remoteStateBucketConfigured: Boolean(state.bucket),
+      remoteStateLockTableConfigured: Boolean(state.lockTable),
+      remoteStateRegionConfigured: Boolean(state.region),
+      allowedWorkspaceConfigured: Boolean(target),
+      workspaceExists: Boolean(workspace),
+      terraformToolAvailable: toolStatus.status === 'CONNECTED',
+      safeImageAvailable: Boolean(image),
+      targetSlug: target?.slug ?? targetSlug ?? null,
+      environmentSlug: environmentSlug ?? (image ? this._string(this._record(image.input).environmentSlug) : null),
+      latestImageOperationId: image?.id ?? null,
+      missing,
+      blockedReasons,
+      checkedAt,
+    };
+  }
+
   async getSummary(): Promise<AwsSummary> {
     const identity = await this.getIdentity();
     const partialFailures: AwsPartialFailure[] = [];
@@ -525,7 +585,10 @@ export class AwsService {
 
       const summaries: AwsDeploymentSummary[] = [];
       for (const slug of targetSlugs) {
-        const op = operations.find(o => (o.input as Record<string, unknown>)?.workspaceSlug === slug);
+        const op = operations.find(o => {
+          const opInput = (o.input as Record<string, unknown>) ?? {};
+          return opInput.workspaceSlug === slug || opInput.targetSlug === slug;
+        });
         summaries.push({
           workspaceSlug: slug,
           status: op ? op.status : 'NOT_DEPLOYED',
@@ -766,7 +829,19 @@ export class AwsService {
     return { operationId: operation.id, status: operation.status, provider: operation.provider, type: operation.operationType };
   }
 
-  async planDeployment(organizationId: string, userId: string, targetSlug: string): Promise<AwsDeploymentOperationResponse> {
+  async planDeployment(
+    organizationId: string,
+    userId: string,
+    targetSlug: string,
+    input: AwsTerraformEcsPlanRequest,
+  ): Promise<AwsDeploymentOperationResponse> {
+    if (targetSlug !== input.targetSlug) {
+      throw new BadRequestError('Route targetSlug must match request targetSlug.');
+    }
+    const state = this._remoteStateConfig();
+    if (!state.bucket || !state.lockTable || !state.region) {
+      throw new BadRequestError('AWS Terraform remote state is not fully configured.');
+    }
     const toolStatus = await detectTerraformTool();
     if (toolStatus.status !== 'CONNECTED') {
       throw new Error(toolStatus.message);
@@ -780,21 +855,42 @@ export class AwsService {
       throw new Error(`Deployment target ${targetSlug} is not an allowed AWS deployment workspace.`);
     }
 
+    const imageOperation = await this._requirePushedEcrImageOperation(
+      organizationId,
+      input.imageOperationId,
+      targetSlug,
+      input.environmentSlug,
+    );
+    const imageInput = this._record(imageOperation.input);
+    const imageResult = this._record(imageOperation.result);
+    const imageUri = this._string(imageResult.imageUri) ?? this._string(imageInput.imageUri);
+    if (!imageUri) {
+      throw new BadRequestError('Selected ECR image metadata does not include a safe image URI.');
+    }
+    const imageDigest = this._string(imageResult.imageDigest);
+
     const operation = await operationService.createQueuedOperation(
       {
         organizationId,
         userId,
         provider: OperationProvider.AWS,
-        operationType: OperationType.TERRAFORM_PLAN,
+        operationType: OperationType.AWS_TERRAFORM_ECS_PLAN,
         confirmationToken: 'PLAN',
-        idempotencyKey: `aws-deploy-plan-${workspace.slug}-${Date.now()}`,
+        idempotencyKey: `aws-ecs-plan-${workspace.slug}-${input.environmentSlug}-${input.imageOperationId}-${Date.now()}`,
         input: {
           tool: toolStatus.tool,
-          action: 'plan',
+          action: 'ecs-plan',
+          targetSlug: workspace.slug,
           workspaceSlug: workspace.slug,
           displayName: workspace.displayName,
           relativePath: workspace.relativePath,
-          commandSummary: `${toolStatus.tool} plan (AWS)`,
+          environmentSlug: input.environmentSlug,
+          imageOperationId: imageOperation.id,
+          imageUri,
+          imageDigest,
+          remoteStateConfigured: true,
+          applyEligible: false,
+          commandSummary: `${toolStatus.tool} plan (AWS ECS, remote state)`,
           requestedAt: new Date().toISOString(),
         } as Prisma.InputJsonObject,
       },
@@ -877,6 +973,59 @@ export class AwsService {
 
   async listCloudWatchAlarms(): Promise<AwsListResponse<AwsCloudWatchAlarm>> {
     return this._listResponse((clients) => this._loadCloudWatchAlarms(clients));
+  }
+
+  private _remoteStateConfig(): { bucket: string | null; lockTable: string | null; region: string | null } {
+    return {
+      bucket: this._string(process.env.AWS_TERRAFORM_STATE_BUCKET),
+      lockTable: this._string(process.env.AWS_TERRAFORM_STATE_DYNAMODB_TABLE),
+      region: this._string(process.env.AWS_TERRAFORM_STATE_REGION),
+    };
+  }
+
+  private async _latestPushedEcrImage(
+    organizationId: string,
+    targetSlug: string,
+    environmentSlug?: string,
+  ) {
+    return prisma.operation.findFirst({
+      where: {
+        organizationId,
+        provider: OperationProvider.AWS,
+        operationType: OperationType.AWS_ECR_IMAGE_PUSH,
+        status: OperationStatus.SUCCEEDED,
+        AND: [
+          { input: { path: ['targetSlug'], equals: targetSlug } },
+          ...(environmentSlug ? [{ input: { path: ['environmentSlug'], equals: environmentSlug } }] : []),
+        ],
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
+  private async _requirePushedEcrImageOperation(
+    organizationId: string,
+    operationId: string,
+    targetSlug: string,
+    environmentSlug: string,
+  ) {
+    const operation = await prisma.operation.findFirst({
+      where: {
+        id: operationId,
+        organizationId,
+        provider: OperationProvider.AWS,
+        operationType: OperationType.AWS_ECR_IMAGE_PUSH,
+        status: OperationStatus.SUCCEEDED,
+        AND: [
+          { input: { path: ['targetSlug'], equals: targetSlug } },
+          { input: { path: ['environmentSlug'], equals: environmentSlug } },
+        ],
+      },
+    });
+    if (!operation) {
+      throw new BadRequestError('A successful tenant-scoped ECR push operation is required before ECS plan.');
+    }
+    return operation;
   }
 
   private async _loadEc2Instances(clients = createAwsClients()): Promise<AwsEc2Instance[]> {

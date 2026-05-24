@@ -1649,6 +1649,7 @@ export class OpsService {
     if (type === OperationType.AWS_DEPLOYMENT) return 'AWS deployment requested';
     if (type === OperationType.AWS_ECR_IMAGE_BUILD) return 'AWS ECR image build requested';
     if (type === OperationType.AWS_ECR_IMAGE_PUSH) return 'AWS ECR image push requested';
+    if (type === OperationType.AWS_TERRAFORM_ECS_PLAN) return 'AWS ECS Terraform/OpenTofu plan generated';
     if (type === OperationType.DEPLOYMENT_ROLLBACK) return 'Deployment rollback requested';
     return String(type).replace(/_/g, ' ').toLowerCase();
   }
@@ -1692,6 +1693,12 @@ export class OpsService {
       const targetSlug = this._stringField(input, 'targetSlug') ?? this._stringField(result, 'targetSlug');
       if (repository && tag) return `${repository}:${tag}`;
       return targetSlug ?? repository;
+    }
+
+    if (type === OperationType.AWS_TERRAFORM_ECS_PLAN) {
+      const targetSlug = this._stringField(input, 'targetSlug') ?? this._stringField(result, 'targetSlug');
+      const environmentSlug = this._stringField(input, 'environmentSlug') ?? this._stringField(result, 'environmentSlug');
+      return targetSlug && environmentSlug ? `${targetSlug}/${environmentSlug}` : targetSlug;
     }
 
     if (
@@ -1741,7 +1748,8 @@ export class OpsService {
       type === OperationType.ANSIBLE_CHECK ||
       type === OperationType.ANSIBLE_RUN ||
       type === OperationType.AWS_ECR_IMAGE_BUILD ||
-      type === OperationType.AWS_ECR_IMAGE_PUSH
+      type === OperationType.AWS_ECR_IMAGE_PUSH ||
+      type === OperationType.AWS_TERRAFORM_ECS_PLAN
     ) {
       return this._stringField(result, 'status') ?? this._stringField(result, 'safeOutputSummary');
     }
@@ -1789,7 +1797,15 @@ export class OpsService {
     const ecrRepository =
       this._stringField(result, 'repositoryName') ?? this._stringField(input, 'repositoryName');
     const imageTag = this._stringField(result, 'imageTag') ?? this._stringField(input, 'imageTag');
+    const imageUri = this._stringField(result, 'imageUri') ?? this._stringField(input, 'imageUri');
     const imageDigest = this._stringField(result, 'imageDigest');
+    const environmentSlug =
+      this._stringField(result, 'environmentSlug') ?? this._stringField(input, 'environmentSlug');
+    const addCount = this._numberField(result, 'addCount');
+    const changeCount = this._numberField(result, 'changeCount');
+    const destroyCount = this._numberField(result, 'destroyCount');
+    const riskLevel = this._stringField(result, 'riskLevel');
+    const applyEligible = typeof result.applyEligible === 'boolean' ? result.applyEligible : null;
     const relativePath =
       this._stringField(result, 'relativePath') ?? this._stringField(input, 'relativePath');
     const safeOutputSummary = this._stringField(result, 'safeOutputSummary');
@@ -1805,7 +1821,14 @@ export class OpsService {
     if (playbookSlug) safeSummary.push(`Ansible playbook: ${playbookSlug}`);
     if (ecrTargetSlug) safeSummary.push(`ECR build target: ${ecrTargetSlug}`);
     if (ecrRepository && imageTag) safeSummary.push(`Image: ${ecrRepository}:${imageTag}`);
+    if (imageUri && type === OperationType.AWS_TERRAFORM_ECS_PLAN) safeSummary.push(`Plan image: ${imageUri}`);
     if (imageDigest) safeSummary.push(`Digest: ${imageDigest}`);
+    if (environmentSlug) safeSummary.push(`Environment: ${environmentSlug}`);
+    if (addCount !== null || changeCount !== null || destroyCount !== null) {
+      safeSummary.push(`Plan counts: +${addCount ?? 0} / ~${changeCount ?? 0} / -${destroyCount ?? 0}`);
+    }
+    if (riskLevel) safeSummary.push(`Plan risk: ${riskLevel}`);
+    if (applyEligible !== null) safeSummary.push(`Apply eligible: ${applyEligible ? 'yes' : 'no'}`);
     if (relativePath) safeSummary.push(`Allowlisted path: ${relativePath}`);
     if (buildNumber !== null) safeSummary.push(`Build: #${buildNumber}`);
     if (buildUrl) safeSummary.push('Jenkins build URL is available.');
@@ -1825,7 +1848,7 @@ export class OpsService {
       operationType: type,
       targetKind:
         targetKind ??
-        (workspaceSlug ? 'Terraform/OpenTofu workspace' : playbookSlug ? 'Ansible playbook' : ecrTargetSlug ? 'AWS ECR image' : namespace && targetName ? 'Deployment' : null),
+        (type === OperationType.AWS_TERRAFORM_ECS_PLAN ? 'AWS ECS Terraform/OpenTofu plan' : workspaceSlug ? 'Terraform/OpenTofu workspace' : playbookSlug ? 'Ansible playbook' : ecrTargetSlug ? 'AWS ECR image' : namespace && targetName ? 'Deployment' : null),
       targetName: targetName ?? workspaceSlug ?? playbookSlug ?? (ecrRepository && imageTag ? `${ecrRepository}:${imageTag}` : ecrTargetSlug),
       namespace,
       containerName,
@@ -2160,6 +2183,10 @@ export class OpsService {
 
     if (type === OperationType.AWS_ECR_IMAGE_PUSH) {
       return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'PUSH', policy.riskLevel ?? OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
+    }
+
+    if (type === OperationType.AWS_TERRAFORM_ECS_PLAN) {
+      return this._confirmationGovernance(policy.confirmationTokenLabel ?? 'PLAN', policy.riskLevel ?? OperationRiskLevel.MEDIUM, approvalRequired, approvalStatus, policy, approvedAt, rejectedAt);
     }
 
     if (type === OperationType.GITHUB_WORKFLOW_DISPATCH) {

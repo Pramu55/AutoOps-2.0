@@ -164,4 +164,16 @@ describe('evaluateOperationPolicy', () => {
     expect(decision.riskLevel).toBe(OperationRiskLevel.HIGH);
     expect(decision.approvalReason).toContain('production image');
   });
+
+  it('keeps AWS Terraform ECS plan confirmation-only', () => {
+    const decision = evaluateOperationPolicy({
+      provider: OperationProvider.AWS,
+      operationType: OperationType.AWS_TERRAFORM_ECS_PLAN,
+      input: { environmentSlug: 'staging' },
+    });
+
+    expect(decision.approvalRequired).toBe(false);
+    expect(decision.confirmationTokenLabel).toBe('PLAN');
+    expect(decision.riskLevel).toBe(OperationRiskLevel.MEDIUM);
+  });
 });

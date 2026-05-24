@@ -26,6 +26,7 @@ awsRouter.get('/permissions', requireAuth, requireRole('OWNER', 'ADMIN'), asyncH
 awsRouter.get('/remote-state', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(awsController.remoteState as unknown as RequestHandler));
 awsRouter.get('/deployment-targets', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(awsController.deploymentTargets as unknown as RequestHandler));
 awsRouter.get('/workspace-readiness/:targetSlug', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(awsController.workspaceReadiness as unknown as RequestHandler));
+awsRouter.get('/terraform/plan-readiness', requireAuth, requireRole('OWNER', 'ADMIN'), asyncHandler(awsController.terraformPlanReadiness as unknown as RequestHandler));
 
 // TENANT_DATA — organization-scoped deployment operations
 awsRouter.get('/deployments', requireAuth, asyncHandler(awsController.deployments as unknown as RequestHandler));

@@ -17,6 +17,7 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 | Ansible | Run allowlisted playbook | RUN | HIGH | Required |
 | AWS ECR | Build allowlisted Docker image target | BUILD | MEDIUM | Not required |
 | AWS ECR | Push image to allowlisted ECR repository | PUSH | MEDIUM/HIGH | Required for production/prod |
+| AWS Terraform ECS | Generate ECS plan from remote state and pushed ECR image | PLAN | MEDIUM/HIGH if destroy detected | Not required for plan |
 
 ## Safety Rules
 
@@ -30,6 +31,7 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Kubernetes exec, shell, port-forward, Secret access, arbitrary apply/patch, and delete actions are not exposed.
 - Infrastructure automation never accepts arbitrary command strings or arbitrary paths. Terraform/OpenTofu and Ansible operations are limited to allowlisted workspaces/playbooks and fixed worker command definitions.
 - AWS ECR image build/push never accepts arbitrary Dockerfile paths, build contexts, tags, repositories, or shell arguments. Build and push are separate worker-executed operations.
+- AWS ECS Terraform/OpenTofu planning requires remote state configuration, an allowlisted workspace, and tenant-scoped ECR push metadata. It runs `init`, `validate`, and `plan` only; apply and destroy are not executed.
 
 ## Operation Detail and Recovery
 
@@ -64,6 +66,7 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Terraform/OpenTofu VALIDATE/PLAN and Ansible SYNTAX/CHECK are confirmation-only.
 - Terraform/OpenTofu APPLY and Ansible RUN enter `PENDING_APPROVAL` and are not enqueued until approved.
 - AWS ECR BUILD is confirmation-only. AWS ECR PUSH is confirmation-only for non-production environments and approval-required for `production`/`prod` when production push approval is enabled.
+- AWS Terraform ECS PLAN is confirmation-only and stores safe add/change/destroy counts. Any destroy count marks the plan high risk and `applyEligible=false` for future apply workflows.
 - Approving a pending operation records the decision and queues the existing worker-executed operation; rejecting records the decision and prevents worker execution.
 - Ops Hub and operation detail expose safe policy reason, risk, confirmation label, approval status, and decision timestamps without rendering raw operation metadata.
 - AutoOps does not provide generic replay, unsafe Docker/Kubernetes controls, or fake approval records. Future RBAC can separate requester and approver responsibilities.

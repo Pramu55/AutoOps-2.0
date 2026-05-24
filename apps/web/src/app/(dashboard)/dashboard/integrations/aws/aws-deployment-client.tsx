@@ -13,6 +13,8 @@ import type {
   AwsEcrReadinessResponse,
   AwsEcrRepository,
   AwsEcrImageMetadata,
+  AwsTerraformPlanReadinessResponse,
+  AwsDeploymentSummary,
 } from '@autoops/types';
 import { ArrowLeft, Cloud, RefreshCw, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -28,6 +30,9 @@ export function AwsDeploymentClient() {
   const [ecrRepositories, setEcrRepositories] = useState<AwsEcrRepository[]>([]);
   const [ecrImages, setEcrImages] = useState<AwsEcrImageMetadata[]>([]);
   const [ecrMessage, setEcrMessage] = useState<string | null>(null);
+  const [planReadiness, setPlanReadiness] = useState<AwsTerraformPlanReadinessResponse | null>(null);
+  const [deployments, setDeployments] = useState<AwsDeploymentSummary[]>([]);
+  const [planMessage, setPlanMessage] = useState<string | null>(null);
   const [inventoryDenied, setInventoryDenied] = useState(false);
   // targets unused right now but we use it via items[0] for readiness
   const [loading, setLoading] = useState(true);
@@ -35,7 +40,7 @@ export function AwsDeploymentClient() {
   async function load() {
     setLoading(true);
     try {
-      const [idRes, readRes, permRes, rsRes, tRes, ecrReadyRes, ecrRepoRes, ecrImagesRes] = await Promise.all([
+      const [idRes, readRes, permRes, rsRes, tRes, ecrReadyRes, ecrRepoRes, ecrImagesRes, planReadyRes, deploymentsRes] = await Promise.all([
         api.get<{ data: AwsIdentityResponse }>('/v1/integrations/aws/identity').catch((error) => {
           if (error?.status === 403) setInventoryDenied(true);
           return null;
@@ -47,6 +52,8 @@ export function AwsDeploymentClient() {
         api.get<{ data: AwsEcrReadinessResponse }>('/v1/integrations/aws/ecr/readiness').catch(() => null),
         api.get<{ data: AwsListResponse<AwsEcrRepository> }>('/v1/integrations/aws/ecr/repositories').catch(() => null),
         api.get<{ data: AwsListResponse<AwsEcrImageMetadata> }>('/v1/integrations/aws/ecr/images').catch(() => null),
+        api.get<{ data: AwsTerraformPlanReadinessResponse }>('/v1/integrations/aws/terraform/plan-readiness').catch(() => null),
+        api.get<{ data: AwsListResponse<AwsDeploymentSummary> }>('/v1/integrations/aws/deployments').catch(() => null),
       ]);
       setIdentity(idRes?.data ?? null);
       setReadiness(readRes?.data ?? null);
@@ -55,6 +62,8 @@ export function AwsDeploymentClient() {
       setEcrReadiness(ecrReadyRes?.data ?? null);
       setEcrRepositories(ecrRepoRes?.data?.items ?? []);
       setEcrImages(ecrImagesRes?.data?.items ?? []);
+      setPlanReadiness(planReadyRes?.data ?? null);
+      setDeployments(deploymentsRes?.data?.items ?? []);
       const items = tRes?.data?.items ?? [];
       
       if (items.length > 0 && items[0]) {
@@ -98,11 +107,28 @@ export function AwsDeploymentClient() {
     await load();
   }
 
+  async function requestTerraformPlan(image: AwsEcrImageMetadata) {
+    setPlanMessage(null);
+    const response = await api.post<{ data: { operationId: string; status: string } }>(
+      `/v1/integrations/aws/deployments/${encodeURIComponent(image.targetSlug)}/plan`,
+      {
+        targetSlug: image.targetSlug,
+        environmentSlug: image.environmentSlug,
+        imageOperationId: image.operationId,
+        confirmationToken: 'PLAN',
+      },
+    );
+    setPlanMessage(`Terraform/OpenTofu ECS plan operation ${response.data.operationId} is ${response.data.status}.`);
+    await load();
+  }
+
   const StatusIcon = ({ status }: { status: string }) => {
     if (status === 'PASS' || status === 'READY' || status === 'CONNECTED') return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
     if (status === 'ERROR' || status === 'FAIL' || status === 'AUTH_FAILED') return <XCircle className="h-4 w-4 text-red-500" />;
     return <AlertCircle className="h-4 w-4 text-amber-500" />;
   };
+
+  const pushedImages = ecrImages.filter((image) => image.action === 'push' && image.status === 'SUCCEEDED');
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -318,6 +344,96 @@ export function AwsDeploymentClient() {
               </div>
             </div>
           </div>
+        </section>
+      )}
+
+      {planReadiness && (
+        <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-950">
+                <StatusIcon status={planReadiness.status} /> Terraform ECS Plan
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Plan-only review uses remote state and a tenant-scoped ECR push image. Apply and destroy are not available here.
+              </p>
+            </div>
+            <Button asChild variant="outline" size="sm">
+              <Link href="/dashboard/governance">Governance Evidence</Link>
+            </Button>
+          </div>
+          {planMessage && <p className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{planMessage}</p>}
+          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+            <div className="rounded-md border border-slate-100 p-4">
+              <h3 className="text-sm font-semibold text-slate-900">Remote state</h3>
+              <ul className="mt-3 space-y-2 text-sm text-slate-600">
+                <li className="flex items-center justify-between">S3 bucket <StatusIcon status={planReadiness.remoteStateBucketConfigured ? 'PASS' : 'FAIL'} /></li>
+                <li className="flex items-center justify-between">DynamoDB lock table <StatusIcon status={planReadiness.remoteStateLockTableConfigured ? 'PASS' : 'FAIL'} /></li>
+                <li className="flex items-center justify-between">State region <StatusIcon status={planReadiness.remoteStateRegionConfigured ? 'PASS' : 'FAIL'} /></li>
+              </ul>
+            </div>
+            <div className="rounded-md border border-slate-100 p-4">
+              <h3 className="text-sm font-semibold text-slate-900">Workspace and image</h3>
+              <ul className="mt-3 space-y-2 text-sm text-slate-600">
+                <li className="flex items-center justify-between">Allowlisted workspace <StatusIcon status={planReadiness.allowedWorkspaceConfigured ? 'PASS' : 'FAIL'} /></li>
+                <li className="flex items-center justify-between">Workspace exists <StatusIcon status={planReadiness.workspaceExists ? 'PASS' : 'FAIL'} /></li>
+                <li className="flex items-center justify-between">Pushed image metadata <StatusIcon status={planReadiness.safeImageAvailable ? 'PASS' : 'FAIL'} /></li>
+              </ul>
+            </div>
+            <div className="rounded-md border border-slate-100 p-4">
+              <h3 className="text-sm font-semibold text-slate-900">Plan blockers</h3>
+              {planReadiness.missing.length === 0 && planReadiness.blockedReasons.length === 0 ? (
+                <p className="mt-3 text-sm text-emerald-700">Plan prerequisites are ready.</p>
+              ) : (
+                <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-600">
+                  {[...planReadiness.missing, ...planReadiness.blockedReasons].map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              )}
+            </div>
+          </div>
+          <div className="mt-5 overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-600">
+              <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Pushed image</th>
+                  <th className="px-4 py-2 font-medium">Environment</th>
+                  <th className="px-4 py-2 font-medium">Plan</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {pushedImages.length === 0 && (
+                  <tr><td colSpan={3} className="px-4 py-6 text-center text-slate-500">No successful tenant-scoped ECR pushes are available for ECS planning.</td></tr>
+                )}
+                {pushedImages.map((image) => (
+                  <tr key={`plan-${image.operationId}`}>
+                    <td className="px-4 py-3 font-mono text-xs">{image.imageUri ?? `${image.repositoryName}:${image.imageTag}`}</td>
+                    <td className="px-4 py-3">{image.environmentSlug}</td>
+                    <td className="px-4 py-3">
+                      <Button type="button" size="sm" onClick={() => void requestTerraformPlan(image)} disabled={planReadiness.status !== 'READY'}>
+                        Plan
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {deployments.length > 0 && (
+            <div className="mt-5">
+              <h3 className="text-sm font-semibold text-slate-900">Recent AWS deployment operations</h3>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {deployments.map((deployment) => (
+                  <div key={deployment.workspaceSlug} className="rounded-md border border-slate-100 p-3 text-sm">
+                    <div className="font-medium text-slate-950">{deployment.workspaceSlug}</div>
+                    <div className="mt-1 text-slate-500">{deployment.status} {deployment.lastOperationType ? `(${deployment.lastOperationType})` : ''}</div>
+                    {deployment.lastOperationId && (
+                      <Link className="mt-2 inline-block text-xs font-medium text-slate-900 underline" href={`/dashboard/operations/${deployment.lastOperationId}`}>Open operation detail</Link>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       )}
 

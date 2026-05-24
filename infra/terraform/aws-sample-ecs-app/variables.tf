@@ -21,3 +21,9 @@ variable "vpc_cidr" {
   type        = string
   default     = "10.0.0.0/16"
 }
+
+variable "container_image" {
+  description = "Container image reference selected from tenant-scoped AutoOps ECR push metadata."
+  type        = string
+  default     = "example.invalid/autoops-sample-app:unset"
+}

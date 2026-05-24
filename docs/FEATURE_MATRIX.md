@@ -37,6 +37,7 @@
 | AWS ECR | ECR readiness and repository inventory | Complete | Yes when configured | OWNER/ADMIN provider-boundary access + allowlisted repositories | No repository creation or deletion |
 | AWS ECR | Docker image build | Complete | Yes when configured | BUILD confirmation + allowlisted build target | No arbitrary Dockerfile, context, tag, or shell |
 | AWS ECR | ECR image push | Complete | Yes when configured | PUSH confirmation + production approval gate | Push disabled by default; no credential exposure |
+| AWS Terraform ECS | Plan-only ECS review | Complete | Yes when configured | PLAN confirmation + remote state + tenant-scoped pushed image metadata | No apply, destroy, arbitrary workspace, arbitrary tfvars, or raw plan output exposure |
 | Worker Runtime | BullMQ execution | Complete | Yes | Worker-only execution | API queues accepted work |
 | Worker Runtime | Heartbeat registry | Complete | Yes | Persisted heartbeat rows | Fresh/stale/offline derived |
 | Observability | Operations Hub | Complete | Yes | Safe summaries | Platform/provider/queue/worker/incidents |

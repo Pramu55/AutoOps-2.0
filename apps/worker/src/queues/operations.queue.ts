@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { cp, mkdtemp, rm } from 'node:fs/promises';
+import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { execFile, spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,6 +20,7 @@ import {
   getAwsEcrBuildTargetBySlug,
   isAllowedAwsEcrRepository,
   summarizeCommandOutput,
+  summarizeTerraformPlanSafety,
 } from '@autoops/utils';
 import { createBullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -134,6 +135,7 @@ async function processOperation(job: Job<OperationJobData>): Promise<void> {
 }
 
 async function executeOperation(operation: {
+  id: string;
   provider: OperationProvider;
   operationType: OperationType;
   input: unknown;
@@ -185,6 +187,13 @@ async function executeOperation(operation: {
       operation.operationType === OperationType.AWS_ECR_IMAGE_PUSH)
   ) {
     return executeAwsEcrOperation(operation.operationType, input, operation.approvedAt ?? null);
+  }
+
+  if (
+    operation.provider === OperationProvider.AWS &&
+    operation.operationType === OperationType.AWS_TERRAFORM_ECS_PLAN
+  ) {
+    return executeAwsTerraformEcsPlan(operation.id, input);
   }
 
   if (
@@ -477,6 +486,115 @@ function parseImageDigest(output: string): string | null {
   return match ? match[0].slice(1) : null;
 }
 
+async function executeAwsTerraformEcsPlan(operationId: string, input: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const targetSlug = stringField(input, 'targetSlug');
+  const workspaceSlug = stringField(input, 'workspaceSlug');
+  const environmentSlug = stringField(input, 'environmentSlug');
+  const imageUri = stringField(input, 'imageUri');
+  const imageDigest = optionalStringField(input, 'imageDigest');
+
+  if (targetSlug !== workspaceSlug) {
+    throw new Error('AWS Terraform ECS plan target is invalid.');
+  }
+  const allowedWorkspaces = parseAllowedJobs(process.env.AWS_ALLOWED_DEPLOYMENT_WORKSPACES);
+  if (!allowedWorkspaces.includes(workspaceSlug)) {
+    throw new Error('AWS Terraform ECS workspace is not allowlisted.');
+  }
+
+  const stateBucket = process.env.AWS_TERRAFORM_STATE_BUCKET?.trim();
+  const stateLockTable = process.env.AWS_TERRAFORM_STATE_DYNAMODB_TABLE?.trim();
+  const stateRegion = process.env.AWS_TERRAFORM_STATE_REGION?.trim();
+  if (!stateBucket || !stateLockTable || !stateRegion) {
+    throw new Error('AWS Terraform remote state is not fully configured.');
+  }
+
+  const workspace = await getTerraformWorkspaceBySlug(workspaceSlug);
+  if (!workspace) throw new Error('AWS Terraform ECS workspace is not allowlisted.');
+
+  const toolStatus = await detectTerraformTool();
+  if (toolStatus.status !== 'CONNECTED' || (toolStatus.tool !== 'terraform' && toolStatus.tool !== 'tofu')) {
+    throw new Error(toolStatus.message);
+  }
+
+  const startedAt = Date.now();
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'autoops-aws-ecs-plan-'));
+  const tempWorkspace = path.join(tempRoot, workspace.slug);
+  try {
+    await cp(workspace.absolutePath, tempWorkspace, {
+      recursive: true,
+      filter: (source) => {
+        const base = path.basename(source);
+        return base !== '.terraform' && base !== 'terraform.tfstate' && !base.endsWith('.tfstate');
+      },
+    });
+
+    const backendBlockPath = path.join(tempWorkspace, 'autoops.backend.tf');
+    const backendPath = path.join(tempWorkspace, 'autoops.backend.tfvars');
+    const tfvarsPath = path.join(tempWorkspace, 'autoops.plan.auto.tfvars.json');
+    await writeFile(backendBlockPath, 'terraform {\n  backend "s3" {}\n}\n', 'utf8');
+    await writeFile(
+      backendPath,
+      [
+        `bucket = ${JSON.stringify(stateBucket)}`,
+        `key = ${JSON.stringify(`autoops/${workspace.slug}/${environmentSlug}/terraform.tfstate`)}`,
+        `region = ${JSON.stringify(stateRegion)}`,
+        `dynamodb_table = ${JSON.stringify(stateLockTable)}`,
+        'encrypt = true',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      tfvarsPath,
+      JSON.stringify(
+        {
+          aws_region: process.env.AWS_REGION?.trim() || stateRegion,
+          environment: environmentSlug,
+          container_image: imageDigest ? `${imageUri}@${imageDigest}` : imageUri,
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    const init = await runTool(toolStatus.tool, ['init', '-input=false', '-no-color', `-backend-config=${backendPath}`], tempWorkspace);
+    const validate = await runTool(toolStatus.tool, ['validate', '-no-color'], tempWorkspace);
+    const plan = await runToolAllowExitCodes(
+      toolStatus.tool,
+      ['plan', '-input=false', '-no-color', '-lock=true', '-detailed-exitcode', '-out=autoops.tfplan'],
+      tempWorkspace,
+      [0, 2],
+    );
+    const safety = summarizeTerraformPlanSafety(`${init}\n${validate}\n${plan.output}`);
+    const planGeneratedAt = new Date().toISOString();
+
+    return {
+      action: 'ecs-plan',
+      operationId,
+      targetSlug: workspace.slug,
+      workspaceSlug: workspace.slug,
+      relativePath: workspace.relativePath,
+      environmentSlug,
+      imageUri,
+      imageDigest,
+      addCount: safety.addCount,
+      changeCount: safety.changeCount,
+      destroyCount: safety.destroyCount,
+      riskLevel: safety.riskLevel,
+      blockedReasons: safety.blockedReasons,
+      applyEligible: safety.applyEligible,
+      planGeneratedAt,
+      status: 'completed',
+      safeOutputSummary: safety.safeOutputSummary,
+      durationMs: Date.now() - startedAt,
+      completedAt: planGeneratedAt,
+    };
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
 function isProductionSlug(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   return normalized === 'production' || normalized === 'prod';
@@ -586,14 +704,7 @@ async function runTool(command: string, args: string[], cwd: string): Promise<st
       timeout: getInfrastructureTimeoutMs(),
       windowsHide: true,
       maxBuffer: getInfrastructureOutputLimit() * 4,
-      env: {
-        PATH: process.env.PATH,
-        HOME: process.env.HOME,
-        USERPROFILE: process.env.USERPROFILE,
-        TF_IN_AUTOMATION: '1',
-        CHECKPOINT_DISABLE: '1',
-        ANSIBLE_RETRY_FILES_ENABLED: 'false',
-      },
+      env: safeToolEnv(),
     });
     return `${stdout ?? ''}\n${stderr ?? ''}`;
   } catch (error) {
@@ -603,6 +714,50 @@ async function runTool(command: string, args: string[], cwd: string): Promise<st
     const message = error instanceof Error ? error.message : 'Infrastructure tool execution failed.';
     throw new Error(summarizeCommandOutput(`${message}\n${stdout}\n${stderr}`, 1_000));
   }
+}
+
+async function runToolAllowExitCodes(
+  command: string,
+  args: string[],
+  cwd: string,
+  allowedExitCodes: number[],
+): Promise<{ output: string; exitCode: number }> {
+  try {
+    const { stdout, stderr } = await execFileAsync(command, args, {
+      cwd,
+      timeout: getInfrastructureTimeoutMs(),
+      windowsHide: true,
+      maxBuffer: getInfrastructureOutputLimit() * 4,
+      env: safeToolEnv(),
+    });
+    return { output: `${stdout ?? ''}\n${stderr ?? ''}`, exitCode: 0 };
+  } catch (error) {
+    const record = toRecord(error);
+    const code = typeof record.code === 'number' ? record.code : -1;
+    const stdout = typeof record.stdout === 'string' ? record.stdout : '';
+    const stderr = typeof record.stderr === 'string' ? record.stderr : '';
+    if (allowedExitCodes.includes(code)) {
+      return { output: `${stdout}\n${stderr}`, exitCode: code };
+    }
+    const message = error instanceof Error ? error.message : 'Infrastructure tool execution failed.';
+    throw new Error(summarizeCommandOutput(`${message}\n${stdout}\n${stderr}`, 1_000));
+  }
+}
+
+function safeToolEnv(): NodeJS.ProcessEnv {
+  return {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    USERPROFILE: process.env.USERPROFILE,
+    TF_IN_AUTOMATION: '1',
+    CHECKPOINT_DISABLE: '1',
+    ANSIBLE_RETRY_FILES_ENABLED: 'false',
+    AWS_REGION: process.env.AWS_REGION,
+    AWS_DEFAULT_REGION: process.env.AWS_REGION,
+    AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
+    AWS_SESSION_TOKEN: process.env.AWS_SESSION_TOKEN,
+  };
 }
 
 async function runToolWithInput(command: string, args: string[], cwd: string, input: string): Promise<string> {

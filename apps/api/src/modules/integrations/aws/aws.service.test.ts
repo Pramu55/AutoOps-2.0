@@ -15,6 +15,8 @@ import {
 } from '@autoops/utils';
 import { operationService } from '../../operations/operation.service.js';
 import { OperationProvider, OperationType, OperationStatus } from '@autoops/types';
+import { awsTerraformEcsPlanRequestSchema } from '@autoops/types';
+import { prisma } from '@autoops/database';
 
 vi.mock('@autoops/utils', () => ({
   detectTerraformTool: vi.fn(),
@@ -39,6 +41,15 @@ vi.mock('../../operations/operation.service.js', () => {
   };
 });
 
+vi.mock('@autoops/database', () => ({
+  prisma: {
+    operation: {
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+    },
+  },
+}));
+
 describe('AwsService', () => {
   let awsService: AwsService;
   const orgId = 'org-1';
@@ -49,6 +60,10 @@ describe('AwsService', () => {
     awsService = new AwsService();
     process.env.AWS_ALLOWED_DEPLOYMENT_WORKSPACES = 'sample-ecs-app, another-app';
     process.env.AWS_DEPLOYMENT_APPLY_ENABLED = 'true';
+    process.env.AWS_REGION = 'ap-south-1';
+    process.env.AWS_TERRAFORM_STATE_BUCKET = 'autoops-state';
+    process.env.AWS_TERRAFORM_STATE_DYNAMODB_TABLE = 'autoops-locks';
+    process.env.AWS_TERRAFORM_STATE_REGION = 'ap-south-1';
     process.env.AWS_ECR_PUSH_ENABLED = 'true';
     process.env.AWS_ECR_PRODUCTION_PUSH_REQUIRES_APPROVAL = 'true';
     vi.mocked(listAllowedAwsEcrRepositories).mockReturnValue(['autoops-sample-app']);
@@ -103,7 +118,30 @@ describe('AwsService', () => {
   });
 
   describe('planDeployment', () => {
-    it('creates a TERRAFORM_PLAN operation for an allowed target', async () => {
+    it('requires PLAN confirmation and rejects arbitrary workspace/tfvars fields', () => {
+      expect(() => awsTerraformEcsPlanRequestSchema.parse({
+        targetSlug: 'sample-ecs-app',
+        environmentSlug: 'staging',
+        imageOperationId: '33333333-3333-4333-8333-333333333333',
+        confirmationToken: 'APPLY',
+      })).toThrow();
+      expect(() => awsTerraformEcsPlanRequestSchema.parse({
+        targetSlug: 'sample-ecs-app',
+        environmentSlug: 'staging',
+        imageOperationId: '33333333-3333-4333-8333-333333333333',
+        confirmationToken: 'PLAN',
+        workspacePath: '../other',
+      })).toThrow();
+      expect(() => awsTerraformEcsPlanRequestSchema.parse({
+        targetSlug: 'sample-ecs-app',
+        environmentSlug: 'staging',
+        imageOperationId: '33333333-3333-4333-8333-333333333333',
+        confirmationToken: 'PLAN',
+        tfvars: { adminPassword: 'secret' },
+      })).toThrow();
+    });
+
+    it('creates an AWS_TERRAFORM_ECS_PLAN operation for an allowed target and tenant-scoped pushed image', async () => {
       vi.mocked(detectTerraformTool).mockResolvedValue({
         status: 'CONNECTED',
         configured: true,
@@ -126,18 +164,38 @@ describe('AwsService', () => {
         id: 'op-1',
         status: OperationStatus.QUEUED,
         provider: OperationProvider.AWS,
-        operationType: OperationType.TERRAFORM_PLAN,
+        operationType: OperationType.AWS_TERRAFORM_ECS_PLAN,
+      } as any);
+      vi.mocked(prisma.operation.findFirst).mockResolvedValue({
+        id: '33333333-3333-4333-8333-333333333333',
+        input: {
+          targetSlug: 'sample-ecs-app',
+          environmentSlug: 'staging',
+          imageUri: '123456789012.dkr.ecr.ap-south-1.amazonaws.com/autoops-sample-app:staging-20260524120000',
+        },
+        result: {
+          imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
       } as any);
 
-      const res = await awsService.planDeployment(orgId, userId, 'sample-ecs-app');
+      const res = await awsService.planDeployment(orgId, userId, 'sample-ecs-app', {
+        targetSlug: 'sample-ecs-app',
+        environmentSlug: 'staging',
+        imageOperationId: '33333333-3333-4333-8333-333333333333',
+        confirmationToken: 'PLAN',
+      });
       expect(res.operationId).toBe('op-1');
       expect(operationService.createQueuedOperation).toHaveBeenCalledWith(
         expect.objectContaining({
+          organizationId: orgId,
           provider: OperationProvider.AWS,
-          operationType: OperationType.TERRAFORM_PLAN,
+          operationType: OperationType.AWS_TERRAFORM_ECS_PLAN,
+          confirmationToken: 'PLAN',
           input: expect.objectContaining({
-            action: 'plan',
+            action: 'ecs-plan',
             workspaceSlug: 'sample-ecs-app',
+            environmentSlug: 'staging',
+            imageOperationId: '33333333-3333-4333-8333-333333333333',
           }),
         }),
         expect.anything()
@@ -163,7 +221,50 @@ describe('AwsService', () => {
         { slug: 'not-allowed', displayName: 'Not Allowed', absolutePath: '/b', relativePath: 'b' },
       ]);
 
-      await expect(awsService.planDeployment(orgId, userId, 'not-allowed')).rejects.toThrow('is not an allowed AWS deployment workspace');
+      await expect(awsService.planDeployment(orgId, userId, 'not-allowed', {
+        targetSlug: 'not-allowed',
+        environmentSlug: 'staging',
+        imageOperationId: '33333333-3333-4333-8333-333333333333',
+        confirmationToken: 'PLAN',
+      })).rejects.toThrow('is not an allowed AWS deployment workspace');
+    });
+
+    it('blocks plan execution when remote state is missing', async () => {
+      process.env.AWS_TERRAFORM_STATE_BUCKET = '';
+      await expect(awsService.planDeployment(orgId, userId, 'sample-ecs-app', {
+        targetSlug: 'sample-ecs-app',
+        environmentSlug: 'staging',
+        imageOperationId: '33333333-3333-4333-8333-333333333333',
+        confirmationToken: 'PLAN',
+      })).rejects.toThrow('remote state is not fully configured');
+    });
+
+    it('rejects cross-org or missing pushed ECR image metadata', async () => {
+      vi.mocked(detectTerraformTool).mockResolvedValue({
+        status: 'CONNECTED',
+        configured: true,
+        tool: 'terraform',
+        version: '1.5.0',
+        checkedAt: new Date().toISOString(),
+        message: 'OK',
+      });
+      vi.mocked(getTerraformWorkspaceBySlug).mockResolvedValue({
+        slug: 'sample-ecs-app',
+        displayName: 'Sample',
+        absolutePath: '/a',
+        relativePath: 'a',
+      });
+      vi.mocked(listTerraformWorkspaces).mockResolvedValue([
+        { slug: 'sample-ecs-app', displayName: 'Sample', absolutePath: '/a', relativePath: 'a' },
+      ]);
+      vi.mocked(prisma.operation.findFirst).mockResolvedValue(null);
+
+      await expect(awsService.planDeployment(orgId, userId, 'sample-ecs-app', {
+        targetSlug: 'sample-ecs-app',
+        environmentSlug: 'staging',
+        imageOperationId: '33333333-3333-4333-8333-333333333333',
+        confirmationToken: 'PLAN',
+      })).rejects.toThrow('tenant-scoped ECR push');
     });
   });
 

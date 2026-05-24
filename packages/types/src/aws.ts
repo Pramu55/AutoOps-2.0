@@ -269,6 +269,54 @@ export interface AwsEcrImageMetadata {
   completedAt?: string | null;
 }
 
+export enum AwsTerraformPlanRiskLevel {
+  LOW = 'LOW',
+  MEDIUM = 'MEDIUM',
+  HIGH = 'HIGH',
+}
+
+export enum AwsTerraformPlanStatus {
+  READY = 'READY',
+  NOT_CONFIGURED = 'NOT_CONFIGURED',
+  BLOCKED = 'BLOCKED',
+  ERROR = 'ERROR',
+}
+
+export interface AwsTerraformPlanSummary {
+  operationId: string;
+  targetSlug: string;
+  environmentSlug: string;
+  imageUri: string | null;
+  imageDigest: string | null;
+  addCount: number;
+  changeCount: number;
+  destroyCount: number;
+  riskLevel: AwsTerraformPlanRiskLevel;
+  blockedReasons: string[];
+  applyEligible: boolean;
+  planGeneratedAt: string;
+  safeOutputSummary?: string;
+}
+
+export interface AwsTerraformPlanReadinessResponse {
+  status: AwsTerraformPlanStatus;
+  awsConfigured: boolean;
+  regionConfigured: boolean;
+  remoteStateBucketConfigured: boolean;
+  remoteStateLockTableConfigured: boolean;
+  remoteStateRegionConfigured: boolean;
+  allowedWorkspaceConfigured: boolean;
+  workspaceExists: boolean;
+  terraformToolAvailable: boolean;
+  safeImageAvailable: boolean;
+  targetSlug: string | null;
+  environmentSlug: string | null;
+  latestImageOperationId: string | null;
+  missing: string[];
+  blockedReasons: string[];
+  checkedAt: string;
+}
+
 export interface AwsCloudWatchAlarm {
   alarmName: string;
   stateValue: string | null;
@@ -289,6 +337,19 @@ export interface AwsListResponse<T> {
 
 export interface AwsDeploymentPlanRequest {
   confirmationToken: string;
+}
+
+export const awsTerraformEcsPlanRequestSchema = z.object({
+  targetSlug: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]{0,79}$/),
+  environmentSlug: z.string().min(2).max(32).regex(/^[a-z][a-z0-9-]+$/),
+  imageOperationId: z.string().uuid(),
+  confirmationToken: z.literal('PLAN'),
+}).strict();
+
+export type AwsTerraformEcsPlanRequest = z.infer<typeof awsTerraformEcsPlanRequestSchema>;
+
+export interface AwsTerraformEcsPlanResponse extends AwsDeploymentOperationResponse {
+  planSummary?: AwsTerraformPlanSummary | null;
 }
 
 export const awsEcrImageBuildRequestSchema = z.object({

@@ -14,8 +14,10 @@ import type {
   AwsEcrImageBuildRequest,
   AwsEcrImagePushRequest,
   AwsEcrImageMetadata,
+  AwsTerraformPlanReadinessResponse,
+  AwsTerraformEcsPlanRequest,
 } from '@autoops/types';
-import { awsEcrImageBuildRequestSchema, awsEcrImagePushRequestSchema } from '@autoops/types';
+import { awsEcrImageBuildRequestSchema, awsEcrImagePushRequestSchema, awsTerraformEcsPlanRequestSchema } from '@autoops/types';
 import { awsService } from './aws.service.js';
 import { requireProviderInventoryAccess } from '../integration-access.service.js';
 
@@ -55,6 +57,14 @@ export class AwsController {
     requireProviderInventoryAccess(req.auth);
     const { targetSlug } = req.params;
     res.json({ data: await awsService.getWorkspaceReadiness(targetSlug!) });
+  };
+
+  terraformPlanReadiness = async (req: Request, res: Response<{ data: AwsTerraformPlanReadinessResponse }>): Promise<void> => {
+    requireProviderInventoryAccess(req.auth);
+    const auth = req.auth as { orgId: string; userId: string };
+    const targetSlug = typeof req.query.targetSlug === 'string' ? req.query.targetSlug : undefined;
+    const environmentSlug = typeof req.query.environmentSlug === 'string' ? req.query.environmentSlug : undefined;
+    res.json({ data: await awsService.getTerraformPlanReadiness(auth.orgId, targetSlug, environmentSlug) });
   };
 
   summary = async (req: Request, res: Response<{ data: AwsSummary }>): Promise<void> => {
@@ -121,13 +131,9 @@ export class AwsController {
 
   planDeployment = async (req: Request, res: Response): Promise<void> => {
     const { targetSlug } = req.params;
-    const body = req.body as AwsDeploymentPlanRequest;
-    if (body.confirmationToken !== 'PLAN') {
-      res.status(400).json({ error: { code: 'INVALID_INPUT', message: 'Confirmation token "PLAN" is required.' } });
-      return;
-    }
+    const body = awsTerraformEcsPlanRequestSchema.parse({ ...req.body, targetSlug }) as AwsTerraformEcsPlanRequest;
     const auth = req.auth as { orgId: string; userId: string; };
-    const result = await awsService.planDeployment(auth.orgId, auth.userId, targetSlug!);
+    const result = await awsService.planDeployment(auth.orgId, auth.userId, targetSlug!, body);
     res.json({ data: result });
   };
 

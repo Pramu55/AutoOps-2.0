@@ -27,6 +27,7 @@ Real DevOps work is not only clicking buttons. Teams need safe execution, clear 
 - DevOps tools readiness for Helm, Kustomize, kubectl, Docker CLI, Terraform/OpenTofu, Ansible, Node, and pnpm.
 - Cloud Provider Readiness Center for AWS/Azure/GCP without unsafe direct cloud writes.
 - AWS ECR image build and push workflows using allowlisted build targets and repositories.
+- AWS ECS Terraform/OpenTofu plan-only workflow using remote state and tenant-scoped pushed ECR image metadata.
 - Confirmation tokens for all controlled operations.
 - Policy engine for approval-required operations.
 - RBAC with requester/approver separation.
@@ -102,6 +103,8 @@ AutoOps intentionally avoids unsafe generic automation. The backend enforces:
 AutoOps does not expose provider secrets, kubeconfig content, tokens, raw operation metadata, Kubernetes Secret data, Docker shell/exec controls, Kubernetes shell/exec/apply/delete controls, or ungoverned Jenkins mutations.
 
 AWS ECR image build/push is limited to configured build targets and repositories. Build uses `BUILD` confirmation, push uses `PUSH` confirmation, and production/prod pushes require approval before worker execution.
+
+AWS ECS Terraform/OpenTofu planning requires remote state configuration and a successful tenant-scoped ECR push operation. It runs plan only, stores safe add/change/destroy evidence, and never exposes raw state, backend config, credentials, or raw plan output.
 
 Tenant-owned resources are scoped by organization. API handlers use authenticated organization membership, not frontend-supplied `organizationId`, and local demo includes an isolated tenant account for confidentiality checks.
 
@@ -188,6 +191,7 @@ Start with [Documentation Home](./docs/README.md).
 - [CI and Release Gates](./docs/CI_AND_RELEASE_GATES.md)
 - [Controlled Operations Overview](./docs/CONTROLLED_OPERATIONS_OVERVIEW.md)
 - [Infrastructure Automation Center](./docs/INFRASTRUCTURE_AUTOMATION_CENTER.md)
+- [AWS Terraform ECS Plan](./docs/AWS_TERRAFORM_ECS_PLAN.md)
 - [Final Release Checklist](./docs/FINAL_RELEASE_CHECKLIST.md)
 - [Company Handoff Package](./docs/COMPANY_HANDOFF_PACKAGE.md)
 - [Final Evaluator Report](./docs/FINAL_EVALUATOR_REPORT.md)
