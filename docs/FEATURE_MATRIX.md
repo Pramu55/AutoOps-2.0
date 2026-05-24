@@ -39,6 +39,8 @@
 | AWS ECR | ECR image push | Complete | Yes when configured | PUSH confirmation + production approval gate | Push disabled by default; no credential exposure |
 | AWS Terraform ECS | Plan-only ECS review | Complete | Yes when configured | PLAN confirmation + remote state + tenant-scoped pushed image metadata | No apply, destroy, arbitrary workspace, arbitrary tfvars, or raw plan output exposure |
 | AWS Terraform ECS | Approval-gated ECS apply | Complete | Yes when configured | APPLY confirmation + approval required + plan safety validation | No apply runs without approval; no destroy; no secrets exposed; ECS verification after apply |
+| AWS Guardrails | Cost estimate and blast-radius analysis | Complete | Yes from safe plan metadata | Account/region allowlists + local conservative estimate + mutation block | No Pricing API; estimated monthly cost is not a billing guarantee |
+| AWS Guardrails | Apply/promotion/rollback enforcement | Complete | Yes | Guardrails checked at plan time and immediately before mutation | `BLOCKED` guardrails cannot be overridden by approval |
 | AWS ECS Releases | Release history & timeline | Complete | Yes | Tenant-scoped by organizationId | No fake demo releases; empty history for new orgs |
 | AWS ECS Releases | Release promotion | Complete | Yes | PROMOTE confirmation + production approval gate | Promotion reuses plan and apply safety gates; no arbitrary image URIs |
 | AWS ECS Releases | Governed rollback | Complete | Yes | ROLLBACK confirmation + always requires approval | Rollback blocked if destroyCount > 0 or applyEligible=false; no direct mutations |

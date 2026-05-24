@@ -47,8 +47,13 @@ AutoOps stores only safe evidence:
 - apply eligibility
 - generated timestamp
 - limited redacted output summary
+- guardrail status, risk, estimated monthly cost, warnings, and blocked reasons
 
 If a plan includes any destroy actions, `riskLevel` is `HIGH`, `applyEligible` is `false`, and the blocked reasons include destroy detection.
+
+## Guardrail Evaluation
+
+Plan operations evaluate AWS cost and blast-radius guardrails using safe plan metadata and redacted plan output. The evaluation checks account and region allowlists, add/change/destroy counts, Fargate sizing, desired count, public load balancer changes, and conservative estimated monthly cost. No AWS Pricing API, tfstate, backend config, credentials, or raw provider output is exposed.
 
 ## API
 

@@ -22,8 +22,11 @@ import type {
   AwsTerraformEcsPlanRequest,
   AwsTerraformPlanReadinessResponse,
   AwsTerraformApplyReadinessResponse,
+  AwsGuardrailReadinessResponse,
+  AwsGuardrailEvaluationResponse,
+  AwsGuardrailEvaluationSummary,
 } from '@autoops/types';
-import { ProviderConnectionStatus, AwsIntegrationStatus, AwsReadinessStatus, AwsDiagnosticStatus, AwsDeploymentTargetType, AwsTerraformPlanStatus } from '@autoops/types';
+import { ProviderConnectionStatus, AwsIntegrationStatus, AwsReadinessStatus, AwsDiagnosticStatus, AwsDeploymentTargetType, AwsTerraformPlanStatus, AwsGuardrailStatus } from '@autoops/types';
 import {
   DescribeAlarmsCommand,
   DescribeClustersCommand,
@@ -79,6 +82,8 @@ import {
   isSafeEcrImageTag,
   createEcrImageTag,
   isProductionEnvironment,
+  evaluateAwsGuardrails,
+  getAwsGuardrailConfigStatus,
 } from '@autoops/utils';
 import { operationService } from '../../operations/operation.service.js';
 import { operationAuthorizationService } from '../../operations/operation-authorization.service.js';
@@ -493,6 +498,54 @@ export class AwsService {
     };
   }
 
+  async getGuardrailReadiness(): Promise<AwsGuardrailReadinessResponse> {
+    const checkedAt = new Date().toISOString();
+    const awsStatus = await this.getStatus();
+    const config = getAwsGuardrailConfigStatus();
+    const status =
+      !awsStatus.configured
+        ? AwsGuardrailStatus.NOT_CONFIGURED
+        : config.missing.length > 0
+          ? AwsGuardrailStatus.BLOCKED
+          : AwsGuardrailStatus.PASSED;
+
+    return {
+      status,
+      config,
+      checkedAt,
+    };
+  }
+
+  async listGuardrailEvaluations(
+    organizationId: string,
+    operationId?: string,
+  ): Promise<AwsGuardrailEvaluationResponse> {
+    const operations = await prisma.operation.findMany({
+      where: {
+        organizationId,
+        provider: OperationProvider.AWS,
+        ...(operationId ? { id: operationId } : {}),
+        operationType: {
+          in: [
+            OperationType.AWS_TERRAFORM_ECS_PLAN,
+            OperationType.AWS_TERRAFORM_ECS_APPLY,
+            OperationType.AWS_ECS_RELEASE_PROMOTE,
+            OperationType.AWS_ECS_RELEASE_ROLLBACK,
+          ],
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: operationId ? 1 : 50,
+    });
+
+    return {
+      items: operations
+        .map((operation) => this._guardrailFromOperation(operation))
+        .filter((item): item is AwsGuardrailEvaluationSummary => item !== null),
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
   async getTerraformApplyReadiness(
     organizationId: string,
     targetSlug?: string,
@@ -525,6 +578,10 @@ export class AwsService {
     const applyEnabled = process.env.AWS_DEPLOYMENT_APPLY_ENABLED === 'true';
     if (!applyEnabled) {
       blockedReasons.push('AWS deployment apply is disabled in this environment.');
+    }
+    const guardrailReadiness = await this.getGuardrailReadiness();
+    if (guardrailReadiness.status === AwsGuardrailStatus.BLOCKED) {
+      blockedReasons.push('AWS cost and blast-radius guardrails are blocked.');
     }
 
     const latestPlan = target
@@ -573,6 +630,8 @@ export class AwsService {
       destroyCount = typeof result.destroyCount === 'number' ? result.destroyCount : 0;
       riskLevel = typeof result.riskLevel === 'string' ? result.riskLevel : 'LOW';
       applyEligible = result.applyEligible === true;
+      const guardrails = this._record(result.guardrails);
+      const guardrailStatus = this._string(guardrails.status);
 
       if (destroyCount > 0) {
         blockedReasons.push('Terraform plan includes destroy actions. Apply is blocked.');
@@ -580,8 +639,11 @@ export class AwsService {
       if (!applyEligible) {
         blockedReasons.push('The latest plan is not eligible for apply.');
       }
-      if (riskLevel === 'HIGH') {
-        blockedReasons.push('Apply is blocked due to HIGH risk plan.');
+      if (riskLevel === 'HIGH' || riskLevel === 'BLOCKED') {
+        blockedReasons.push('Apply is blocked due to high-risk or blocked plan.');
+      }
+      if (guardrailStatus === AwsGuardrailStatus.BLOCKED) {
+        blockedReasons.push('Apply is blocked by AWS cost and blast-radius guardrails.');
       }
     } else {
       blockedReasons.push('No successful tenant-scoped ECS plan is available for this target/environment.');
@@ -1012,6 +1074,18 @@ export class AwsService {
       throw new BadRequestError('Selected ECR image metadata does not include a safe image URI.');
     }
     const imageDigest = this._string(imageResult.imageDigest);
+    const identity = await this.getIdentity();
+    const guardrailsPreflight = evaluateAwsGuardrails({
+      operationId: null,
+      targetSlug: workspace.slug,
+      environmentSlug: input.environmentSlug,
+      accountId: this._string(identity.accountId),
+      region: this._string(identity.region) ?? this._string(process.env.AWS_REGION),
+      addCount: 0,
+      changeCount: 0,
+      destroyCount: 0,
+      planOutput: null,
+    });
 
     const operation = await operationService.createQueuedOperation(
       {
@@ -1033,6 +1107,7 @@ export class AwsService {
           imageUri,
           imageDigest,
           remoteStateConfigured: true,
+          guardrailsPreflight,
           applyEligible: false,
           commandSummary: `${toolStatus.tool} plan (AWS ECS, remote state)`,
           requestedAt: new Date().toISOString(),
@@ -1058,6 +1133,7 @@ export class AwsService {
     if (process.env.AWS_DEPLOYMENT_APPLY_ENABLED !== 'true') {
       throw new BadRequestError('AWS deployment apply is disabled in this environment.');
     }
+    await this._assertGuardrailMutationReady();
 
     const state = this._remoteStateConfig();
     if (!state.bucket || !state.lockTable || !state.region) {
@@ -1109,6 +1185,8 @@ export class AwsService {
     const destroyCount = typeof latestPlanResult.destroyCount === 'number' ? latestPlanResult.destroyCount : 0;
     const riskLevel = typeof latestPlanResult.riskLevel === 'string' ? latestPlanResult.riskLevel : 'LOW';
     const applyEligible = latestPlanResult.applyEligible === true;
+    const guardrails = this._record(latestPlanResult.guardrails);
+    const guardrailStatus = this._string(guardrails.status);
 
     if (destroyCount > 0) {
       throw new BadRequestError('Terraform plan includes destroy actions. Apply is blocked.');
@@ -1116,8 +1194,11 @@ export class AwsService {
     if (!applyEligible) {
       throw new BadRequestError('The latest plan is not eligible for apply.');
     }
-    if (riskLevel === 'HIGH') {
-      throw new BadRequestError('Apply is blocked due to HIGH risk plan.');
+    if (riskLevel === 'HIGH' || riskLevel === 'BLOCKED') {
+      throw new BadRequestError('Apply is blocked due to high-risk or blocked plan.');
+    }
+    if (guardrailStatus === AwsGuardrailStatus.BLOCKED) {
+      throw new BadRequestError('Apply is blocked by AWS cost and blast-radius guardrails.');
     }
 
     const planEnvironmentSlug = this._string(latestPlanInput.environmentSlug);
@@ -1147,6 +1228,7 @@ export class AwsService {
           changeCount,
           destroyCount: 0,
           applyEligible: true,
+          guardrails,
           commandSummary: `${toolStatus.tool} apply (AWS ECS)`,
           requestedAt: new Date().toISOString(),
         } as Prisma.InputJsonObject,
@@ -1183,6 +1265,29 @@ export class AwsService {
 
   async listCloudWatchAlarms(): Promise<AwsListResponse<AwsCloudWatchAlarm>> {
     return this._listResponse((clients) => this._loadCloudWatchAlarms(clients));
+  }
+
+  private async _assertGuardrailMutationReady(): Promise<void> {
+    const readiness = await this.getGuardrailReadiness();
+    if (readiness.status === AwsGuardrailStatus.BLOCKED) {
+      throw new BadRequestError(
+        `AWS guardrails are blocked: ${readiness.config.missing.join(', ') || 'configuration incomplete'}`,
+      );
+    }
+  }
+
+  private _guardrailFromOperation(operation: { id: string; input: unknown; result: unknown }): AwsGuardrailEvaluationSummary | null {
+    const input = this._record(operation.input);
+    const result = this._record(operation.result);
+    const resultGuardrails = this._record(result.guardrails);
+    const inputGuardrails = this._record(input.guardrailsPreflight);
+    const guardrails = Object.keys(resultGuardrails).length > 0 ? resultGuardrails : inputGuardrails;
+    if (Object.keys(guardrails).length === 0) return null;
+
+    return {
+      ...(guardrails as unknown as AwsGuardrailEvaluationSummary),
+      operationId: operation.id,
+    };
   }
 
   private _remoteStateConfig(): { bucket: string | null; lockTable: string | null; region: string | null } {
@@ -1585,6 +1690,7 @@ export class AwsService {
     if (!triggerDecision.allowed) {
       throw new UnauthorizedError(triggerDecision.reason ?? 'You do not have permission to trigger promotion.');
     }
+    await this._assertGuardrailMutationReady();
 
     // Create operations record directly via operationService
     const operation = await operationService.createQueuedOperation({
@@ -1602,6 +1708,16 @@ export class AwsService {
         environmentSlug: body.targetEnvironmentSlug,
         imageUri: sourceRelease.imageUri,
         imageDigest: sourceRelease.imageDigest,
+        guardrailsPreflight: evaluateAwsGuardrails({
+          operationId: null,
+          targetSlug: body.targetSlug,
+          environmentSlug: body.targetEnvironmentSlug,
+          accountId: this._string(process.env.AWS_ACCOUNT_ID),
+          region: this._string(process.env.AWS_REGION),
+          addCount: 0,
+          changeCount: 0,
+          destroyCount: 0,
+        }),
         commandSummary: `AWS ECS promote from ${sourceRelease.environmentSlug} to ${body.targetEnvironmentSlug}`,
         requestedAt: new Date().toISOString(),
       },
@@ -1657,6 +1773,7 @@ export class AwsService {
     if (!triggerDecision.allowed) {
       throw new UnauthorizedError(triggerDecision.reason ?? 'You do not have permission to trigger rollback.');
     }
+    await this._assertGuardrailMutationReady();
 
     const operation = await operationService.createQueuedOperation({
       organizationId,
@@ -1674,6 +1791,16 @@ export class AwsService {
         rolledBackFromReleaseId: activeRelease.id,
         imageUri: targetRelease.imageUri,
         imageDigest: targetRelease.imageDigest,
+        guardrailsPreflight: evaluateAwsGuardrails({
+          operationId: null,
+          targetSlug: targetRelease.targetSlug,
+          environmentSlug: targetRelease.environmentSlug,
+          accountId: this._string(process.env.AWS_ACCOUNT_ID),
+          region: this._string(process.env.AWS_REGION),
+          addCount: 0,
+          changeCount: 0,
+          destroyCount: 0,
+        }),
         commandSummary: `AWS ECS rollback to version ${targetRelease.releaseVersion}`,
         requestedAt: new Date().toISOString(),
       },

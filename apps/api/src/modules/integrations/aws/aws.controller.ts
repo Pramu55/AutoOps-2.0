@@ -24,6 +24,8 @@ import type {
   AwsReleasePromoteResponse,
   AwsReleaseRollbackRequest,
   AwsReleaseRollbackResponse,
+  AwsGuardrailReadinessResponse,
+  AwsGuardrailEvaluationResponse,
 } from '@autoops/types';
 import {
   awsEcrImageBuildRequestSchema,
@@ -146,6 +148,22 @@ export class AwsController {
     const targetSlug = typeof req.query.targetSlug === 'string' ? req.query.targetSlug : undefined;
     const environmentSlug = typeof req.query.environmentSlug === 'string' ? req.query.environmentSlug : undefined;
     res.json({ data: await awsService.getTerraformApplyReadiness(auth.orgId, targetSlug, environmentSlug) });
+  };
+
+  guardrailReadiness = async (req: Request, res: Response<{ data: AwsGuardrailReadinessResponse }>): Promise<void> => {
+    await requireProviderInventoryAccess(req.auth);
+    res.json({ data: await awsService.getGuardrailReadiness() });
+  };
+
+  guardrailEvaluations = async (req: Request, res: Response<{ data: AwsGuardrailEvaluationResponse }>): Promise<void> => {
+    const auth = req.auth as { orgId: string; userId: string };
+    res.json({ data: await awsService.listGuardrailEvaluations(auth.orgId) });
+  };
+
+  guardrailEvaluation = async (req: Request, res: Response<{ data: AwsGuardrailEvaluationResponse }>): Promise<void> => {
+    const auth = req.auth as { orgId: string; userId: string };
+    const { operationId } = req.params;
+    res.json({ data: await awsService.listGuardrailEvaluations(auth.orgId, operationId) });
   };
 
   deployments = async (req: Request, res: Response): Promise<void> => {

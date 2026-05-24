@@ -156,6 +156,17 @@ Authorization:
 - All execution must happen inside a temporary isolated workspace on the worker node.
 - AWS credentials, tfstate, raw backend configs, and raw Terraform outputs must never be exposed or stored in operation logs or results.
 
+## AWS Cost and Blast-Radius Guardrails
+
+- `AWS_ALLOWED_ACCOUNT_IDS` and `AWS_ALLOWED_REGIONS` must be configured before AWS mutation paths execute.
+- Missing account or region allowlists must block apply, promotion, and rollback.
+- Guardrails must be evaluated when ECS plans are generated and immediately before apply, promotion, or rollback execution.
+- Approval must not override `BLOCKED` guardrails.
+- Public load balancer changes are denied by default with `AWS_BLOCK_PUBLIC_LOAD_BALANCER_BY_DEFAULT=true` and `AWS_ALLOW_PUBLIC_LOAD_BALANCER=false`.
+- Destroy actions, disallowed accounts, disallowed regions, excessive add/change counts, oversized Fargate CPU/memory, excessive desired count, and estimated monthly cost above the configured max must block mutation.
+- Cost values are conservative estimated monthly cost only, not a billing guarantee.
+- No AWS Pricing API, tfstate, backend config, credentials, or raw provider output is required or exposed by tests.
+
 ## Incidents and Runbooks
 
 - Verify failed operations create incidents.

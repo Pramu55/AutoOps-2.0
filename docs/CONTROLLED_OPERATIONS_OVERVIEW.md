@@ -21,6 +21,7 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 | AWS Terraform ECS | Apply ECS deployment from approved plan | APPLY | HIGH | Required |
 | AWS ECS Releases | Promote staging release to production | PROMOTE | HIGH | Required for production/prod |
 | AWS ECS Releases | Rollback active release to previous version | ROLLBACK | HIGH | Required (Always) |
+| AWS Guardrails | Cost/blast-radius/account/region evaluation | Automatic | LOW to BLOCKED | N/A |
 
 ## Safety Rules
 
@@ -33,6 +34,8 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Docker exec, shell, delete/remove, image push/delete, volume delete, and network delete are not exposed.
 - Kubernetes exec, shell, port-forward, Secret access, arbitrary apply/patch, and delete actions are not exposed.
 - Infrastructure automation never accepts arbitrary command strings or arbitrary paths. Terraform/OpenTofu and Ansible operations are limited to allowlisted workspaces/playbooks and fixed worker command definitions.
+- AWS ECS plan/apply/promotion/rollback paths run cost and blast-radius guardrails. `BLOCKED` guardrails stop mutation even after approval.
+- AWS guardrail evidence stores only safe metadata: estimated monthly cost, plan counts, risk, warnings, blocked reasons, and evaluated timestamp. It never stores tfstate, backend config, credentials, or raw provider output.
 - AWS ECR image build/push never accepts arbitrary Dockerfile paths, build contexts, tags, repositories, or shell arguments. Build and push are separate worker-executed operations.
 - AWS ECS Terraform/OpenTofu planning requires remote state configuration, an allowlisted workspace, and tenant-scoped ECR push metadata. It runs `init`, `validate`, and `plan` only; apply and destroy are not executed.
 - AWS ECS Terraform/OpenTofu apply is gated by approval, requires `AWS_DEPLOYMENT_APPLY_ENABLED=true`, gates execution on a fresh and matching plan with zero destroys, and runs read-only health checks on the ECS deployment post-apply. Destroy actions are blocked.
