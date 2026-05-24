@@ -15,6 +15,10 @@ import type {
   AwsWorkspaceReadinessResponse,
   AwsDeploymentTarget,
   AwsPermissionDiagnostic,
+  AwsEcrReadinessResponse,
+  AwsEcrImageBuildRequest,
+  AwsEcrImagePushRequest,
+  AwsEcrImageMetadata,
 } from '@autoops/types';
 import { ProviderConnectionStatus, AwsIntegrationStatus, AwsReadinessStatus, AwsDiagnosticStatus, AwsDeploymentTargetType } from '@autoops/types';
 import {
@@ -22,6 +26,7 @@ import {
   DescribeClustersCommand,
   DescribeInstancesCommand,
   DescribeRepositoriesCommand,
+  GetLifecyclePolicyCommand,
   DescribeServicesCommand,
   GetCallerIdentityCommand,
   ListClustersCommand,
@@ -44,9 +49,22 @@ import {
 import { prisma, type Prisma } from '@autoops/database';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { OperationProvider, OperationType, type AwsDeploymentOperationResponse, type AwsDeploymentSummary } from '@autoops/types';
-import { listTerraformWorkspaces, getTerraformWorkspaceBySlug, detectTerraformTool } from '@autoops/utils';
+import { OperationProvider, OperationStatus, OperationType, type AwsDeploymentOperationResponse, type AwsDeploymentSummary } from '@autoops/types';
+import {
+  listTerraformWorkspaces,
+  getTerraformWorkspaceBySlug,
+  detectTerraformTool,
+  listAwsEcrBuildTargets,
+  listAllowedAwsEcrRepositories,
+  getAwsEcrBuildTargetBySlug,
+  isSafeEcrEnvironmentSlug,
+  isAllowedAwsEcrRepository,
+  isSafeEcrImageTag,
+  createEcrImageTag,
+  isProductionEnvironment,
+} from '@autoops/utils';
 import { operationService } from '../../operations/operation.service.js';
+import { BadRequestError } from '@autoops/utils';
 
 export class AwsService {
   async getStatus(): Promise<AwsStatusResponse> {
@@ -519,6 +537,235 @@ export class AwsService {
     });
   }
 
+  async getEcrReadiness(): Promise<AwsEcrReadinessResponse> {
+    const checkedAt = new Date().toISOString();
+    const status = await this.getStatus();
+    const allowedRepositories = listAllowedAwsEcrRepositories();
+    const buildTargets = listAwsEcrBuildTargets().map((target) => ({
+      targetSlug: target.targetSlug,
+      displayName: target.displayName,
+      contextPath: target.contextPath,
+      dockerfilePath: target.dockerfilePath,
+      defaultRepository: target.defaultRepository,
+      allowedEnvironments: target.allowedEnvironments,
+      allowedPlatforms: target.allowedPlatforms,
+    }));
+    const missing: string[] = [];
+
+    if (!process.env.AWS_REGION) missing.push('AWS_REGION');
+    if (!process.env.AWS_ACCESS_KEY_ID) missing.push('AWS_ACCESS_KEY_ID');
+    if (!process.env.AWS_SECRET_ACCESS_KEY) missing.push('AWS_SECRET_ACCESS_KEY');
+    if (allowedRepositories.length === 0) missing.push('AWS_ECR_ALLOWED_REPOSITORIES');
+    if (buildTargets.length === 0) missing.push('AWS_ECR_ALLOWED_BUILD_TARGETS');
+
+    const response: AwsEcrReadinessResponse = {
+      status: AwsReadinessStatus.NOT_CONFIGURED,
+      integrationConfigured: status.configured,
+      regionConfigured: Boolean(status.region),
+      pushEnabled: process.env.AWS_ECR_PUSH_ENABLED === 'true',
+      productionPushRequiresApproval: process.env.AWS_ECR_PRODUCTION_PUSH_REQUIRES_APPROVAL !== 'false',
+      allowedRepositoriesConfigured: allowedRepositories.length > 0,
+      allowedBuildTargetsConfigured: buildTargets.length > 0,
+      repositories: allowedRepositories.map((repositoryName) => ({
+        repositoryName,
+        repositoryUri: null,
+        exists: null,
+        scanOnPush: null,
+        encryptionType: null,
+        lifecyclePolicyConfigured: null,
+      })),
+      buildTargets,
+      missing,
+      checkedAt,
+    };
+
+    if (!status.configured || allowedRepositories.length === 0 || buildTargets.length === 0) {
+      response.status = missing.length > 0 ? AwsReadinessStatus.NOT_CONFIGURED : AwsReadinessStatus.PARTIAL;
+      return response;
+    }
+
+    const clients = createAwsClients();
+    if (!clients) return response;
+
+    try {
+      const repositories = await this._loadEcrRepositories(clients);
+      response.repositories = await Promise.all(
+        allowedRepositories.map(async (repositoryName) => {
+          const repository = repositories.find((item) => item.repositoryName === repositoryName);
+          const lifecyclePolicyConfigured = repository
+            ? await this._hasEcrLifecyclePolicy(clients, repositoryName)
+            : false;
+          return {
+            repositoryName,
+            repositoryUri: repository?.repositoryUri ?? null,
+            exists: Boolean(repository),
+            scanOnPush: repository?.scanOnPush ?? null,
+            encryptionType: repository?.encryptionType ?? null,
+            lifecyclePolicyConfigured,
+          };
+        }),
+      );
+      response.status = response.repositories.every((item) => item.exists) ? AwsReadinessStatus.READY : AwsReadinessStatus.PARTIAL;
+      return response;
+    } catch {
+      return {
+        ...response,
+        status: AwsReadinessStatus.ERROR,
+      };
+    }
+  }
+
+  async listEcrImages(organizationId: string): Promise<AwsListResponse<AwsEcrImageMetadata>> {
+    return this._listResponse(async () => {
+      const operations = await prisma.operation.findMany({
+        where: {
+          organizationId,
+          provider: OperationProvider.AWS,
+          operationType: { in: [OperationType.AWS_ECR_IMAGE_BUILD, OperationType.AWS_ECR_IMAGE_PUSH] },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      });
+
+      return operations.map((operation) => {
+        const input = this._record(operation.input);
+        const result = this._record(operation.result);
+        return {
+          operationId: operation.id,
+          targetSlug: this._string(input.targetSlug) ?? 'unknown',
+          repositoryName: this._string(input.repositoryName) ?? 'unknown',
+          repositoryUri: this._string(input.repositoryUri),
+          imageTag: this._string(input.imageTag) ?? 'unknown',
+          imageUri: this._string(input.imageUri) ?? this._string(result.imageUri),
+          imageDigest: this._string(result.imageDigest),
+          environmentSlug: this._string(input.environmentSlug) ?? 'unknown',
+          status: operation.status,
+          action: operation.operationType === OperationType.AWS_ECR_IMAGE_PUSH ? 'push' : 'build',
+          requestedAt: operation.createdAt.toISOString(),
+          completedAt: operation.updatedAt.toISOString(),
+        };
+      });
+    });
+  }
+
+  async buildEcrImage(
+    organizationId: string,
+    userId: string,
+    input: AwsEcrImageBuildRequest,
+  ): Promise<AwsDeploymentOperationResponse> {
+    const target = this._requireEcrBuildTarget(input.targetSlug);
+    if (!target.allowedEnvironments.includes(input.environmentSlug) || !isSafeEcrEnvironmentSlug(input.environmentSlug)) {
+      throw new BadRequestError('Environment is not allowlisted for this ECR build target.');
+    }
+    if (input.platform && !(target.allowedPlatforms ?? []).includes(input.platform)) {
+      throw new BadRequestError('Platform is not allowlisted for this ECR build target.');
+    }
+
+    const repository = await this._requireAllowedEcrRepository(target.defaultRepository);
+    const imageTag = createEcrImageTag({ environmentSlug: input.environmentSlug });
+    const imageUri = repository.repositoryUri ? `${repository.repositoryUri}:${imageTag}` : `${target.defaultRepository}:${imageTag}`;
+
+    const operation = await operationService.createQueuedOperation(
+      {
+        organizationId,
+        userId,
+        provider: OperationProvider.AWS,
+        operationType: OperationType.AWS_ECR_IMAGE_BUILD,
+        confirmationToken: 'BUILD',
+        idempotencyKey: `aws-ecr-build-${target.targetSlug}-${input.environmentSlug}-${imageTag}`,
+        input: {
+          action: 'build',
+          targetSlug: target.targetSlug,
+          displayName: target.displayName,
+          contextPath: target.contextPath,
+          dockerfilePath: target.dockerfilePath,
+          repositoryName: target.defaultRepository,
+          repositoryUri: repository.repositoryUri,
+          imageTag,
+          imageUri,
+          environmentSlug: input.environmentSlug,
+          platform: input.platform ?? null,
+          commandSummary: `docker build ${target.targetSlug}`,
+          requestedAt: new Date().toISOString(),
+        } as Prisma.InputJsonObject,
+      },
+      {},
+    );
+
+    return { operationId: operation.id, status: operation.status, provider: operation.provider, type: operation.operationType };
+  }
+
+  async pushEcrImage(
+    organizationId: string,
+    userId: string,
+    input: AwsEcrImagePushRequest,
+  ): Promise<AwsDeploymentOperationResponse> {
+    const target = this._requireEcrBuildTarget(input.targetSlug);
+    if (!target.allowedEnvironments.includes(input.environmentSlug) || !isSafeEcrEnvironmentSlug(input.environmentSlug)) {
+      throw new BadRequestError('Environment is not allowlisted for this ECR build target.');
+    }
+    if (!isAllowedAwsEcrRepository(input.repositoryName) || input.repositoryName !== target.defaultRepository) {
+      throw new BadRequestError('ECR repository is not allowlisted for this build target.');
+    }
+    if (!isSafeEcrImageTag(input.imageTag) || !input.imageTag.startsWith(`${input.environmentSlug}-`)) {
+      throw new BadRequestError('Image tag is not a safe AutoOps-generated ECR tag.');
+    }
+    if (process.env.AWS_ECR_PUSH_ENABLED !== 'true') {
+      throw new BadRequestError('AWS ECR push is disabled in this environment.');
+    }
+
+    const buildOperation = await prisma.operation.findFirst({
+      where: {
+        organizationId,
+        provider: OperationProvider.AWS,
+        operationType: OperationType.AWS_ECR_IMAGE_BUILD,
+        status: OperationStatus.SUCCEEDED,
+        AND: [
+          { input: { path: ['targetSlug'], equals: target.targetSlug } },
+          { input: { path: ['repositoryName'], equals: input.repositoryName } },
+          { input: { path: ['environmentSlug'], equals: input.environmentSlug } },
+          { input: { path: ['imageTag'], equals: input.imageTag } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!buildOperation) {
+      throw new BadRequestError('A successful tenant-scoped ECR build is required before push.');
+    }
+
+    const repository = await this._requireAllowedEcrRepository(input.repositoryName);
+    const imageUri = repository.repositoryUri ? `${repository.repositoryUri}:${input.imageTag}` : `${input.repositoryName}:${input.imageTag}`;
+    const productionPush = isProductionEnvironment(input.environmentSlug);
+
+    const operation = await operationService.createQueuedOperation(
+      {
+        organizationId,
+        userId,
+        provider: OperationProvider.AWS,
+        operationType: OperationType.AWS_ECR_IMAGE_PUSH,
+        confirmationToken: 'PUSH',
+        idempotencyKey: `aws-ecr-push-${target.targetSlug}-${input.environmentSlug}-${input.imageTag}`,
+        input: {
+          action: 'push',
+          targetSlug: target.targetSlug,
+          displayName: target.displayName,
+          repositoryName: input.repositoryName,
+          repositoryUri: repository.repositoryUri,
+          imageTag: input.imageTag,
+          imageUri,
+          environmentSlug: input.environmentSlug,
+          productionPush,
+          sourceBuildOperationId: buildOperation.id,
+          commandSummary: `docker push ${input.repositoryName}:${input.imageTag}`,
+          requestedAt: new Date().toISOString(),
+        } as Prisma.InputJsonObject,
+      },
+      {},
+    );
+
+    return { operationId: operation.id, status: operation.status, provider: operation.provider, type: operation.operationType };
+  }
+
   async planDeployment(organizationId: string, userId: string, targetSlug: string): Promise<AwsDeploymentOperationResponse> {
     const toolStatus = await detectTerraformTool();
     if (toolStatus.status !== 'CONNECTED') {
@@ -622,7 +869,10 @@ export class AwsService {
   }
 
   async listEcrRepositories(): Promise<AwsListResponse<AwsEcrRepository>> {
-    return this._listResponse((clients) => this._loadEcrRepositories(clients));
+    return this._listResponse(async (clients) => {
+      const allowed = new Set(listAllowedAwsEcrRepositories());
+      return (await this._loadEcrRepositories(clients)).filter((repository) => allowed.has(repository.repositoryName));
+    });
   }
 
   async listCloudWatchAlarms(): Promise<AwsListResponse<AwsCloudWatchAlarm>> {
@@ -725,6 +975,49 @@ export class AwsService {
       namespace: alarm.Namespace ?? null,
       updatedAt: alarm.StateUpdatedTimestamp?.toISOString() ?? null,
     }));
+  }
+
+  private _requireEcrBuildTarget(targetSlug: string) {
+    const target = getAwsEcrBuildTargetBySlug(targetSlug);
+    if (!target) {
+      throw new BadRequestError('ECR build target is not allowlisted.');
+    }
+    return target;
+  }
+
+  private async _requireAllowedEcrRepository(repositoryName: string): Promise<AwsEcrRepository> {
+    if (!isAllowedAwsEcrRepository(repositoryName)) {
+      throw new BadRequestError('ECR repository is not allowlisted.');
+    }
+    const repositories = await this.listEcrRepositories();
+    const repository = repositories.items.find((item) => item.repositoryName === repositoryName);
+    if (!repository) {
+      throw new BadRequestError('Allowlisted ECR repository was not found or AWS is not configured.');
+    }
+    return repository;
+  }
+
+  private async _hasEcrLifecyclePolicy(
+    clients: NonNullable<ReturnType<typeof createAwsClients>>,
+    repositoryName: string,
+  ): Promise<boolean> {
+    try {
+      await clients.ecr.send(new GetLifecyclePolicyCommand({ repositoryName }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private _record(value: unknown): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+    return {};
+  }
+
+  private _string(value: unknown): string | null {
+    return typeof value === 'string' && value.length > 0 ? value : null;
   }
 
   private async _safe<T>(

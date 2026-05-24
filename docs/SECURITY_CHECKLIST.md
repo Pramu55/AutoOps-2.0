@@ -110,6 +110,18 @@ Authorization:
 - AWS deployment history must be organization-scoped.
 - No AWS resource creation, modification, or deletion from any AWS endpoint.
 
+## AWS ECR Image Build and Push
+
+- ECR repository inventory must require OWNER/ADMIN provider-boundary access.
+- `AWS_ECR_ALLOWED_REPOSITORIES` must restrict all ECR push targets.
+- `AWS_ECR_ALLOWED_BUILD_TARGETS` must restrict all Docker build contexts and Dockerfiles.
+- Build operations must require `BUILD` confirmation and create `AWS_ECR_IMAGE_BUILD`.
+- Push operations must require `PUSH` confirmation and create `AWS_ECR_IMAGE_PUSH`.
+- Production/prod push must enter `PENDING_APPROVAL` when `AWS_ECR_PRODUCTION_PUSH_REQUIRES_APPROVAL=true`.
+- `AWS_ECR_PUSH_ENABLED=false` must prevent worker push execution by default.
+- Docker login password, AWS credentials, and Docker socket details must never appear in logs, API responses, UI, screenshots, operation evidence, or governance export.
+- ECR operation history must remain organization-scoped.
+
 ## Incidents and Runbooks
 
 - Verify failed operations create incidents.

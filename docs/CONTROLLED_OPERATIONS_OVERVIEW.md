@@ -15,6 +15,8 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 | Terraform/OpenTofu | Apply allowlisted workspace | APPLY | HIGH | Required |
 | Ansible | Syntax-check, check mode allowlisted playbook | SYNTAX, CHECK | LOW | Not required |
 | Ansible | Run allowlisted playbook | RUN | HIGH | Required |
+| AWS ECR | Build allowlisted Docker image target | BUILD | MEDIUM | Not required |
+| AWS ECR | Push image to allowlisted ECR repository | PUSH | MEDIUM/HIGH | Required for production/prod |
 
 ## Safety Rules
 
@@ -27,6 +29,7 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Docker exec, shell, delete/remove, image push/delete, volume delete, and network delete are not exposed.
 - Kubernetes exec, shell, port-forward, Secret access, arbitrary apply/patch, and delete actions are not exposed.
 - Infrastructure automation never accepts arbitrary command strings or arbitrary paths. Terraform/OpenTofu and Ansible operations are limited to allowlisted workspaces/playbooks and fixed worker command definitions.
+- AWS ECR image build/push never accepts arbitrary Dockerfile paths, build contexts, tags, repositories, or shell arguments. Build and push are separate worker-executed operations.
 
 ## Operation Detail and Recovery
 
@@ -60,6 +63,7 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Docker STOP/RESTART and Kubernetes SCALE above 2 replicas enter `PENDING_APPROVAL` and are not enqueued until approved.
 - Terraform/OpenTofu VALIDATE/PLAN and Ansible SYNTAX/CHECK are confirmation-only.
 - Terraform/OpenTofu APPLY and Ansible RUN enter `PENDING_APPROVAL` and are not enqueued until approved.
+- AWS ECR BUILD is confirmation-only. AWS ECR PUSH is confirmation-only for non-production environments and approval-required for `production`/`prod` when production push approval is enabled.
 - Approving a pending operation records the decision and queues the existing worker-executed operation; rejecting records the decision and prevents worker execution.
 - Ops Hub and operation detail expose safe policy reason, risk, confirmation label, approval status, and decision timestamps without rendering raw operation metadata.
 - AutoOps does not provide generic replay, unsafe Docker/Kubernetes controls, or fake approval records. Future RBAC can separate requester and approver responsibilities.

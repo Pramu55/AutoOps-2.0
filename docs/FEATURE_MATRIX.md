@@ -34,6 +34,9 @@
 | AWS Foundation | AWS remote state readiness | Complete | Yes when configured | S3 HeadBucket + DynamoDB DescribeTable | No state file read/write; reachability check only |
 | AWS Foundation | AWS workspace readiness | Complete | Yes when configured | Allowlisted workspace file and tooling checks | Local state/init directory flagged; no execution |
 | AWS Foundation | AWS deployment targets | Complete | Yes when configured | Allowlisted ECS Fargate workspaces only | Plan approval-gated; apply disabled by default |
+| AWS ECR | ECR readiness and repository inventory | Complete | Yes when configured | OWNER/ADMIN provider-boundary access + allowlisted repositories | No repository creation or deletion |
+| AWS ECR | Docker image build | Complete | Yes when configured | BUILD confirmation + allowlisted build target | No arbitrary Dockerfile, context, tag, or shell |
+| AWS ECR | ECR image push | Complete | Yes when configured | PUSH confirmation + production approval gate | Push disabled by default; no credential exposure |
 | Worker Runtime | BullMQ execution | Complete | Yes | Worker-only execution | API queues accepted work |
 | Worker Runtime | Heartbeat registry | Complete | Yes | Persisted heartbeat rows | Fresh/stale/offline derived |
 | Observability | Operations Hub | Complete | Yes | Safe summaries | Platform/provider/queue/worker/incidents |

@@ -80,6 +80,16 @@ export class IncidentRunbookService {
       );
     }
 
+    if (input.operationType === OperationType.AWS_ECR_IMAGE_BUILD || input.operationType === OperationType.AWS_ECR_IMAGE_PUSH) {
+      return this._infrastructureRunbook(
+        'AWS ECR image operation failure runbook',
+        input.key ?? 'aws-ecr-image-operation-failure',
+        relatedActions,
+        operationHref,
+        'Check Docker engine access, allowlisted build target, repository allowlist, AWS ECR auth, image tag, and push enablement.',
+      );
+    }
+
     return {
       key: input.key ?? 'operation-failure',
       title: 'Operation failure runbook',
@@ -180,6 +190,7 @@ export class IncidentRunbookService {
     if (provider === OperationProvider.DOCKER) return '/dashboard/integrations/docker';
     if (provider === OperationProvider.KUBERNETES) return '/dashboard/integrations/kubernetes';
     if (provider === OperationProvider.INFRASTRUCTURE) return '/dashboard/integrations/infrastructure';
+    if (provider === OperationProvider.AWS) return '/dashboard/integrations/aws';
     return null;
   }
 }

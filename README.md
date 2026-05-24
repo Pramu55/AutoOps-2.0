@@ -26,6 +26,7 @@ Real DevOps work is not only clicking buttons. Teams need safe execution, clear 
 - Prometheus/Grafana integration readiness checks.
 - DevOps tools readiness for Helm, Kustomize, kubectl, Docker CLI, Terraform/OpenTofu, Ansible, Node, and pnpm.
 - Cloud Provider Readiness Center for AWS/Azure/GCP without unsafe direct cloud writes.
+- AWS ECR image build and push workflows using allowlisted build targets and repositories.
 - Confirmation tokens for all controlled operations.
 - Policy engine for approval-required operations.
 - RBAC with requester/approver separation.
@@ -79,6 +80,7 @@ See [Architecture Overview](./docs/ARCHITECTURE_OVERVIEW.md).
 | DevOps Tools | Helm, Kustomize, kubectl, Docker CLI, IaC, and runtime tooling |
 | Cloud Readiness | AWS/Azure/GCP readiness without direct cloud writes |
 | AWS Deployments | Governed AWS ECS Fargate deployment workflows using safe IaC |
+| AWS ECR | Separate governed Docker image build and ECR push operations |
 | Projects | Project and environment ownership |
 | Deployments | Deployment records and safe simulation workflow |
 
@@ -98,6 +100,8 @@ AutoOps intentionally avoids unsafe generic automation. The backend enforces:
 - secret redaction and safe response DTOs
 
 AutoOps does not expose provider secrets, kubeconfig content, tokens, raw operation metadata, Kubernetes Secret data, Docker shell/exec controls, Kubernetes shell/exec/apply/delete controls, or ungoverned Jenkins mutations.
+
+AWS ECR image build/push is limited to configured build targets and repositories. Build uses `BUILD` confirmation, push uses `PUSH` confirmation, and production/prod pushes require approval before worker execution.
 
 Tenant-owned resources are scoped by organization. API handlers use authenticated organization membership, not frontend-supplied `organizationId`, and local demo includes an isolated tenant account for confidentiality checks.
 

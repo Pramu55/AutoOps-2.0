@@ -107,6 +107,29 @@ export function evaluateOperationPolicy(input: OperationPolicyInput): OperationP
   }
 
   if (
+    input.provider === OperationProvider.AWS &&
+    input.operationType === OperationType.AWS_ECR_IMAGE_BUILD
+  ) {
+    return confirmationOnly(OperationRiskLevel.MEDIUM, 'BUILD');
+  }
+
+  if (
+    input.provider === OperationProvider.AWS &&
+    input.operationType === OperationType.AWS_ECR_IMAGE_PUSH
+  ) {
+    const environmentSlug = stringField(input.input, 'environmentSlug')?.toLowerCase();
+    const productionPushRequiresApproval = process.env.AWS_ECR_PRODUCTION_PUSH_REQUIRES_APPROVAL !== 'false';
+    if (productionPushRequiresApproval && (environmentSlug === 'production' || environmentSlug === 'prod')) {
+      return approvalRequired(
+        OperationRiskLevel.HIGH,
+        'PUSH',
+        'Pushing a production image to ECR requires approval.',
+      );
+    }
+    return confirmationOnly(OperationRiskLevel.MEDIUM, 'PUSH');
+  }
+
+  if (
     input.provider === OperationProvider.INFRASTRUCTURE &&
     input.operationType === OperationType.ANSIBLE_SYNTAX_CHECK
   ) {
@@ -170,4 +193,9 @@ function approvalRequired(
 function numberField(input: Record<string, unknown>, key: string): number | null {
   const value = input[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function stringField(input: Record<string, unknown>, key: string): string | null {
+  const value = input[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
