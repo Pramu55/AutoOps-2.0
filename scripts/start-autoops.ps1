@@ -30,6 +30,16 @@ if (-not (Test-Path ".env")) {
   Write-Host "`n.env was not found. Copy .env.example to .env and set local secrets before starting." -ForegroundColor Yellow
 }
 
+$providerAllowlist = $env:PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS
+if (-not $providerAllowlist -and (Test-Path ".env")) {
+  $providerAllowlist = (Select-String -Path ".env" -Pattern "^PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS=" -ErrorAction SilentlyContinue | Select-Object -First 1).Line -replace "^PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS=", ""
+}
+if ($providerAllowlist) {
+  Write-Host "Provider inventory org slug allowlist: configured" -ForegroundColor Green
+} else {
+  Write-Host "Provider inventory org slug allowlist: not set; local Compose will default to autoops-demo only." -ForegroundColor Yellow
+}
+
 Write-Host "`nStarting Jenkins..." -ForegroundColor Cyan
 docker start autoops-jenkins 2>$null | Out-Null
 

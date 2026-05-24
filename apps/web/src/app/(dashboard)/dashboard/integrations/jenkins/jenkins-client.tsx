@@ -127,6 +127,7 @@ export function JenkinsClient() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inventoryBlocked, setInventoryBlocked] = useState(false);
   const [operationsError, setOperationsError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingJenkinsAction | null>(null);
   const [confirmationValue, setConfirmationValue] = useState('');
@@ -135,16 +136,18 @@ export function JenkinsClient() {
     if (initial) setIsLoading(true);
     else setIsRefreshing(true);
     setError(null);
+    setInventoryBlocked(false);
     setOperationsError(null);
 
     try {
-      const [statusResponse, summaryResponse, jobsResponse, buildsResponse] = await Promise.all([
-        api.get<StatusResponse>('/v1/integrations/jenkins/status'),
+      const statusResponse = await api.get<StatusResponse>('/v1/integrations/jenkins/status');
+      setStatus(statusResponse.data);
+
+      const [summaryResponse, jobsResponse, buildsResponse] = await Promise.all([
         api.get<SummaryResponse>('/v1/integrations/jenkins/summary'),
         api.get<JobsResponse>('/v1/integrations/jenkins/jobs'),
         api.get<BuildsResponse>('/v1/integrations/jenkins/builds'),
       ]);
-      setStatus(statusResponse.data);
       setSummary(summaryResponse.data);
       setJobs(jobsResponse.data.items);
       setBuilds(buildsResponse.data.items);
@@ -157,6 +160,12 @@ export function JenkinsClient() {
         setOperationsError(getErrorMessage(operationsLoadError));
       }
     } catch (loadError) {
+      if (loadError instanceof ApiError && loadError.status === 403) {
+        setInventoryBlocked(true);
+        setSummary(null);
+        setJobs([]);
+        setBuilds([]);
+      }
       setError(getErrorMessage(loadError));
     } finally {
       setIsLoading(false);
@@ -280,12 +289,20 @@ export function JenkinsClient() {
       </section>
 
       {error ? (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-          {error}
+        <div className={`rounded-md border px-4 py-3 text-sm ${inventoryBlocked ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-rose-200 bg-rose-50 text-rose-800'}`}>
+          <p className="font-medium">
+            {inventoryBlocked ? 'Provider inventory is disabled for this organization.' : error}
+          </p>
+          {inventoryBlocked ? (
+            <p className="mt-1">
+              Enable this org in `PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS` or `PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS`. New user organizations remain blocked by design.
+            </p>
+          ) : null}
+          {!inventoryBlocked ? error : null}
         </div>
       ) : null}
 
-      {currentStatus !== 'CONNECTED' ? (
+      {currentStatus !== 'CONNECTED' && !inventoryBlocked ? (
         <section className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-6">
           <div className="flex gap-4">
             <AlertTriangle className="mt-1 h-5 w-5 shrink-0 text-amber-700" />
@@ -294,6 +311,13 @@ export function JenkinsClient() {
               <p className="mt-2 text-sm leading-6 text-amber-800/80">
                 {status?.message ?? 'Set JENKINS_URL, JENKINS_USERNAME, and JENKINS_API_TOKEN for the API and worker containers.'}
               </p>
+              {currentStatus === 'NOT_CONFIGURED' ? (
+                <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-900">
+                  <li>JENKINS_URL</li>
+                  <li>JENKINS_USERNAME</li>
+                  <li>JENKINS_API_TOKEN</li>
+                </ul>
+              ) : null}
               <p className="mt-3 text-sm text-slate-700">
                 AutoOps never exposes Jenkins API tokens and does not use Jenkins CLI, script console, or job configuration mutation.
               </p>

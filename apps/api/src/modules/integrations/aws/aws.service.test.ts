@@ -685,6 +685,7 @@ describe('AwsService', () => {
   describe('AWS releases, promotion, and rollbacks', () => {
     beforeEach(() => {
       process.env.AWS_ALLOWED_DEPLOYMENT_WORKSPACES = 'aws-sample-ecs-app, sample-ecs-app, another-app';
+      process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS = orgId;
       vi.mocked(prisma.organization.findUnique).mockResolvedValue({ id: orgId, slug: 'autoops-demo' } as any);
       vi.mocked(operationAuthorizationService.canTriggerOperation).mockResolvedValue({ allowed: true, reason: null, role: 'OWNER' });
       vi.mocked(listTerraformWorkspaces).mockResolvedValue([

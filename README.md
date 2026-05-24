@@ -197,6 +197,7 @@ Start with [Documentation Home](./docs/README.md).
 - [AWS Terraform ECS Plan](./docs/AWS_TERRAFORM_ECS_PLAN.md)
 - [Final Release Checklist](./docs/FINAL_RELEASE_CHECKLIST.md)
 - [Company Handoff Package](./docs/COMPANY_HANDOFF_PACKAGE.md)
+- [Company Provider Connectivity Handoff](./docs/COMPANY_PROVIDER_CONNECTIVITY_HANDOFF.md)
 - [Final Evaluator Report](./docs/FINAL_EVALUATOR_REPORT.md)
 - [GitHub Release and Tagging](./docs/GITHUB_RELEASE_AND_TAGGING.md)
 - [Final Screenshot Checklist](./docs/FINAL_SCREENSHOT_CHECKLIST.md)

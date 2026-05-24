@@ -19,11 +19,14 @@ const {
 describe('integration provider data boundaries', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    delete process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS;
+    delete process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS;
     delete process.env.PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS;
     process.env.NODE_ENV = 'test';
   });
 
   it('allows inventory roles only after the organization is explicitly enabled', async () => {
+    process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS = 'autoops-demo';
     organizationFindUnique.mockResolvedValue({
       id: 'org-demo',
       slug: 'autoops-demo',
@@ -59,7 +62,8 @@ describe('integration provider data boundaries', () => {
   });
 
   it('supports an explicit provider inventory allowlist for company deployments', async () => {
-    process.env.PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS = 'company-a,org-id-b';
+    process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS = 'company-a';
+    process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS = 'org-id-b';
 
     organizationFindUnique.mockResolvedValue({
       id: 'org-id-b',
@@ -67,6 +71,19 @@ describe('integration provider data boundaries', () => {
     });
 
     await expect(isProviderInventoryAccessEnabledForOrg('org-id-b')).resolves.toBe(true);
+  });
+
+  it('keeps the legacy slug allowlist supported without enabling every org', async () => {
+    process.env.PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS = 'legacy-demo';
+    expect(canViewProviderInventory('OWNER')).toBe(true);
+    expect(await isProviderInventoryAccessEnabledForOrg('org-legacy')).toBe(false);
+
+    organizationFindUnique.mockResolvedValue({
+      id: 'org-legacy',
+      slug: 'legacy-demo',
+    });
+
+    await expect(isProviderInventoryAccessEnabledForOrg('org-legacy')).resolves.toBe(true);
   });
 
   it('keeps unknown roles denied by default', () => {

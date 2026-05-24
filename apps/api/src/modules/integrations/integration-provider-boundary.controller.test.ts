@@ -54,6 +54,8 @@ function requestForOrg(slug: string): Request {
 describe('provider inventory API boundaries', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    delete process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS;
+    delete process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS;
     delete process.env.PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS;
     process.env.NODE_ENV = 'test';
   });
@@ -83,6 +85,7 @@ describe('provider inventory API boundaries', () => {
   });
 
   it('allows the explicitly enabled local demo organization to use provider inventory', async () => {
+    process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS = 'autoops-demo';
     jenkinsListBuilds.mockResolvedValue({ items: [] });
     const res = {
       json: vi.fn(),
