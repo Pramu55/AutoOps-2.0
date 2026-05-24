@@ -102,11 +102,13 @@ AutoOps intentionally avoids unsafe generic automation. The backend enforces:
 
 AutoOps does not expose provider secrets, kubeconfig content, tokens, raw operation metadata, Kubernetes Secret data, Docker shell/exec controls, Kubernetes shell/exec/apply/delete controls, or ungoverned Jenkins mutations.
 
+Newly registered users receive a new organization and do not inherit demo provider access. Shared Jenkins, Docker, Kubernetes, AWS, GitHub Actions, infrastructure, cloud, and observability inventory requires OWNER/ADMIN role plus organization-level provider access; safe status endpoints remain sanitized and inventory-free.
+
 AWS ECR image build/push is limited to configured build targets and repositories. Build uses `BUILD` confirmation, push uses `PUSH` confirmation, and production/prod pushes require approval before worker execution.
 
 AWS ECS Terraform/OpenTofu planning requires remote state configuration and a successful tenant-scoped ECR push operation. It runs plan only, stores safe add/change/destroy evidence, and never exposes raw state, backend config, credentials, or raw plan output.
 
-Tenant-owned resources are scoped by organization. API handlers use authenticated organization membership, not frontend-supplied `organizationId`, and local demo includes an isolated tenant account for confidentiality checks.
+Tenant-owned resources are scoped by organization. API handlers use authenticated organization membership, not frontend-supplied `organizationId`, and local demo includes an isolated tenant account for confidentiality checks. See [Tenant Isolation And Authorization](./docs/TENANT_ISOLATION_AND_AUTHORIZATION.md).
 
 ## Local Demo Accounts
 

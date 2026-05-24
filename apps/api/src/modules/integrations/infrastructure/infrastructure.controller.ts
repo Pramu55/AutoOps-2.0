@@ -23,17 +23,17 @@ export class InfrastructureController {
 
   summary = async (req: Request, res: Response<{ data: InfrastructureAutomationSummaryResponse }>): Promise<void> => {
     const auth = this._requireAuth(req);
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await infrastructureService.getSummary(auth.orgId) });
   };
 
   terraformWorkspaces = async (req: Request, res: Response<{ data: { items: TerraformWorkspaceSummary[] } }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: { items: await infrastructureService.listTerraformWorkspaces() } });
   };
 
   ansiblePlaybooks = async (req: Request, res: Response<{ data: { items: AnsiblePlaybookSummary[] } }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: { items: await infrastructureService.listAnsiblePlaybooks() } });
   };
 
@@ -42,6 +42,7 @@ export class InfrastructureController {
     res: Response<{ data: TerraformOperationResponse }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const data = await infrastructureService.requestTerraformOperation(
       req.params.workspaceSlug,
       auth.orgId,
@@ -63,6 +64,7 @@ export class InfrastructureController {
     res: Response<{ data: TerraformOperationResponse }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const data = await infrastructureService.requestTerraformOperation(
       req.params.workspaceSlug,
       auth.orgId,
@@ -84,6 +86,7 @@ export class InfrastructureController {
     res: Response<{ data: TerraformOperationResponse }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const data = await infrastructureService.requestTerraformOperation(
       req.params.workspaceSlug,
       auth.orgId,
@@ -105,6 +108,7 @@ export class InfrastructureController {
     res: Response<{ data: AnsibleOperationResponse }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const data = await infrastructureService.requestAnsibleOperation(
       req.params.playbookSlug,
       auth.orgId,
@@ -126,6 +130,7 @@ export class InfrastructureController {
     res: Response<{ data: AnsibleOperationResponse }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const data = await infrastructureService.requestAnsibleOperation(
       req.params.playbookSlug,
       auth.orgId,
@@ -147,6 +152,7 @@ export class InfrastructureController {
     res: Response<{ data: AnsibleOperationResponse }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const data = await infrastructureService.requestAnsibleOperation(
       req.params.playbookSlug,
       auth.orgId,

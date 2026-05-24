@@ -7,6 +7,8 @@ Use this checklist before a company pilot, demo, or production-like deployment.
 Confidentiality:
 - Tenant-owned resources are scoped by authenticated organization membership.
 - Cross-organization project, deployment, operation, governance, incident, and audit-log visibility is blocked in the API layer.
+- Shared provider inventory is blocked unless the authenticated organization has provider inventory access and the caller has OWNER/ADMIN role.
+- Newly registered organizations must not inherit demo provider inventory, build history, cluster inventory, Docker inventory, AWS details, or observability details.
 - Secrets, tokens, kubeconfig content, and provider credentials must not appear in UI, API responses, logs, screenshots, or exports.
 
 Integrity:
@@ -23,6 +25,7 @@ Authorization:
 - JWTs are validated and organization membership is rechecked by API middleware.
 - Roles are evaluated within the authenticated organization.
 - Controllers must use `req.auth.orgId` and must not trust frontend-supplied organization IDs.
+- Provider inventory uses defense-in-depth: role check plus organization-level provider access allowlist.
 
 ## Environment and Secrets
 
@@ -48,6 +51,7 @@ Authorization:
 - Use Jenkins API tokens, not passwords.
 - Restrict Jenkins token permissions.
 - Restrict `JENKINS_ALLOWED_JOBS`.
+- Restrict Jenkins jobs/builds and build triggers to organizations enabled for provider inventory access.
 - Do not enable Jenkins script console, plugin install, job create/delete, or config mutation through AutoOps.
 
 ## Kubernetes Connector
@@ -55,12 +59,14 @@ Authorization:
 - Protect kubeconfig.
 - Mount kubeconfig read-only.
 - Use least-privilege Kubernetes RBAC where possible.
+- Restrict namespaces, workloads, pods, services, nodes, rollout status, and governed Kubernetes actions to organizations enabled for provider inventory access.
 - Do not expose Kubernetes Secret listing or Secret data.
 - Do not add Kubernetes exec, shell, apply, delete, or port-forward controls.
 
 ## Docker Connector
 
 - Avoid Docker socket access in production unless explicitly accepted.
+- Restrict Docker containers, images, networks, volumes, logs, and governed container actions to organizations enabled for provider inventory access.
 - Do not add Docker exec or shell controls.
 - Do not add Docker create/run/delete/remove controls.
 - Do not add image push/build/delete, volume delete, or network delete controls.
@@ -97,7 +103,7 @@ Authorization:
 ## AWS Deployment Foundation
 
 - AWS status endpoint must return sanitized data only (status, configured, message, checkedAt). No account ID, ARN, region, or credentials.
-- AWS identity, readiness, permissions, remote-state, workspace-readiness, deployment-targets, summary, and inventory endpoints must require OWNER/ADMIN role.
+- AWS identity, readiness, permissions, remote-state, workspace-readiness, deployment-targets, summary, ECR inventory, plan requests, image build, and image push must require OWNER/ADMIN provider-boundary access plus organization provider access.
 - AWS identity endpoint must not return AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, or AWS_SESSION_TOKEN.
 - AWS readiness endpoint must report env var presence (boolean), never env var values.
 - AWS permissions endpoint must perform read-only diagnostic probes only (DescribeRepositories, ListClusters, DescribeVpcs, etc.). No write actions.

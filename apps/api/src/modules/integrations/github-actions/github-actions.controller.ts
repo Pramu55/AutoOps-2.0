@@ -22,12 +22,12 @@ export class GitHubActionsController {
   };
 
   workflows = async (req: Request, res: Response<{ data: GitHubActionsListResponse<GitHubWorkflowSummary> }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await githubActionsService.listWorkflows() });
   };
 
   runs = async (req: Request, res: Response<{ data: GitHubActionsListResponse<GitHubWorkflowRunSummary> }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await githubActionsService.listRuns() });
   };
 
@@ -35,7 +35,7 @@ export class GitHubActionsController {
     req: Request<{ runId: string }>,
     res: Response<{ data: GitHubActionsListResponse<GitHubWorkflowJobSummary> }>,
   ): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await githubActionsService.listJobs(req.params.runId) });
   };
 }

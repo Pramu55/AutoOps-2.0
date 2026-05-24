@@ -19,17 +19,17 @@ export class CloudReadinessController {
   };
 
   aws = async (req: Request, res: Response<{ data: CloudProviderReadiness }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await cloudReadinessService.getAws() });
   };
 
   azure = async (req: Request, res: Response<{ data: CloudProviderReadiness }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await cloudReadinessService.getAzure() });
   };
 
   gcp = async (req: Request, res: Response<{ data: CloudProviderReadiness }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await cloudReadinessService.getGcp() });
   };
 }

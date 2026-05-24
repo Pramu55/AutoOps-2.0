@@ -32,17 +32,17 @@ export class JenkinsController {
   };
 
   summary = async (req: Request, res: Response<{ data: JenkinsSummaryResponse }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await jenkinsService.getSummary() });
   };
 
   jobs = async (req: Request, res: Response<{ data: JenkinsListResponse<JenkinsJob> }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await jenkinsService.listJobs() });
   };
 
   builds = async (req: Request, res: Response<{ data: JenkinsListResponse<JenkinsBuild> }>): Promise<void> => {
-    requireProviderInventoryAccess(req.auth);
+    await requireProviderInventoryAccess(req.auth);
     res.json({ data: await jenkinsService.listBuilds() });
   };
 
@@ -56,6 +56,7 @@ export class JenkinsController {
     res: Response<{ data: JenkinsTriggerBuildResponse }>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
     const input = jenkinsTriggerBuildInputSchema.parse(req.body);
     const result = await jenkinsService.triggerBuild(
       decodeURIComponent(req.params.jobName),

@@ -13,11 +13,14 @@ The primary risks are cross-organization reads, direct-ID access to another tena
 - Tenant-owned API queries must include the authenticated `organizationId`.
 - Tenant-owned resources must not be authorized by ID alone.
 - API controllers must use `req.auth.orgId`; they must not trust frontend-supplied `organizationId`.
-- Provider status may be platform-wide, but operation history, governance evidence, incidents, projects, deployments, and audit logs are tenant-scoped.
+- Provider status may be platform-wide only when it is secret-free and inventory-free. Provider inventory requires both OWNER/ADMIN role and organization-level provider access.
+- Newly registered organizations must not inherit demo organization provider inventory access.
 
 ## Root Cause
 
-The original codebase did not enforce tenant isolation at the database query level. Prisma queries could accept a resource ID alone without filtering by `organizationId`, allowing any authenticated user to read or act on resources belonging to another tenant.
+Tenant-owned project, deployment, operation, incident, and governance queries are organization-scoped, but shared provider inventory had a second boundary problem: provider inventory access was role-only. A newly registered user is OWNER of their own organization, so OWNER/ADMIN-only checks still allowed that new user to read global Jenkins, Docker, Kubernetes, AWS, cloud, infrastructure, and observability inventory backed by environment-level connector configuration.
+
+The fix adds an organization-level provider inventory gate in addition to role checks. Local demo provider inventory is enabled only for the seeded `autoops-demo` organization by default. Company deployments must explicitly configure `PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS` or per-organization access before showing shared provider inventory.
 
 ## Organization-Scoped Data Model
 
@@ -97,13 +100,26 @@ Incident list, detail, acknowledge, resolve, and summary paths filter by organiz
 
 Jenkins, Docker, Kubernetes, and Infrastructure action endpoints create operation records with the authenticated organization. Worker jobs load operations by both operation ID and organization context.
 
+### Provider Inventory Boundary
+
+Shared local/provider inventory is not tenant-owned data. It is treated as platform-level provider inventory and is denied unless both conditions are true:
+
+1. The caller is OWNER or ADMIN in the authenticated organization.
+2. The authenticated organization is enabled for provider inventory access.
+
+Protected provider inventory includes Jenkins jobs/builds, GitHub Actions workflows/runs/jobs, Docker containers/images/networks/volumes/logs, Kubernetes namespaces/pods/services/workloads/nodes, AWS identity/readiness/permissions/resource inventory, cloud provider details, Prometheus/Grafana details, and allowlisted IaC workspace/playbook discovery.
+
+Safe provider status endpoints may return status, configured flags, messages, and timestamps, but must not return credentials, account secrets, kubeconfig, Docker socket details, Jenkins tokens, raw inventory, or other tenants' operation history.
+
+Provider action endpoints also require provider access. A newly registered organization cannot trigger Jenkins, Docker, Kubernetes, Terraform/OpenTofu, Ansible, or AWS provider actions using shared demo/global connector configuration.
+
 ### Worker Tenant Scoping
 
 The deployment worker verifies `project.organizationId` when loading deployment records and when claiming jobs via `updateMany`. This prevents cross-tenant job execution even if a job payload is tampered with.
 
 ## UI Session Safety
 
-Login and logout clear AutoOps browser storage and React Query cache so a newly authenticated account does not see cached data from a previous account.
+Login, logout, and registration clear AutoOps browser storage and React Query cache so a newly authenticated account does not see cached data from a previous account.
 
 ### Cleared on Login/Logout
 
@@ -136,6 +152,16 @@ Each organization has its own project and environments. `pramod.local` and `appr
 - Gets a project by ID only when it belongs to the authenticated organization.
 - Does not return a project from another organization by direct ID.
 
+### Auth Service Tests (`auth.service.test.ts`)
+- Registering a new user creates a new organization and membership instead of attaching to the demo organization.
+- Login tokens are issued for the user's membership organization rather than a global fallback.
+
+### Provider Boundary Tests (`integration-access.service.test.ts`, `integration-provider-boundary.controller.test.ts`)
+- New organization owners are denied shared provider inventory by default.
+- Demo organization provider access remains enabled for local verification.
+- Non-inventory roles remain denied even when the organization is enabled.
+- Jenkins build history, Docker inventory, and Kubernetes inventory are blocked for a new organization owner.
+
 ### Operation Authorization Tests (`operation-authorization.service.test.ts`)
 - Returns role when user has membership.
 - Returns null when user has no membership (cross-org blocked).
@@ -165,7 +191,7 @@ Each organization has its own project and environments. `pramod.local` and `appr
 
 ## Known Limitations
 
-Local connector inventories can represent shared local infrastructure. Operation history and governance evidence remain tenant-scoped.
+Local connector inventories can represent shared local infrastructure. They are restricted by role and organization-level provider access, while operation history and governance evidence remain tenant-scoped.
 
 ## Future Improvements
 

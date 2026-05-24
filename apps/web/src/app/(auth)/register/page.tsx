@@ -7,6 +7,7 @@ import { ArrowLeft, CheckCircle2, Zap } from 'lucide-react';
 import type { RegisterInput } from '@autoops/types';
 import { api, ApiError } from '@/lib/api';
 import { clearAuthSession } from '@/lib/auth-session';
+import { getQueryClient } from '@/lib/query-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -110,10 +111,12 @@ export default function RegisterPage() {
     setIsSubmitting(true);
     setSuccessMessage(null);
     clearAuthSession();
+    getQueryClient().clear();
 
     try {
       await api.post<RegisterResponse>('/v1/auth/register', payload);
       clearAuthSession();
+      getQueryClient().clear();
       const loginParams = new URLSearchParams({
         email: payload.email,
         registeredName: payload.name,
