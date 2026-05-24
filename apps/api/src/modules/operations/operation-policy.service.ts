@@ -148,6 +148,32 @@ export function evaluateOperationPolicy(input: OperationPolicyInput): OperationP
   }
 
   if (
+    input.provider === OperationProvider.AWS &&
+    input.operationType === OperationType.AWS_ECS_RELEASE_PROMOTE
+  ) {
+    const environmentSlug = stringField(input.input, 'environmentSlug')?.toLowerCase();
+    if (environmentSlug === 'production' || environmentSlug === 'prod') {
+      return approvalRequired(
+        OperationRiskLevel.HIGH,
+        'PROMOTE',
+        'AWS ECS promotion to production requires approval.',
+      );
+    }
+    return confirmationOnly(OperationRiskLevel.MEDIUM, 'PROMOTE');
+  }
+
+  if (
+    input.provider === OperationProvider.AWS &&
+    input.operationType === OperationType.AWS_ECS_RELEASE_ROLLBACK
+  ) {
+    return approvalRequired(
+      OperationRiskLevel.HIGH,
+      'ROLLBACK',
+      'AWS ECS rollback always requires approval.',
+    );
+  }
+
+  if (
     input.provider === OperationProvider.INFRASTRUCTURE &&
     input.operationType === OperationType.ANSIBLE_SYNTAX_CHECK
   ) {

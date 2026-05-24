@@ -36,3 +36,11 @@ awsRouter.post('/deployments/:targetSlug/apply', requireAuth, asyncHandler(awsCo
 awsRouter.get('/ecr/images', requireAuth, asyncHandler(awsController.ecrImages as unknown as RequestHandler));
 awsRouter.post('/ecr/images/build', requireAuth, asyncHandler(awsController.buildEcrImage as unknown as RequestHandler));
 awsRouter.post('/ecr/images/push', requireAuth, asyncHandler(awsController.pushEcrImage as unknown as RequestHandler));
+
+// Day 5 Release & Rollback Control Plane
+awsRouter.get('/releases', requireAuth, asyncHandler(awsController.releases as unknown as RequestHandler));
+awsRouter.get('/releases/history', requireAuth, asyncHandler(awsController.releaseHistory as unknown as RequestHandler));
+awsRouter.get('/releases/readiness', requireAuth, asyncHandler(awsController.releaseReadiness as unknown as RequestHandler));
+awsRouter.get('/releases/:releaseId', requireAuth, asyncHandler(awsController.getRelease as unknown as RequestHandler));
+awsRouter.post('/releases/:releaseId/promote', requireAuth, asyncHandler(awsController.promoteRelease as unknown as RequestHandler));
+awsRouter.post('/releases/:releaseId/rollback', requireAuth, asyncHandler(awsController.rollbackRelease as unknown as RequestHandler));

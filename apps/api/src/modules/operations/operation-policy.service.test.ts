@@ -176,4 +176,42 @@ describe('evaluateOperationPolicy', () => {
     expect(decision.confirmationTokenLabel).toBe('PLAN');
     expect(decision.riskLevel).toBe(OperationRiskLevel.MEDIUM);
   });
+
+  it('keeps AWS ECS release promotion to staging confirmation-only', () => {
+    const decision = evaluateOperationPolicy({
+      provider: OperationProvider.AWS,
+      operationType: OperationType.AWS_ECS_RELEASE_PROMOTE,
+      input: { environmentSlug: 'staging' },
+    });
+
+    expect(decision.approvalRequired).toBe(false);
+    expect(decision.confirmationTokenLabel).toBe('PROMOTE');
+    expect(decision.riskLevel).toBe(OperationRiskLevel.MEDIUM);
+  });
+
+  it('requires approval for AWS ECS release promotion to production', () => {
+    const decision = evaluateOperationPolicy({
+      provider: OperationProvider.AWS,
+      operationType: OperationType.AWS_ECS_RELEASE_PROMOTE,
+      input: { environmentSlug: 'production' },
+    });
+
+    expect(decision.approvalRequired).toBe(true);
+    expect(decision.confirmationTokenLabel).toBe('PROMOTE');
+    expect(decision.riskLevel).toBe(OperationRiskLevel.HIGH);
+    expect(decision.approvalReason).toContain('promotion to production requires approval');
+  });
+
+  it('requires approval for AWS ECS release rollback', () => {
+    const decision = evaluateOperationPolicy({
+      provider: OperationProvider.AWS,
+      operationType: OperationType.AWS_ECS_RELEASE_ROLLBACK,
+      input: {},
+    });
+
+    expect(decision.approvalRequired).toBe(true);
+    expect(decision.confirmationTokenLabel).toBe('ROLLBACK');
+    expect(decision.riskLevel).toBe(OperationRiskLevel.HIGH);
+    expect(decision.approvalReason).toContain('rollback always requires approval');
+  });
 });
