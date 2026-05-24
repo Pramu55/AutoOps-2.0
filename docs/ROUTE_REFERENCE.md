@@ -158,8 +158,9 @@
 | POST | `/v1/integrations/aws/ecr/images/push` | Authenticated | Request allowlisted ECR push with `PUSH`; production requires approval |
 | GET | `/v1/integrations/aws/deployments` | Authenticated | Organization-scoped deployment history |
 | GET | `/v1/integrations/aws/terraform/plan-readiness` | OWNER/ADMIN | Plan-only ECS readiness: remote state, workspace, tool, and safe pushed image metadata |
-| POST | `/v1/integrations/aws/deployments/:targetSlug/plan` | Authenticated | Request plan-only ECS Terraform/OpenTofu operation with `PLAN`; no apply/destroy |
-| POST | `/v1/integrations/aws/deployments/:targetSlug/apply` | Authenticated | Request Terraform apply (approval-gated, disabled by default) |
+| GET | `/v1/integrations/aws/apply-readiness` | Authenticated | ECS apply readiness: checks apply status, state storage config, and plan freshness |
+| POST | `/v1/integrations/aws/deployments/:targetSlug/plan` | Authenticated | Request plan-only ECS ECS Terraform/OpenTofu operation with `PLAN`; no apply/destroy |
+| POST | `/v1/integrations/aws/deployments/:targetSlug/apply` | Authenticated | Request ECS Terraform/OpenTofu apply operation (creates a PENDING_APPROVAL operation; requires `APPLY`) |
 
 ## `/dashboard/projects`
 

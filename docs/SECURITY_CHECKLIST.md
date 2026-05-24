@@ -132,6 +132,18 @@ Authorization:
 - Docker login password, AWS credentials, and Docker socket details must never appear in logs, API responses, UI, screenshots, operation evidence, or governance export.
 - ECR operation history must remain organization-scoped.
 
+## AWS ECS Gated Apply
+
+- AWS ECS apply operations must require `AWS_DEPLOYMENT_APPLY_ENABLED=true` in the environment.
+- The POST apply route must never execute apply directly; it must only create a `PENDING_APPROVAL` operation.
+- The apply operation must require `APPLY` confirmation token.
+- Apply operations must be gated by a fresh (< 24 hours), successful, same-organization `AWS_TERRAFORM_ECS_PLAN` matching target, environment, and ECR image metadata.
+- Plans with `destroyCount > 0`, `applyEligible === false`, or `riskLevel === 'HIGH'` must block apply.
+- Worker must re-verify all safety gates immediately before apply.
+- If no saved binary planfile exists, the worker must rerun the plan in a temporary directory and compare its summary counts/image against the approved plan summary before apply.
+- ECS verification after apply must be read-only (describe services, list clusters, etc.) and best-effort; no writes.
+- AWS credentials, tfstate, raw planfiles, and raw backend configs must never be stored in operation results or log databases.
+
 ## Incidents and Runbooks
 
 - Verify failed operations create incidents.

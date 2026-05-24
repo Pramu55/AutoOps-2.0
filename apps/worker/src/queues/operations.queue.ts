@@ -7,8 +7,21 @@ import { promisify } from 'node:util';
 import { Queue, Worker, type Job } from 'bullmq';
 import * as k8s from '@kubernetes/client-node';
 import { ECRClient, GetAuthorizationTokenCommand } from '@aws-sdk/client-ecr';
+import {
+  ECSClient,
+  DescribeServicesCommand,
+  ListClustersCommand,
+  ListServicesCommand,
+  type Deployment,
+} from '@aws-sdk/client-ecs';
+import { CloudWatchLogsClient, DescribeLogGroupsCommand, type LogGroup } from '@aws-sdk/client-cloudwatch-logs';
+import {
+  ElasticLoadBalancingV2Client,
+  DescribeLoadBalancersCommand,
+  type LoadBalancer,
+} from '@aws-sdk/client-elastic-load-balancing-v2';
 import { prisma as db, type Prisma } from '@autoops/database';
-import { OperationProvider, OperationStatus, OperationType } from '@autoops/types';
+import { OperationProvider, OperationStatus, OperationType, type AwsEcsVerificationSummary } from '@autoops/types';
 import {
   DockerEngineClient,
   detectAnsibleTool,
@@ -136,10 +149,12 @@ async function processOperation(job: Job<OperationJobData>): Promise<void> {
 
 async function executeOperation(operation: {
   id: string;
+  organizationId: string;
   provider: OperationProvider;
   operationType: OperationType;
   input: unknown;
   approvedAt?: Date | null;
+  approvedByUserId?: string | null;
 }): Promise<Record<string, unknown>> {
   const input = toRecord(operation.input);
   if (
@@ -194,6 +209,19 @@ async function executeOperation(operation: {
     operation.operationType === OperationType.AWS_TERRAFORM_ECS_PLAN
   ) {
     return executeAwsTerraformEcsPlan(operation.id, input);
+  }
+
+  if (
+    operation.provider === OperationProvider.AWS &&
+    operation.operationType === OperationType.AWS_TERRAFORM_ECS_APPLY
+  ) {
+    return executeAwsTerraformEcsApply(
+      operation.id,
+      operation.organizationId,
+      input,
+      operation.approvedAt ?? null,
+      operation.approvedByUserId ?? null,
+    );
   }
 
   if (
@@ -339,6 +367,11 @@ function numberField(input: Record<string, unknown>, key: string): number {
     throw new Error(`Operation input requires integer ${key}`);
   }
   return value;
+}
+
+function safeNumberField(input: Record<string, unknown>, key: string): number {
+  const value = input[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 async function executeDockerContainerAction(
@@ -589,6 +622,275 @@ async function executeAwsTerraformEcsPlan(operationId: string, input: Record<str
       safeOutputSummary: safety.safeOutputSummary,
       durationMs: Date.now() - startedAt,
       completedAt: planGeneratedAt,
+    };
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
+async function executeAwsTerraformEcsApply(
+  operationId: string,
+  organizationId: string,
+  input: Record<string, unknown>,
+  approvedAt: Date | null,
+  approvedByUserId: string | null,
+): Promise<Record<string, unknown>> {
+  if (!approvedAt) {
+    throw new Error('AWS ECS Apply operation requires approval before execution.');
+  }
+
+  if (process.env.AWS_DEPLOYMENT_APPLY_ENABLED !== 'true') {
+    throw new Error('AWS deployment apply is disabled in this environment.');
+  }
+
+  const targetSlug = stringField(input, 'targetSlug');
+  const workspaceSlug = stringField(input, 'workspaceSlug');
+  const environmentSlug = stringField(input, 'environmentSlug');
+  const imageUri = stringField(input, 'imageUri');
+  const imageDigest = optionalStringField(input, 'imageDigest');
+  const sourcePlanOperationId = stringField(input, 'sourcePlanOperationId');
+
+  if (targetSlug !== workspaceSlug) {
+    throw new Error('AWS Terraform ECS apply target is invalid.');
+  }
+  const allowedWorkspaces = parseAllowedJobs(process.env.AWS_ALLOWED_DEPLOYMENT_WORKSPACES);
+  if (!allowedWorkspaces.includes(workspaceSlug)) {
+    throw new Error('AWS Terraform ECS workspace is not allowlisted.');
+  }
+
+  const stateBucket = process.env.AWS_TERRAFORM_STATE_BUCKET?.trim();
+  const stateLockTable = process.env.AWS_TERRAFORM_STATE_DYNAMODB_TABLE?.trim();
+  const stateRegion = process.env.AWS_TERRAFORM_STATE_REGION?.trim();
+  if (!stateBucket || !stateLockTable || !stateRegion) {
+    throw new Error('AWS Terraform remote state is not fully configured.');
+  }
+
+  const sourcePlan = await db.operation.findFirst({
+    where: {
+      id: sourcePlanOperationId,
+      organizationId,
+      provider: OperationProvider.AWS,
+      operationType: OperationType.AWS_TERRAFORM_ECS_PLAN,
+    },
+  });
+  if (!sourcePlan) {
+    throw new Error(`AWS Terraform ECS apply source plan operation ${sourcePlanOperationId} not found.`);
+  }
+  if (sourcePlan.status !== OperationStatus.SUCCEEDED) {
+    throw new Error('AWS Terraform ECS apply source plan was not successful.');
+  }
+
+  const sourcePlanAgeSeconds = Math.max(0, Math.floor((Date.now() - sourcePlan.updatedAt.getTime()) / 1000));
+  if (sourcePlanAgeSeconds > 24 * 60 * 60) {
+    throw new Error('AWS Terraform ECS apply source plan is stale (older than 24 hours).');
+  }
+
+  const sourcePlanInput = toRecord(sourcePlan.input);
+  const sourcePlanResult = toRecord(sourcePlan.result);
+  const sourceAddCount = safeNumberField(sourcePlanResult, 'addCount');
+  const sourceChangeCount = safeNumberField(sourcePlanResult, 'changeCount');
+  const sourceDestroyCount = safeNumberField(sourcePlanResult, 'destroyCount');
+  const sourceApplyEligible = sourcePlanResult.applyEligible === true;
+  const sourceRiskLevel = optionalStringField(sourcePlanResult, 'riskLevel') ?? 'LOW';
+
+  if (
+    sourcePlanInput.targetSlug !== targetSlug ||
+    sourcePlanInput.environmentSlug !== environmentSlug ||
+    sourcePlanInput.imageUri !== imageUri ||
+    (sourcePlanInput.imageDigest ?? null) !== (imageDigest ?? null)
+  ) {
+    throw new Error('AWS Terraform ECS apply variables mismatch against approved plan.');
+  }
+
+  if (
+    sourceDestroyCount > 0 ||
+    sourceApplyEligible !== true ||
+    sourceRiskLevel === 'HIGH' ||
+    sourceRiskLevel === 'BLOCKED'
+  ) {
+    throw new Error('AWS Terraform ECS apply source plan is unsafe (destroy actions or high risk).');
+  }
+
+  const workspace = await getTerraformWorkspaceBySlug(workspaceSlug);
+  if (!workspace) throw new Error('AWS Terraform ECS workspace is not allowlisted.');
+
+  const toolStatus = await detectTerraformTool();
+  if (toolStatus.status !== 'CONNECTED' || (toolStatus.tool !== 'terraform' && toolStatus.tool !== 'tofu')) {
+    throw new Error(toolStatus.message);
+  }
+
+  const startedAt = Date.now();
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'autoops-aws-ecs-apply-'));
+  const tempWorkspace = path.join(tempRoot, workspace.slug);
+
+  try {
+    await cp(workspace.absolutePath, tempWorkspace, {
+      recursive: true,
+      filter: (source) => {
+        const base = path.basename(source);
+        return base !== '.terraform' && base !== 'terraform.tfstate' && !base.endsWith('.tfstate');
+      },
+    });
+
+    const backendBlockPath = path.join(tempWorkspace, 'autoops.backend.tf');
+    const backendPath = path.join(tempWorkspace, 'autoops.backend.tfvars');
+    const tfvarsPath = path.join(tempWorkspace, 'autoops.plan.auto.tfvars.json');
+    await writeFile(backendBlockPath, 'terraform {\n  backend "s3" {}\n}\n', 'utf8');
+    await writeFile(
+      backendPath,
+      [
+        `bucket = ${JSON.stringify(stateBucket)}`,
+        `key = ${JSON.stringify(`autoops/${workspace.slug}/${environmentSlug}/terraform.tfstate`)}`,
+        `region = ${JSON.stringify(stateRegion)}`,
+        `dynamodb_table = ${JSON.stringify(stateLockTable)}`,
+        'encrypt = true',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      tfvarsPath,
+      JSON.stringify(
+        {
+          aws_region: process.env.AWS_REGION?.trim() || stateRegion,
+          environment: environmentSlug,
+          container_image: imageDigest ? `${imageUri}@${imageDigest}` : imageUri,
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    const init = await runTool(toolStatus.tool, ['init', '-input=false', '-no-color', `-backend-config=${backendPath}`], tempWorkspace);
+    const validate = await runTool(toolStatus.tool, ['validate', '-no-color'], tempWorkspace);
+    const plan = await runToolAllowExitCodes(
+      toolStatus.tool,
+      ['plan', '-input=false', '-no-color', '-lock=true', '-detailed-exitcode', '-out=autoops.tfplan'],
+      tempWorkspace,
+      [0, 2],
+    );
+
+    const safety = summarizeTerraformPlanSafety(`${init}\n${validate}\n${plan.output}`);
+
+    if (
+      safety.addCount !== sourceAddCount ||
+      safety.changeCount !== sourceChangeCount ||
+      safety.destroyCount !== sourceDestroyCount ||
+      safety.destroyCount > 0 ||
+      safety.applyEligible !== true ||
+      safety.riskLevel === 'HIGH'
+    ) {
+      throw new Error('New plan summary does not match approved plan summary or has destroy/high risk actions.');
+    }
+
+    const applyOutput = await runTool(
+      toolStatus.tool,
+      ['apply', '-input=false', '-no-color', '-lock=true', 'autoops.tfplan'],
+      tempWorkspace,
+    );
+
+    const applyCompletedAt = new Date().toISOString();
+
+    let ecsVerification: AwsEcsVerificationSummary = { status: 'SKIPPED', message: 'AWS clients not created' };
+    try {
+      const region = process.env.AWS_REGION?.trim() || stateRegion;
+      const ecs = new ECSClient({ region });
+      const cloudwatchLogs = new CloudWatchLogsClient({ region });
+      const elb = new ElasticLoadBalancingV2Client({ region });
+
+      const clustersList = await ecs.send(new ListClustersCommand({}));
+      const clusterArns = clustersList.clusterArns ?? [];
+
+      const verificationClusters: NonNullable<AwsEcsVerificationSummary['clusters']> = [];
+      for (const clusterArn of clusterArns.slice(0, 3)) {
+        const clusterName = clusterArn.split('/').pop() ?? clusterArn;
+        const servicesList = await ecs.send(new ListServicesCommand({ cluster: clusterArn }));
+        const serviceArns = servicesList.serviceArns ?? [];
+
+        const servicesDetails: NonNullable<AwsEcsVerificationSummary['clusters']>[number]['services'] = [];
+        if (serviceArns.length > 0) {
+          const servicesDesc = await ecs.send(
+            new DescribeServicesCommand({
+              cluster: clusterArn,
+              services: serviceArns.slice(0, 5),
+            }),
+          );
+
+          for (const s of servicesDesc.services ?? []) {
+            servicesDetails.push({
+              serviceName: s.serviceName ?? null,
+              desiredCount: s.desiredCount ?? null,
+              runningCount: s.runningCount ?? null,
+              taskDefinition: s.taskDefinition?.split('/').pop() ?? s.taskDefinition ?? null,
+              status: s.status ?? null,
+              deployments: (s.deployments ?? []).map((d: Deployment) => ({
+                id: d.id ?? null,
+                status: d.status ?? null,
+                desiredCount: d.desiredCount ?? null,
+                runningCount: d.runningCount ?? null,
+                createdAt: d.createdAt?.toISOString() ?? null,
+              })),
+            });
+          }
+        }
+
+        verificationClusters.push({
+          clusterName,
+          services: servicesDetails,
+        });
+      }
+
+      let logGroupsList: string[] = [];
+      try {
+        const logsRes = await cloudwatchLogs.send(new DescribeLogGroupsCommand({ limit: 5 }));
+        logGroupsList = (logsRes.logGroups ?? []).map((g: LogGroup) => g.logGroupName ?? 'unknown');
+      } catch {
+        logGroupsList = [];
+      }
+
+      let lbList: string[] = [];
+      try {
+        const elbRes = await elb.send(new DescribeLoadBalancersCommand({ PageSize: 5 }));
+        lbList = (elbRes.LoadBalancers ?? []).map((l: LoadBalancer) => l.DNSName ?? 'unknown');
+      } catch {
+        lbList = [];
+      }
+
+      ecsVerification = {
+        status: 'SUCCESS',
+        clusters: verificationClusters,
+        logGroups: logGroupsList,
+        loadBalancers: lbList,
+        checkedAt: new Date().toISOString(),
+      };
+    } catch (ecsErr: unknown) {
+      ecsVerification = {
+        status: 'PARTIAL_VERIFIED',
+        message: ecsErr instanceof Error ? ecsErr.message : 'ECS verification query failed',
+        checkedAt: new Date().toISOString(),
+      };
+    }
+
+    return {
+      action: 'ecs-apply',
+      operationId,
+      targetSlug,
+      environmentSlug,
+      imageUri,
+      imageDigest,
+      sourcePlanOperationId,
+      addCount: safety.addCount,
+      changeCount: safety.changeCount,
+      destroyCount: 0,
+      applyStartedAt: new Date(startedAt).toISOString(),
+      applyCompletedAt,
+      result: 'succeeded',
+      ecsVerification,
+      approvalReference: `Approved by user ID: ${approvedByUserId ?? 'unknown'} at ${approvedAt.toISOString()}`,
+      safeOutputSummary: summarizeCommandOutput(`${init}\n${validate}\n${plan.output}\n${applyOutput}`),
+      status: 'completed',
+      completedAt: applyCompletedAt,
     };
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
