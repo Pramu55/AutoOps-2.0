@@ -13,6 +13,7 @@ vi.mock('@autoops/database', () => ({
 const {
   canViewProviderInventory,
   isProviderInventoryAccessEnabledForOrg,
+  isProviderInventoryOrgAllowed,
   requireProviderInventoryAccess,
 } = await import('./integration-access.service.js');
 
@@ -61,6 +62,30 @@ describe('integration provider data boundaries', () => {
     expect(organizationFindUnique).not.toHaveBeenCalled();
   });
 
+  it('allows an organization by slug allowlist only', () => {
+    process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS = 'company-a';
+
+    expect(isProviderInventoryOrgAllowed('company-a', 'org-a')).toBe(true);
+  });
+
+  it('allows an organization by ID allowlist only', () => {
+    process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS = 'org-id-b';
+
+    expect(isProviderInventoryOrgAllowed('company-b', 'org-id-b')).toBe(true);
+  });
+
+  it('does not allow an organization slug to match the ID allowlist', () => {
+    process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS = 'org-id-b';
+
+    expect(isProviderInventoryOrgAllowed('org-id-b', 'different-org-id')).toBe(false);
+  });
+
+  it('does not allow an organization ID to match the slug allowlist', () => {
+    process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS = 'company-a';
+
+    expect(isProviderInventoryOrgAllowed('different-slug', 'company-a')).toBe(false);
+  });
+
   it('supports an explicit provider inventory allowlist for company deployments', async () => {
     process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS = 'company-a';
     process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS = 'org-id-b';
@@ -71,6 +96,15 @@ describe('integration provider data boundaries', () => {
     });
 
     await expect(isProviderInventoryAccessEnabledForOrg('org-id-b')).resolves.toBe(true);
+  });
+
+  it('preserves the local demo slug allowlist behavior', () => {
+    process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS =
+      'autoops-demo,pramod-s-ss-workspace';
+
+    expect(isProviderInventoryOrgAllowed('autoops-demo', 'org-demo')).toBe(true);
+    expect(isProviderInventoryOrgAllowed('pramod-s-ss-workspace', 'org-pramod')).toBe(true);
+    expect(isProviderInventoryOrgAllowed('new-user-workspace', 'org-new')).toBe(false);
   });
 
   it('keeps the legacy slug allowlist supported without enabling every org', async () => {

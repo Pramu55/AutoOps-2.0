@@ -67,9 +67,12 @@ export async function requireProviderInventoryAccess(
 }
 
 export function isProviderInventoryOrgAllowed(slug: string, organizationId?: string): boolean {
-  const allowed = providerInventoryAllowlist();
-  if (allowed.includes('*')) return true;
-  return allowed.includes(slug) || (organizationId ? allowed.includes(organizationId) : false);
+  const allowlist = providerInventoryAllowlist();
+  if (allowlist.slugAllowlist.includes('*') || allowlist.idAllowlist.includes('*')) return true;
+  return (
+    allowlist.slugAllowlist.includes(slug) ||
+    (organizationId ? allowlist.idAllowlist.includes(organizationId) : false)
+  );
 }
 
 export async function isProviderInventoryAccessEnabledForOrg(organizationId: string): Promise<boolean> {
@@ -81,13 +84,15 @@ export async function isProviderInventoryAccessEnabledForOrg(organizationId: str
   return organization ? isProviderInventoryOrgAllowed(organization.slug, organization.id) : false;
 }
 
-function providerInventoryAllowlist(): string[] {
-  return [
-    ...listEnv(process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS),
-    ...listEnv(process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS),
-    // Backward-compatible env name used by the first provider-boundary pass.
-    ...listEnv(process.env.PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS),
-  ];
+function providerInventoryAllowlist(): { slugAllowlist: string[]; idAllowlist: string[] } {
+  return {
+    slugAllowlist: [
+      ...listEnv(process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS),
+      // Backward-compatible env name used by the first provider-boundary pass.
+      ...listEnv(process.env.PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS),
+    ],
+    idAllowlist: listEnv(process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS),
+  };
 }
 
 function listEnv(value: string | undefined): string[] {

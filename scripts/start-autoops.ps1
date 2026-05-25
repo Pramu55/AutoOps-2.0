@@ -37,7 +37,7 @@ if (-not $providerAllowlist -and (Test-Path ".env")) {
 if ($providerAllowlist) {
   Write-Host "Provider inventory org slug allowlist: configured" -ForegroundColor Green
 } else {
-  Write-Host "Provider inventory org slug allowlist: not set; local Compose will default to autoops-demo only." -ForegroundColor Yellow
+  Write-Host "Provider inventory org slug allowlist: not set; local Compose will default to autoops-demo and pramod-s-ss-workspace." -ForegroundColor Yellow
 }
 
 Write-Host "`nStarting Jenkins..." -ForegroundColor Cyan
