@@ -31,6 +31,23 @@ type AuthContext = {
   role?: string;
 };
 
+export const PROVIDER_ORG_POLICY_MESSAGE = 'Provider inventory is disabled for this organization.';
+
+export const PROVIDER_ORG_POLICY_REMEDIATION = [
+  'Use the demo/admin workspace for built-in local demo connectors.',
+  'Ask a platform admin to enable provider inventory for this organization.',
+  "For production, configure this organization's own provider credentials through the approved deployment process.",
+] as const;
+
+export type ProviderOrgPolicyBlockedStatus = {
+  status: 'BLOCKED_BY_ORG_POLICY';
+  configured: false;
+  providerInventoryEnabled: false;
+  message: string;
+  remediation: string[];
+  checkedAt: string;
+};
+
 /**
  * Throws UnauthorizedError if the caller's role/org is not allowed to view shared provider inventory.
  *
@@ -82,6 +99,24 @@ export async function isProviderInventoryAccessEnabledForOrg(organizationId: str
   });
 
   return organization ? isProviderInventoryOrgAllowed(organization.slug, organization.id) : false;
+}
+
+export async function getProviderInventoryBlockedStatus(
+  auth: AuthContext | undefined,
+): Promise<ProviderOrgPolicyBlockedStatus | null> {
+  if (!auth?.orgId) return providerInventoryBlockedStatus();
+  return (await isProviderInventoryAccessEnabledForOrg(auth.orgId)) ? null : providerInventoryBlockedStatus();
+}
+
+export function providerInventoryBlockedStatus(): ProviderOrgPolicyBlockedStatus {
+  return {
+    status: 'BLOCKED_BY_ORG_POLICY',
+    configured: false,
+    providerInventoryEnabled: false,
+    message: PROVIDER_ORG_POLICY_MESSAGE,
+    remediation: [...PROVIDER_ORG_POLICY_REMEDIATION],
+    checkedAt: new Date().toISOString(),
+  };
 }
 
 function providerInventoryAllowlist(): { slugAllowlist: string[]; idAllowlist: string[] } {

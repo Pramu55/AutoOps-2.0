@@ -1,4 +1,16 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+
+const { organizationFindUnique } = vi.hoisted(() => ({
+  organizationFindUnique: vi.fn(),
+}));
+
+vi.mock('@autoops/database', () => ({
+  prisma: {
+    organization: {
+      findUnique: organizationFindUnique,
+    },
+  },
+}));
 
 vi.mock('@autoops/utils', async (importOriginal) => {
   const actual = await importOriginal<any>();
@@ -26,7 +38,24 @@ import { observabilityIntegrationController } from './observability/observabilit
 import { observabilityIntegrationService } from './observability/observability-integration.service.js';
 
 describe('Integration Status Controllers Zero-Trust Sanitization', () => {
-  const mockReq = {} as Request;
+  const mockReq = {
+    auth: {
+      userId: 'user-demo',
+      orgId: 'org-demo',
+      role: 'OWNER',
+    },
+  } as Request;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS = 'autoops-demo';
+    delete process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS;
+    delete process.env.PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS;
+    organizationFindUnique.mockResolvedValue({
+      id: 'org-demo',
+      slug: 'autoops-demo',
+    });
+  });
 
   it('Jenkins status does not include baseUrl, allowedJobs, or node details', async () => {
     vi.spyOn(jenkinsService, 'getStatus').mockResolvedValue({

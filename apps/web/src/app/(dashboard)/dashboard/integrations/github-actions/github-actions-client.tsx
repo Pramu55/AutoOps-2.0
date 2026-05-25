@@ -12,6 +12,7 @@ type WorkflowsResponse = { data: GitHubActionsListResponse<GitHubWorkflowSummary
 type RunsResponse = { data: GitHubActionsListResponse<GitHubWorkflowRunSummary> };
 
 function badge(status?: string) {
+  if (status === 'BLOCKED_BY_ORG_POLICY') return 'border-amber-300 bg-amber-50 text-amber-800';
   if (status === 'CONNECTED' || status === 'success') return 'border-emerald-300 bg-emerald-50 text-emerald-700';
   if (status === 'NOT_CONFIGURED' || status === 'queued' || status === 'in_progress') return 'border-amber-300 bg-amber-50 text-amber-800';
   if (status === 'failure' || status === 'AUTH_FAILED' || status === 'UNREACHABLE' || status === 'ERROR') return 'border-rose-300 bg-rose-50 text-rose-700';
@@ -35,12 +36,18 @@ export function GitHubActionsClient() {
     setLoading(true);
     setError(null);
     try {
-      const [statusResponse, workflowsResponse, runsResponse] = await Promise.all([
-        api.get<StatusResponse>('/v1/integrations/github-actions/status'),
+      const statusResponse = await api.get<StatusResponse>('/v1/integrations/github-actions/status');
+      setStatus(statusResponse.data);
+      if (statusResponse.data.status === 'BLOCKED_BY_ORG_POLICY') {
+        setWorkflows([]);
+        setRuns([]);
+        return;
+      }
+
+      const [workflowsResponse, runsResponse] = await Promise.all([
         api.get<WorkflowsResponse>('/v1/integrations/github-actions/workflows'),
         api.get<RunsResponse>('/v1/integrations/github-actions/runs'),
       ]);
-      setStatus(statusResponse.data);
       setWorkflows(workflowsResponse.data.items);
       setRuns(runsResponse.data.items);
     } catch (loadError) {
@@ -72,6 +79,21 @@ export function GitHubActionsClient() {
         </div>
       </section>
       {error ? <section className="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</section> : null}
+      {status?.status === 'BLOCKED_BY_ORG_POLICY' ? (
+        <section className="rounded-md border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
+          <h2 className="text-base font-semibold text-slate-900">Provider access is disabled for this organization</h2>
+          <p className="mt-2 leading-6">
+            This workspace cannot view shared GitHub Actions inventory until provider access is enabled for this organization.
+          </p>
+          <ul className="mt-3 list-disc space-y-1 pl-5">
+            {(status.remediation ?? [
+              'Use the demo/admin workspace for built-in local demo connectors.',
+              'Ask a platform admin to add this organization slug to PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS.',
+              "For production, configure this organization's own GitHub credentials through the approved deployment process.",
+            ]).map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </section>
+      ) : null}
       <div className="grid gap-4 lg:grid-cols-3">
         <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase text-slate-500">Repository</p>

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 type Response = { data: DevOpsToolsStatusResponse };
 
 function tone(status: string) {
+  if (status === 'BLOCKED_BY_ORG_POLICY') return 'border-amber-300 bg-amber-50 text-amber-800';
   return status === 'CONNECTED' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-amber-300 bg-amber-50 text-amber-800';
 }
 
@@ -47,6 +48,19 @@ export function DevOpsToolsClient() {
           </Button>
         </div>
       </section>
+      {data?.status === 'BLOCKED_BY_ORG_POLICY' ? (
+        <section className="rounded-md border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
+          <h2 className="text-base font-semibold text-slate-900">Provider access is disabled for this organization</h2>
+          <p className="mt-2 leading-6">
+            {data.message ?? 'This workspace cannot view shared runtime tool readiness until provider access is enabled for this organization.'}
+          </p>
+          {data.remediation?.length ? (
+            <ul className="mt-3 list-disc space-y-1 pl-5">
+              {data.remediation.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
       <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
         <div className="overflow-x-auto">
           <table className="min-w-[760px] w-full text-left text-sm">

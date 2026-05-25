@@ -36,10 +36,16 @@ import {
   awsReleaseRollbackRequestSchema,
 } from '@autoops/types';
 import { awsService } from './aws.service.js';
-import { requireProviderInventoryAccess } from '../integration-access.service.js';
+import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
 
 export class AwsController {
-  status = async (_req: Request, res: Response<{ data: AwsStatusResponse }>): Promise<void> => {
+  status = async (req: Request, res: Response<{ data: AwsStatusResponse }>): Promise<void> => {
+    const blocked = await getProviderInventoryBlockedStatus(req.auth);
+    if (blocked) {
+      res.json({ data: blocked as unknown as AwsStatusResponse });
+      return;
+    }
+
     const raw = await awsService.getStatus();
     const safeStatus = {
       status: raw.status,

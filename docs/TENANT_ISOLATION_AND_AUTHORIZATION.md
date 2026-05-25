@@ -113,6 +113,8 @@ Protected provider inventory includes Jenkins jobs/builds, GitHub Actions workfl
 
 Safe provider status endpoints may return status, configured flags, messages, and timestamps, but must not return credentials, account secrets, kubeconfig, Docker socket details, Jenkins tokens, raw inventory, or other tenants' operation history.
 
+When an organization is not enabled for shared provider inventory, provider status endpoints return `BLOCKED_BY_ORG_POLICY` with safe onboarding steps. This is distinct from `NOT_CONFIGURED`: blocked means the tenant is not allowlisted, while not configured means the tenant is allowlisted but connector configuration is missing.
+
 Provider action endpoints also require provider access. A newly registered organization cannot trigger Jenkins, Docker, Kubernetes, Terraform/OpenTofu, Ansible, or AWS provider actions using shared demo/global connector configuration.
 
 ### Worker Tenant Scoping

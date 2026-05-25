@@ -1,4 +1,5 @@
 export const DevOpsToolStatus = {
+  BLOCKED_BY_ORG_POLICY: 'BLOCKED_BY_ORG_POLICY',
   CONNECTED: 'CONNECTED',
   NOT_INSTALLED: 'NOT_INSTALLED',
   ERROR: 'ERROR',
@@ -16,6 +17,11 @@ export interface DevOpsToolSummary {
 }
 
 export interface DevOpsToolsStatusResponse {
+  status?: DevOpsToolStatus;
+  configured?: boolean;
+  providerInventoryEnabled?: boolean;
+  message?: string;
+  remediation?: string[];
   tools: DevOpsToolSummary[];
   generatedAt: string;
 }

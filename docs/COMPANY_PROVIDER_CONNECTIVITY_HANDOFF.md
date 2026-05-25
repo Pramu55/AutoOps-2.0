@@ -6,12 +6,16 @@ AutoOps does not ship with company credentials. Jenkins, Kubernetes, Docker, AWS
 
 Provider status endpoints are safe and secret-free. Provider inventory is stricter because it can reveal shared platform resources such as Jenkins builds, Docker containers, Kubernetes workloads, AWS identity, and observability targets.
 
+Blocked organizations receive `BLOCKED_BY_ORG_POLICY` from status endpoints. This is not connector misconfiguration; it means tenant isolation is working and shared provider inventory is intentionally disabled for that organization. Inventory/detail/action endpoints still return `403` while blocked.
+
 To enable provider inventory for an approved tenant organization, set one of:
 
-- `PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS=autoops-demo`
+- `PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS=autoops-demo,pramod-s-ss-workspace`
 - `PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS=<organization-id>`
 
 Local Docker Compose defaults the seeded demo organization slug `autoops-demo` for company-demo readiness. New registered organizations remain blocked unless explicitly added.
+
+Use `.\scripts\show-current-org-context.ps1 -Email "pramod.local@autoops.dev" -Password "StrongPass123"` to confirm the current organization slug/id without printing tokens.
 
 ## Jenkins
 

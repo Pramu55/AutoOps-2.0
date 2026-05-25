@@ -73,6 +73,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 function statusTone(status: string): string {
+  if (status === 'BLOCKED_BY_ORG_POLICY') return 'border-amber-400/25 bg-amber-400/10 text-amber-700';
   if (status === 'CONNECTED') return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-700';
   if (status === 'UNREACHABLE') return 'border-rose-400/30 bg-rose-500/10 text-rose-700';
   return 'border-amber-400/25 bg-amber-400/10 text-amber-700';
@@ -207,12 +208,19 @@ export function KubernetesClient() {
     setActivityError(null);
 
     try {
-      const [statusResponse, summaryResponse] = await Promise.all([
-        api.get<KubernetesStatusResponse>('/v1/integrations/kubernetes/status'),
-        api.get<KubernetesSummaryResponse>('/v1/integrations/kubernetes/summary'),
-      ]);
-
+      const statusResponse = await api.get<KubernetesStatusResponse>('/v1/integrations/kubernetes/status');
       setStatus(statusResponse.data);
+      if (statusResponse.data.status === 'BLOCKED_BY_ORG_POLICY') {
+        setSummary(null);
+        setNamespaces([]);
+        setWorkloads([]);
+        setPods([]);
+        setServices([]);
+        setNodes([]);
+        return;
+      }
+
+      const summaryResponse = await api.get<KubernetesSummaryResponse>('/v1/integrations/kubernetes/summary');
       setSummary(summaryResponse.data);
 
       if (summaryResponse.data.status === 'CONNECTED') {
@@ -424,12 +432,27 @@ export function KubernetesClient() {
             <AlertTriangle className="mt-1 h-5 w-5 shrink-0 text-amber-700" />
             <div>
               <h2 className="text-base font-semibold text-slate-900">
-                {currentStatus === 'NOT_CONFIGURED' ? 'Kubernetes is not configured' : 'Kubernetes is unreachable'}
+                {currentStatus === 'BLOCKED_BY_ORG_POLICY'
+                  ? 'Provider access is disabled for this organization'
+                  : currentStatus === 'NOT_CONFIGURED'
+                    ? 'Kubernetes is not configured'
+                    : 'Kubernetes is unreachable'}
               </h2>
               <p className="mt-2 text-sm leading-6 text-amber-800/80">
-                {status?.message ??
-                  'Set KUBECONFIG for the API container to enable Kubernetes discovery.'}
+                {currentStatus === 'BLOCKED_BY_ORG_POLICY'
+                  ? 'This workspace cannot view shared Kubernetes inventory until provider access is enabled for this organization.'
+                  : status?.message ??
+                    'Set KUBECONFIG for the API container to enable Kubernetes discovery.'}
               </p>
+              {currentStatus === 'BLOCKED_BY_ORG_POLICY' ? (
+                <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-900">
+                  {(status?.remediation ?? [
+                    'Use the demo/admin workspace for built-in local demo connectors.',
+                    'Ask a platform admin to add this organization slug to PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS.',
+                    "For production, configure this organization's own Kubernetes credentials through the approved deployment process.",
+                  ]).map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              ) : null}
               {currentStatus === 'NOT_CONFIGURED' ? (
                 <div className="mt-4 grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
                   <p className="font-medium text-slate-900">Windows Docker Desktop setup</p>

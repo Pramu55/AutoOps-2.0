@@ -5,10 +5,25 @@ import type {
   PrometheusIntegrationStatus,
 } from '@autoops/types';
 import { observabilityIntegrationService } from './observability-integration.service.js';
-import { requireProviderInventoryAccess } from '../integration-access.service.js';
+import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
 
 export class ObservabilityIntegrationController {
-  status = async (_req: Request, res: Response<{ data: ObservabilityIntegrationStatusResponse }>): Promise<void> => {
+  status = async (req: Request, res: Response<{ data: ObservabilityIntegrationStatusResponse }>): Promise<void> => {
+    const blocked = await getProviderInventoryBlockedStatus(req.auth);
+    if (blocked) {
+      const provider = {
+        ...blocked,
+      };
+      res.json({
+        data: {
+          prometheus: provider as unknown as PrometheusIntegrationStatus,
+          grafana: provider as unknown as GrafanaIntegrationStatus,
+          generatedAt: blocked.checkedAt,
+        },
+      });
+      return;
+    }
+
     const raw = await observabilityIntegrationService.getStatus();
     const safePrometheus = {
       status: raw.prometheus.status,

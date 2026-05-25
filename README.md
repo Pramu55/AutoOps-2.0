@@ -39,6 +39,8 @@ Real DevOps work is not only clicking buttons. Teams need safe execution, clear 
 - Production readiness docs, security checklist, backup/restore scripts, and release checks.
 - GitHub Actions CI and secret-scan release gates.
 
+Provider onboarding note: new organizations are intentionally blocked from shared provider inventory and see `BLOCKED_BY_ORG_POLICY` onboarding until a platform admin explicitly enables provider access for that organization. See [Provider Onboarding and Organization Access](./docs/PROVIDER_ONBOARDING_AND_ORG_ACCESS.md).
+
 ## Tech Stack
 
 | Layer | Technology |

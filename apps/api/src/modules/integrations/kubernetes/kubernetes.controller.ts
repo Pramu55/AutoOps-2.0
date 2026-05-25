@@ -19,7 +19,7 @@ import type {
 } from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { kubernetesService } from './kubernetes.service.js';
-import { requireProviderInventoryAccess } from '../integration-access.service.js';
+import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
 
 type WorkloadParams = {
   namespace: string;
@@ -27,7 +27,13 @@ type WorkloadParams = {
 };
 
 export class KubernetesController {
-  status = async (_req: Request, res: Response<{ data: KubernetesStatus }>): Promise<void> => {
+  status = async (req: Request, res: Response<{ data: KubernetesStatus }>): Promise<void> => {
+    const blocked = await getProviderInventoryBlockedStatus(req.auth);
+    if (blocked) {
+      res.json({ data: { ...blocked, readOnly: true } as unknown as KubernetesStatus });
+      return;
+    }
+
     const raw = await kubernetesService.getStatus();
     const safeStatus = {
       status: raw.status,

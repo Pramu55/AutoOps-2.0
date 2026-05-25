@@ -16,14 +16,20 @@ import {
 } from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { dockerService } from './docker.service.js';
-import { requireProviderInventoryAccess } from '../integration-access.service.js';
+import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
 
 type ContainerParams = {
   containerId: string;
 };
 
 export class DockerController {
-  status = async (_req: Request, res: Response<{ data: DockerStatusResponse }>): Promise<void> => {
+  status = async (req: Request, res: Response<{ data: DockerStatusResponse }>): Promise<void> => {
+    const blocked = await getProviderInventoryBlockedStatus(req.auth);
+    if (blocked) {
+      res.json({ data: blocked as unknown as DockerStatusResponse });
+      return;
+    }
+
     const raw = await dockerService.getStatus();
     const safeStatus = {
       status: raw.status,

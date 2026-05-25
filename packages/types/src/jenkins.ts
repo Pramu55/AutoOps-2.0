@@ -26,6 +26,8 @@ export interface JenkinsStatusResponse {
   numExecutors?: number;
   useCrumbs?: boolean;
   message: string;
+  providerInventoryEnabled?: boolean;
+  remediation?: string[];
   checkedAt: string;
 }
 
