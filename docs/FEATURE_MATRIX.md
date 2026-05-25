@@ -41,6 +41,11 @@
 | AWS Terraform ECS | Approval-gated ECS apply | Complete | Yes when configured | APPLY confirmation + approval required + plan safety validation | No apply runs without approval; no destroy; no secrets exposed; ECS verification after apply |
 | AWS Guardrails | Cost estimate and blast-radius analysis | Complete | Yes from safe plan metadata | Account/region allowlists + local conservative estimate + mutation block | No Pricing API; estimated monthly cost is not a billing guarantee |
 | AWS Guardrails | Apply/promotion/rollback enforcement | Complete | Yes | Guardrails checked at plan time and immediately before mutation | `BLOCKED` guardrails cannot be overridden by approval |
+| Company Handoff | Company deployment handoff package | Complete | N/A | Documentation and readiness script | Does not claim company deployment; requires official approval and credentials |
+| Company Handoff | Company security review checklist | Complete | N/A | Identity, provider, secret, network, audit, worker, and guardrail checks | Company pilot gate |
+| Provider Onboarding | Organization provider access UX | Complete | Yes | `BLOCKED_BY_ORG_POLICY` for blocked orgs | New orgs see onboarding instead of misleading connector misconfiguration |
+| Resource Graph | Resource graph foundation planning | Planned foundation | N/A | Docs and shared contracts only | No DB migration or fake graph data |
+| Resource Graph | URN helper foundation | Complete | N/A | Deterministic secret-rejecting URN builders | No organization IDs in public URNs |
 | AWS ECS Releases | Release history & timeline | Complete | Yes | Tenant-scoped by organizationId | No fake demo releases; empty history for new orgs |
 | AWS ECS Releases | Release promotion | Complete | Yes | PROMOTE confirmation + production approval gate | Promotion reuses plan and apply safety gates; no arbitrary image URIs |
 | AWS ECS Releases | Governed rollback | Complete | Yes | ROLLBACK confirmation + always requires approval | Rollback blocked if destroyCount > 0 or applyEligible=false; no direct mutations |

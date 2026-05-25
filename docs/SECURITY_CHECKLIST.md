@@ -28,10 +28,14 @@ Authorization:
 - Provider inventory uses defense-in-depth: role check plus organization-level provider access allowlist.
 - Demo/company provider inventory must be explicitly scoped with `PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS` or `PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS`; OWNER/ADMIN alone is not enough.
 - Blocked organization provider status must return `BLOCKED_BY_ORG_POLICY` onboarding, not misleading connector `NOT_CONFIGURED` messaging.
+- Company provider access must be approved by the infrastructure owner and scoped to a specific organization.
+- Wildcard provider inventory access must not be used in production.
+- No direct company deployment or provider connection is allowed without written authorization.
 
 ## Environment and Secrets
 
 - Never commit `.env`.
+- Never commit company provider credentials, kubeconfig, AWS keys, Jenkins tokens, GitHub tokens, or Docker credentials.
 - Rotate `JWT_SECRET` and `JWT_REFRESH_SECRET` before production.
 - Use different access and refresh JWT secrets.
 - Use a strong PostgreSQL password.
@@ -76,6 +80,7 @@ Authorization:
 ## Infrastructure Automation
 
 - Do not expose arbitrary shell command execution.
+- Do not let UI, AI, or API run raw provider commands such as shell, `kubectl`, `docker`, or Terraform directly.
 - Do not accept arbitrary Terraform/OpenTofu workspace paths.
 - Do not accept arbitrary Ansible playbook or inventory paths.
 - Do not commit `.terraform/`, `*.tfstate`, Ansible vault files, SSH private keys, or cloud credentials.
