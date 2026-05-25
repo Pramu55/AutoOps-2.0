@@ -178,6 +178,17 @@ Open:
 
 See [Route Reference](./docs/ROUTE_REFERENCE.md).
 
+## Company / Enterprise Pilot Readiness
+
+AutoOps includes a company handoff package for safe evaluation and controlled pilot planning. It does not claim deployment to any specific company, and real company deployment requires official authorization, credentials, network access, security review, and stakeholder approval.
+
+- [Company Deployment Handoff](./docs/COMPANY_DEPLOYMENT_HANDOFF.md)
+- [Company Security Review Checklist](./docs/COMPANY_SECURITY_REVIEW_CHECKLIST.md)
+- [Company Pilot Runbook](./docs/COMPANY_PILOT_RUNBOOK.md)
+- [Enterprise Architecture Overview](./docs/ENTERPRISE_ARCHITECTURE_OVERVIEW.md)
+- [TCS-Ready Positioning](./docs/TCS_READY_POSITIONING.md)
+- [Resource Graph Foundation Plan](./docs/RESOURCE_GRAPH_FOUNDATION_PLAN.md)
+
 ## Documentation Map
 
 Start with [Documentation Home](./docs/README.md).
@@ -199,6 +210,12 @@ Start with [Documentation Home](./docs/README.md).
 - [AWS Terraform ECS Plan](./docs/AWS_TERRAFORM_ECS_PLAN.md)
 - [Final Release Checklist](./docs/FINAL_RELEASE_CHECKLIST.md)
 - [Company Handoff Package](./docs/COMPANY_HANDOFF_PACKAGE.md)
+- [Company Deployment Handoff](./docs/COMPANY_DEPLOYMENT_HANDOFF.md)
+- [Company Security Review Checklist](./docs/COMPANY_SECURITY_REVIEW_CHECKLIST.md)
+- [Company Pilot Runbook](./docs/COMPANY_PILOT_RUNBOOK.md)
+- [Enterprise Architecture Overview](./docs/ENTERPRISE_ARCHITECTURE_OVERVIEW.md)
+- [TCS-Ready Positioning](./docs/TCS_READY_POSITIONING.md)
+- [Resource Graph Foundation Plan](./docs/RESOURCE_GRAPH_FOUNDATION_PLAN.md)
 - [Company Provider Connectivity Handoff](./docs/COMPANY_PROVIDER_CONNECTIVITY_HANDOFF.md)
 - [Final Evaluator Report](./docs/FINAL_EVALUATOR_REPORT.md)
 - [GitHub Release and Tagging](./docs/GITHUB_RELEASE_AND_TAGGING.md)

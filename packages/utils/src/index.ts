@@ -9,3 +9,4 @@ export * from './infrastructure-catalog.js';
 export * from './aws-ecr-catalog.js';
 export * from './terraform-plan-summary.js';
 export * from './aws-guardrails.js';
+export * from './resource-urn.js';

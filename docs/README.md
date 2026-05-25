@@ -21,6 +21,11 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 - [Limitations and Roadmap](./LIMITATIONS_AND_ROADMAP.md)
 - [Final Release Checklist](./FINAL_RELEASE_CHECKLIST.md)
 - [Company Handoff Package](./COMPANY_HANDOFF_PACKAGE.md)
+- [Company Deployment Handoff](./COMPANY_DEPLOYMENT_HANDOFF.md)
+- [Company Security Review Checklist](./COMPANY_SECURITY_REVIEW_CHECKLIST.md)
+- [Company Pilot Runbook](./COMPANY_PILOT_RUNBOOK.md)
+- [Enterprise Architecture Overview](./ENTERPRISE_ARCHITECTURE_OVERVIEW.md)
+- [TCS-Ready Positioning](./TCS_READY_POSITIONING.md)
 - [Company Provider Connectivity Handoff](./COMPANY_PROVIDER_CONNECTIVITY_HANDOFF.md)
 - [Provider Onboarding and Organization Access](./PROVIDER_ONBOARDING_AND_ORG_ACCESS.md)
 - [Final Evaluator Report](./FINAL_EVALUATOR_REPORT.md)
@@ -34,15 +39,21 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 ## Architecture
 
 - [Architecture Overview](./ARCHITECTURE_OVERVIEW.md)
+- [Enterprise Architecture Overview](./ENTERPRISE_ARCHITECTURE_OVERVIEW.md)
 - [Controlled Operations Overview](./CONTROLLED_OPERATIONS_OVERVIEW.md)
 - [Infrastructure Automation Center](./INFRASTRUCTURE_AUTOMATION_CENTER.md)
 - [AWS ECR Image Build and Push](./AWS_ECR_IMAGE_BUILD_AND_PUSH.md)
 - [AWS Terraform ECS Plan](./AWS_TERRAFORM_ECS_PLAN.md)
 - [AWS ECS Gated Apply](./AWS_APPROVAL_GATED_ECS_APPLY.md)
+- [Resource Graph Foundation Plan](./RESOURCE_GRAPH_FOUNDATION_PLAN.md)
+- [Incident Graph and Runbook Automation Roadmap](./INCIDENT_GRAPH_AND_RUNBOOK_AUTOMATION_ROADMAP.md)
 
 ## Company Pilot Evaluation
 
 - [Company Pilot Checklist](./COMPANY_PILOT_CHECKLIST.md)
+- [Company Deployment Handoff](./COMPANY_DEPLOYMENT_HANDOFF.md)
+- [Company Security Review Checklist](./COMPANY_SECURITY_REVIEW_CHECKLIST.md)
+- [Company Pilot Runbook](./COMPANY_PILOT_RUNBOOK.md)
 - [Evaluator Quickstart](./EVALUATOR_QUICKSTART.md)
 - [Production Deployment Readiness](./PRODUCTION_DEPLOYMENT_READINESS.md)
 
@@ -57,6 +68,7 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 ## Security
 
 - [Security Checklist](./SECURITY_CHECKLIST.md)
+- [Company Security Review Checklist](./COMPANY_SECURITY_REVIEW_CHECKLIST.md)
 - [Demo Data Safety](./DEMO_DATA_SAFETY.md)
 - [Screenshot and Media Guide](./SCREENSHOT_AND_MEDIA_GUIDE.md)
 
