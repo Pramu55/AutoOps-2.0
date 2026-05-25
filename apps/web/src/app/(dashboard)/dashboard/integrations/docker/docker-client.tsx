@@ -69,6 +69,9 @@ function getErrorMessage(error: unknown): string {
 
 function statusTone(status: string): string {
   const normalized = status.toLowerCase();
+  if (status === 'BLOCKED_BY_ORG_POLICY') {
+    return 'border-amber-400/25 bg-amber-400/10 text-amber-700';
+  }
   if (
     status === 'CONNECTED' ||
     status === 'SUCCEEDED' ||
@@ -252,6 +255,16 @@ export function DockerClient() {
     try {
       const statusResponse = await api.get<DockerStatusApiResponse>('/v1/integrations/docker/status');
       setStatus(statusResponse.data);
+      if (statusResponse.data.status === 'BLOCKED_BY_ORG_POLICY') {
+        setContainers([]);
+        setImages([]);
+        setNetworks([]);
+        setVolumes([]);
+        setActivity([]);
+        setIsLoading(false);
+        setIsRefreshing(false);
+        return;
+      }
     } catch (loadError) {
       setError(getErrorMessage(loadError));
     }
@@ -457,11 +470,26 @@ export function DockerClient() {
           <div className="flex gap-4">
             <AlertTriangle className="mt-1 h-5 w-5 shrink-0 text-amber-700" />
             <div>
-              <h2 className="text-base font-semibold text-slate-900">Docker connector is not available</h2>
+              <h2 className="text-base font-semibold text-slate-900">
+                {currentStatus === 'BLOCKED_BY_ORG_POLICY'
+                  ? 'Provider access is disabled for this organization'
+                  : 'Docker connector is not available'}
+              </h2>
               <p className="mt-2 text-sm leading-6 text-amber-800/80">
-                {status?.message ??
-                  'Configure Docker Engine access to enable governed container operations.'}
+                {currentStatus === 'BLOCKED_BY_ORG_POLICY'
+                  ? 'This workspace cannot view shared Docker inventory until provider access is enabled for this organization.'
+                  : status?.message ??
+                    'Configure Docker Engine access to enable governed container operations.'}
               </p>
+              {currentStatus === 'BLOCKED_BY_ORG_POLICY' ? (
+                <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-900">
+                  {(status?.remediation ?? [
+                    'Use the demo/admin workspace for built-in local demo connectors.',
+                    'Ask a platform admin to add this organization slug to PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS.',
+                    "For production, configure this organization's own Docker access through the approved deployment process.",
+                  ]).map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              ) : null}
             </div>
           </div>
         </section>

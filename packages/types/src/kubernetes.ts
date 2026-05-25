@@ -3,6 +3,7 @@ import { idSchema } from './common.js';
 import type { OperationRiskLevel } from './ops.js';
 
 export const KubernetesConnectionStatus = {
+  BLOCKED_BY_ORG_POLICY: 'BLOCKED_BY_ORG_POLICY',
   CONNECTED: 'CONNECTED',
   NOT_CONFIGURED: 'NOT_CONFIGURED',
   UNREACHABLE: 'UNREACHABLE',
@@ -37,6 +38,9 @@ export interface KubernetesStatus {
   readOnly: true;
   checkedAt: string;
   message?: string;
+  configured?: boolean;
+  providerInventoryEnabled?: boolean;
+  remediation?: string[];
 }
 
 export interface KubernetesNamespace {

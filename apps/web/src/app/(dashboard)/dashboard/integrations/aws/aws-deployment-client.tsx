@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type {
   AwsIdentityResponse,
+  AwsStatusResponse,
   AwsReadinessResponse,
   AwsPermissionsResponse,
   AwsRemoteStateReadinessResponse,
@@ -36,6 +37,7 @@ function apiErrorMessage(error: unknown, fallback: string): string {
 
 export function AwsDeploymentClient() {
   const [identity, setIdentity] = useState<AwsIdentityResponse | null>(null);
+  const [status, setStatus] = useState<AwsStatusResponse | null>(null);
   const [readiness, setReadiness] = useState<AwsReadinessResponse | null>(null);
   const [permissions, setPermissions] = useState<AwsPermissionsResponse | null>(null);
   const [remoteState, setRemoteState] = useState<AwsRemoteStateReadinessResponse | null>(null);
@@ -67,7 +69,30 @@ export function AwsDeploymentClient() {
 
   async function load() {
     setLoading(true);
+    setInventoryDenied(false);
     try {
+      const statusRes = await api.get<{ data: AwsStatusResponse }>('/v1/integrations/aws/status');
+      setStatus(statusRes.data);
+      if (statusRes.data.status === 'BLOCKED_BY_ORG_POLICY') {
+        setInventoryDenied(true);
+        setIdentity(null);
+        setReadiness(null);
+        setPermissions(null);
+        setRemoteState(null);
+        setWorkspaceRes(null);
+        setEcrReadiness(null);
+        setEcrRepositories([]);
+        setEcrImages([]);
+        setPlanReadiness(null);
+        setApplyReadiness(null);
+        setGuardrailReadiness(null);
+        setGuardrailEvaluations([]);
+        setDeployments([]);
+        setReleases([]);
+        setReleaseReadiness(null);
+        return;
+      }
+
       const [idRes, readRes, permRes, rsRes, tRes, ecrReadyRes, ecrRepoRes, ecrImagesRes, planReadyRes, applyReadyRes, guardrailReadyRes, guardrailEvalRes, deploymentsRes, releasesRes, releaseReadyRes] = await Promise.all([
         api.get<{ data: AwsIdentityResponse }>('/v1/integrations/aws/identity').catch((error) => {
           if (error?.status === 403) setInventoryDenied(true);
@@ -271,7 +296,17 @@ export function AwsDeploymentClient() {
 
       {inventoryDenied && (
         <section className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          You do not have access to AWS provider inventory. Contact an organization admin.
+          <h2 className="text-base font-semibold text-slate-900">Provider access is disabled for this organization</h2>
+          <p className="mt-2 leading-6">
+            This workspace cannot view shared AWS inventory until provider access is enabled for this organization.
+          </p>
+          <ul className="mt-3 list-disc space-y-1 pl-5">
+            {(status?.remediation ?? [
+              'Use the demo/admin workspace for built-in local demo connectors.',
+              'Ask a platform admin to add this organization slug to PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS.',
+              "For production, configure this organization's own AWS credentials through the approved deployment process.",
+            ]).map((item) => <li key={item}>{item}</li>)}
+          </ul>
         </section>
       )}
 

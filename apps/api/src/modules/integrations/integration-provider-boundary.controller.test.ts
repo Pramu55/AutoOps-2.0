@@ -2,8 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Request, Response } from 'express';
 
 const organizationFindUnique = vi.fn();
+const jenkinsGetStatus = vi.fn();
 const jenkinsListBuilds = vi.fn();
+const dockerGetStatus = vi.fn();
 const dockerListContainers = vi.fn();
+const kubernetesGetStatus = vi.fn();
 const kubernetesListNamespaces = vi.fn();
 
 vi.mock('@autoops/database', () => ({
@@ -16,18 +19,21 @@ vi.mock('@autoops/database', () => ({
 
 vi.mock('./jenkins/jenkins.service.js', () => ({
   jenkinsService: {
+    getStatus: jenkinsGetStatus,
     listBuilds: jenkinsListBuilds,
   },
 }));
 
 vi.mock('./docker/docker.service.js', () => ({
   dockerService: {
+    getStatus: dockerGetStatus,
     listContainers: dockerListContainers,
   },
 }));
 
 vi.mock('./kubernetes/kubernetes.service.js', () => ({
   kubernetesService: {
+    getStatus: kubernetesGetStatus,
     listNamespaces: kubernetesListNamespaces,
   },
 }));
@@ -68,6 +74,25 @@ describe('provider inventory API boundaries', () => {
     expect(jenkinsListBuilds).not.toHaveBeenCalled();
   });
 
+  it('returns blocked onboarding status for a new organization owner without calling Jenkins', async () => {
+    const res = { json: vi.fn() } as unknown as Response;
+
+    await jenkinsController.status(requestForOrg('new-user-workspace'), res);
+
+    expect(jenkinsGetStatus).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: 'BLOCKED_BY_ORG_POLICY',
+        configured: false,
+        providerInventoryEnabled: false,
+        message: 'Provider inventory is disabled for this organization.',
+        remediation: expect.arrayContaining([
+          'Use the demo/admin workspace for built-in local demo connectors.',
+        ]),
+      }),
+    });
+  });
+
   it('blocks a new organization owner from Docker inventory', async () => {
     await expect(
       dockerController.containers(requestForOrg('new-user-workspace'), {} as Response),
@@ -76,12 +101,43 @@ describe('provider inventory API boundaries', () => {
     expect(dockerListContainers).not.toHaveBeenCalled();
   });
 
+  it('returns blocked onboarding status for Docker without exposing inventory', async () => {
+    const res = { json: vi.fn() } as unknown as Response;
+
+    await dockerController.status(requestForOrg('new-user-workspace'), res);
+
+    expect(dockerGetStatus).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: 'BLOCKED_BY_ORG_POLICY',
+        configured: false,
+        providerInventoryEnabled: false,
+      }),
+    });
+  });
+
   it('blocks a new organization owner from Kubernetes inventory', async () => {
     await expect(
       kubernetesController.namespaces(requestForOrg('new-user-workspace'), {} as Response),
     ).rejects.toThrow('Provider inventory is not enabled');
 
     expect(kubernetesListNamespaces).not.toHaveBeenCalled();
+  });
+
+  it('returns blocked onboarding status for Kubernetes without exposing inventory', async () => {
+    const res = { json: vi.fn() } as unknown as Response;
+
+    await kubernetesController.status(requestForOrg('new-user-workspace'), res);
+
+    expect(kubernetesGetStatus).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: 'BLOCKED_BY_ORG_POLICY',
+        configured: false,
+        providerInventoryEnabled: false,
+        readOnly: true,
+      }),
+    });
   });
 
   it('allows the explicitly enabled local demo organization to use provider inventory', async () => {
@@ -95,5 +151,27 @@ describe('provider inventory API boundaries', () => {
 
     expect(jenkinsListBuilds).toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith({ data: { items: [] } });
+  });
+
+  it('calls the real status service for an allowlisted demo organization', async () => {
+    process.env.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS = 'autoops-demo';
+    jenkinsGetStatus.mockResolvedValue({
+      status: 'CONNECTED',
+      configured: true,
+      triggerEnabled: true,
+      message: 'Connected.',
+      checkedAt: '2026-05-25T00:00:00.000Z',
+    });
+    const res = { json: vi.fn() } as unknown as Response;
+
+    await jenkinsController.status(requestForOrg('autoops-demo'), res);
+
+    expect(jenkinsGetStatus).toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: 'CONNECTED',
+        configured: true,
+      }),
+    });
   });
 });

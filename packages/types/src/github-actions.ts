@@ -5,6 +5,7 @@ export const githubActionsRunParamsSchema = z.object({
 });
 
 export const GitHubActionsConnectionStatus = {
+  BLOCKED_BY_ORG_POLICY: 'BLOCKED_BY_ORG_POLICY',
   CONNECTED: 'CONNECTED',
   NOT_CONFIGURED: 'NOT_CONFIGURED',
   AUTH_FAILED: 'AUTH_FAILED',
@@ -21,6 +22,8 @@ export interface GitHubActionsStatusResponse {
   allowedWorkflows?: string[];
   checkedAt: string;
   message: string;
+  providerInventoryEnabled?: boolean;
+  remediation?: string[];
 }
 
 export interface GitHubWorkflowSummary {

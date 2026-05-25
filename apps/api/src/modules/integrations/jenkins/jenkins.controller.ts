@@ -12,12 +12,18 @@ import {
 } from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { jenkinsService } from './jenkins.service.js';
-import { requireProviderInventoryAccess } from '../integration-access.service.js';
+import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
 
 type BuildParams = { jobName: string };
 
 export class JenkinsController {
-  status = async (_req: Request, res: Response<{ data: JenkinsStatusResponse }>): Promise<void> => {
+  status = async (req: Request, res: Response<{ data: JenkinsStatusResponse }>): Promise<void> => {
+    const blocked = await getProviderInventoryBlockedStatus(req.auth);
+    if (blocked) {
+      res.json({ data: blocked as unknown as JenkinsStatusResponse });
+      return;
+    }
+
     const raw = await jenkinsService.getStatus();
     // PROVIDER_STATUS: strict sanitization for zero-trust (no secrets, URLs, or inventory details)
     const safeStatus = {

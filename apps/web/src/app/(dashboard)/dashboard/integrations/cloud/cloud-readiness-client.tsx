@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 type CloudResponse = { data: CloudReadinessStatusResponse };
 
 function tone(status: string) {
+  if (status === 'BLOCKED_BY_ORG_POLICY') return 'border-amber-300 bg-amber-50 text-amber-800';
   if (status === 'CONNECTED') return 'border-emerald-300 bg-emerald-50 text-emerald-700';
   if (status === 'NOT_CONFIGURED' || status === 'NOT_IMPLEMENTED') return 'border-amber-300 bg-amber-50 text-amber-800';
   return 'border-rose-300 bg-rose-50 text-rose-700';

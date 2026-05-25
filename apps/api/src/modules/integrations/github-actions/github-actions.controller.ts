@@ -7,10 +7,16 @@ import type {
   GitHubWorkflowSummary,
 } from '@autoops/types';
 import { githubActionsService } from './github-actions.service.js';
-import { requireProviderInventoryAccess } from '../integration-access.service.js';
+import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
 
 export class GitHubActionsController {
-  status = async (_req: Request, res: Response<{ data: GitHubActionsStatusResponse }>): Promise<void> => {
+  status = async (req: Request, res: Response<{ data: GitHubActionsStatusResponse }>): Promise<void> => {
+    const blocked = await getProviderInventoryBlockedStatus(req.auth);
+    if (blocked) {
+      res.json({ data: blocked as unknown as GitHubActionsStatusResponse });
+      return;
+    }
+
     const raw = await githubActionsService.getStatus();
     const safeStatus = {
       status: raw.status,

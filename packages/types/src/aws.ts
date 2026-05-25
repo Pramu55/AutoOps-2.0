@@ -2,6 +2,7 @@ import type { ProviderConnectionStatus } from './provider.js';
 import { z } from 'zod';
 
 export enum AwsIntegrationStatus {
+  BLOCKED_BY_ORG_POLICY = 'BLOCKED_BY_ORG_POLICY',
   CONNECTED = 'CONNECTED',
   NOT_CONFIGURED = 'NOT_CONFIGURED',
   AUTH_FAILED = 'AUTH_FAILED',
@@ -34,6 +35,8 @@ export interface AwsStatusResponse {
   configured: boolean;
   region?: string;
   message: string;
+  providerInventoryEnabled?: boolean;
+  remediation?: string[];
   checkedAt: string;
 }
 

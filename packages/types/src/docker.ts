@@ -16,6 +16,8 @@ export interface DockerStatusResponse {
   images?: number;
   checkedAt: string;
   message: string;
+  providerInventoryEnabled?: boolean;
+  remediation?: string[];
 }
 
 export interface DockerPort {
