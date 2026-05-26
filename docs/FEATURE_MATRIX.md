@@ -62,3 +62,7 @@
 | Backup/Restore | PostgreSQL scripts | Complete | Yes | Backup safe, restore requires RESTORE | No migrate reset |
 | Secret Safety | Redaction utility and scans | Complete | N/A | Redacts and detects suspicious values | Values not printed |
 | Documentation | Evaluator docs | Complete | N/A | Honest positioning | Day 17 docs |
+
+| Resource Graph | Database-backed Resource Graph | Complete | Yes | Tenant-scoped read model | ResourceNode/ResourceEdge with safe metadata and no action controls |
+| Resource Graph | Resource Graph API and UI | Complete | Yes | Authenticated, organization-scoped, read-only | `/dashboard/resources` and `/api/v1/resources/*` |
+| Resource Graph | Provider registration hooks | Complete | Yes for allowlisted orgs | Provider inventory policy preserved | Jenkins, Docker, Kubernetes registration side effects are non-blocking |

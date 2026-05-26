@@ -273,3 +273,7 @@ Planned future work includes broader test coverage, notification integrations, c
 
 - GitHub: [Pramu55](https://github.com/Pramu55)
 - Project repository: [AutoOps 2.0](https://github.com/Pramu55/AutoOps-2.0)
+
+## Resource Graph Foundation
+
+AutoOps now includes a database-backed, tenant-scoped Resource Graph at `/dashboard/resources`. It records curated resource nodes and edges from AutoOps domain records and authorized provider inventory reads. The graph is read-only, does not grant permissions, and does not execute actions. It is the grounding layer for future signal ingestion, incident correlation, governed runbooks, and read-only AI summaries.

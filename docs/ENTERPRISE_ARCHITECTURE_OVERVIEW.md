@@ -87,3 +87,9 @@ The policy engine decides whether a requested operation is confirmation-only or 
 ## Governance Evidence
 
 Governance evidence is generated from real operation records. Evidence includes actor, organization, provider, target, policy, approval status, timestamps, safe result, and incident link when present. It does not expose raw credentials, kubeconfig, Terraform state, provider tokens, or raw secret-like logs.
+
+## Resource Graph Foundation
+
+The Resource Graph is now a database-backed topology read model. AutoOps domain services register projects, environments, deployments, and operations. Authorized provider inventory reads can register Jenkins, Docker, and Kubernetes resources as non-blocking side effects.
+
+The graph sits after authentication, tenant scoping, and provider access checks. It does not grant permissions and does not replace RBAC, approval policy, or provider boundaries.

@@ -99,6 +99,14 @@ const COMMANDS: CommandItem[] = [
     keywords: ['deployments', 'release'],
   },
   {
+    group: 'Pages',
+    label: 'Resource Graph',
+    description: 'Tenant-scoped resource topology read model',
+    href: '/dashboard/resources',
+    icon: Boxes,
+    keywords: ['resources', 'graph', 'topology', 'urn'],
+  },
+  {
     group: 'Integrations',
     label: 'Jenkins Control Connector',
     description: 'Allowlisted build triggers and build activity',
@@ -218,6 +226,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/dashboard/projects', label: 'Projects', icon: Layers },
       { href: '/dashboard/deployments', label: 'Deployments', icon: GitMerge },
+      { href: '/dashboard/resources', label: 'Resource Graph', icon: Boxes },
     ],
   },
   {
@@ -267,6 +276,7 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
       { href: '/dashboard/operations#activity', label: 'Operation Audit', icon: Activity },
       { href: '/dashboard/projects', label: 'Project Access', icon: Layers },
       { href: '/dashboard/deployments', label: 'Deployment Records', icon: GitMerge },
+      { href: '/dashboard/resources', label: 'Resource Graph', icon: Boxes },
     ],
   },
   {

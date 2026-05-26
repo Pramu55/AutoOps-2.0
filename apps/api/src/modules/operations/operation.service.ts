@@ -9,6 +9,7 @@ import { BadRequestError, ConflictError, NotFoundError, UnauthorizedError } from
 import { enqueueOperationJob } from './operation.queue.js';
 import { operationAuthorizationService } from './operation-authorization.service.js';
 import { evaluateOperationPolicy, type OperationPolicyDecision } from './operation-policy.service.js';
+import { resourceGraphService } from '../resources/resource-graph.service.js';
 
 type CreateOperationInput = {
   organizationId: string;
@@ -140,6 +141,7 @@ export class OperationService {
       });
     }
 
+    await this._registerOperationNode(input.organizationId, created);
     return this._toOperation(created);
   }
 
@@ -386,6 +388,28 @@ export class OperationService {
         policyName: policy.policyName,
       },
     };
+  }
+
+  private async _registerOperationNode(
+    organizationId: string,
+    operation: {
+      id: string;
+      provider: Operation['provider'];
+      operationType: Operation['operationType'];
+      status: Operation['status'];
+      projectId: string | null;
+      environmentId: string | null;
+    },
+  ): Promise<void> {
+    try {
+      await resourceGraphService.registerAutoOpsOperationNode(organizationId, operation);
+    } catch (error) {
+      console.warn('Resource graph operation registration failed', {
+        organizationId,
+        operationId: operation.id,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    }
   }
 }
 

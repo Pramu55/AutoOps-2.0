@@ -85,3 +85,9 @@ This milestone adds shared resource graph DTO types and deterministic URN helper
 - No incident war room.
 - No governed runbook execution.
 - No bypassing RBAC, approval, provider boundaries, or tenant isolation.
+
+## Implemented Foundation Status
+
+The first Resource Graph foundation is now implemented with Prisma-backed `ResourceNode` and `ResourceEdge` tables, tenant-scoped API routes, shared DTOs, deterministic URN helpers, curated metadata redaction, provider registration hooks for Jenkins/Docker/Kubernetes, AutoOps domain registration hooks, and a read-only `/dashboard/resources` UI.
+
+Still intentionally not implemented: signals, incident correlation, runbook execution, OpenTelemetry ingestion, SLO governance, AI summaries, autonomous remediation, and graph action buttons.

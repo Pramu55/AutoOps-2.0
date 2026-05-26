@@ -13,6 +13,7 @@ import {
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { jenkinsService } from './jenkins.service.js';
 import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
+import { resourceGraphService } from '../../resources/resource-graph.service.js';
 
 type BuildParams = { jobName: string };
 
@@ -43,13 +44,19 @@ export class JenkinsController {
   };
 
   jobs = async (req: Request, res: Response<{ data: JenkinsListResponse<JenkinsJob> }>): Promise<void> => {
+    const auth = this._requireAuth(req);
     await requireProviderInventoryAccess(req.auth);
-    res.json({ data: await jenkinsService.listJobs() });
+    const data = await jenkinsService.listJobs();
+    await this._registerJenkins(auth.orgId, { jobs: data.items });
+    res.json({ data });
   };
 
   builds = async (req: Request, res: Response<{ data: JenkinsListResponse<JenkinsBuild> }>): Promise<void> => {
+    const auth = this._requireAuth(req);
     await requireProviderInventoryAccess(req.auth);
-    res.json({ data: await jenkinsService.listBuilds() });
+    const data = await jenkinsService.listBuilds();
+    await this._registerJenkins(auth.orgId, { builds: data.items });
+    res.json({ data });
   };
 
   operations = async (req: Request, res: Response<{ data: JenkinsOperationListResponse }>): Promise<void> => {
@@ -79,6 +86,20 @@ export class JenkinsController {
     if (!req.auth) throw new UnauthenticatedError();
     if (!req.auth.orgId) throw new UnauthorizedError('Organization context is required');
     return { userId: req.auth.userId, orgId: req.auth.orgId, role: req.auth.role };
+  }
+
+  private async _registerJenkins(
+    organizationId: string,
+    input: { jobs?: JenkinsJob[]; builds?: JenkinsBuild[] },
+  ): Promise<void> {
+    try {
+      await resourceGraphService.registerJenkinsInventory(organizationId, input);
+    } catch (error) {
+      console.warn('Resource graph Jenkins registration failed', {
+        organizationId,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    }
   }
 }
 

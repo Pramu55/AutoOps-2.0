@@ -137,3 +137,7 @@ Before a pilot:
 ## Handoff Summary
 
 AutoOps is ready for company evaluation and controlled pilot deployment planning. Real company deployment requires official credentials, infrastructure approval, network/VPN/firewall setup, security review, and stakeholder sign-off.
+
+## Resource Graph Handoff Notes
+
+For a company pilot, Resource Graph provides a safe topology inventory of known resources and relationships. It is useful for evaluator review and future incident correlation, but it is intentionally read-only. Company teams must still configure provider credentials through approved channels and must not enable wildcard provider inventory access across unrelated tenants.

@@ -1,14 +1,67 @@
+# Dependency folders: never send host-installed dependencies or pnpm links into Docker.
 node_modules
+**/node_modules
 .pnpm-store
+**/.pnpm-store
+.pnpm
+**/.pnpm
+
+# Build outputs and framework caches.
 .next
+**/.next
 dist
+**/dist
 build
-coverage
+**/build
 .turbo
-.git
-.gitignore
-Dockerfile*
-docker-compose*
+**/.turbo
+turbo
+coverage
+**/coverage
+.cache
+**/.cache
+.nx
+**/.nx
+.vercel
+**/.vercel
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Logs and local diagnostics.
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs
+**/logs
+
+# Local environment files. Keep the safe example in context.
 .env
 .env.*
 !.env.example
+
+# Git/editor/OS metadata.
+.git
+.gitignore
+.gitattributes
+.github
+.husky
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Local-only runtime artifacts and backups.
+*.local
+*.tmp
+*.bak
+*.backup
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Docker orchestration files are not copied by app Dockerfiles.
+Dockerfile*
+docker-compose*.yml
