@@ -19,13 +19,14 @@ type BuildParams = { jobName: string };
 
 export class JenkinsController {
   status = async (req: Request, res: Response<{ data: JenkinsStatusResponse }>): Promise<void> => {
+    const orgId = req.auth?.orgId;
     const blocked = await getProviderInventoryBlockedStatus(req.auth);
     if (blocked) {
       res.json({ data: blocked as unknown as JenkinsStatusResponse });
       return;
     }
 
-    const raw = await jenkinsService.getStatus();
+    const raw = await jenkinsService.getStatus(orgId);
     // PROVIDER_STATUS: strict sanitization for zero-trust (no secrets, URLs, or inventory details)
     const safeStatus = {
       status: raw.status,
@@ -39,8 +40,9 @@ export class JenkinsController {
   };
 
   summary = async (req: Request, res: Response<{ data: JenkinsSummaryResponse }>): Promise<void> => {
+    const auth = this._requireAuth(req);
     await requireProviderInventoryAccess(req.auth);
-    res.json({ data: await jenkinsService.getSummary() });
+    res.json({ data: await jenkinsService.getSummary(auth.orgId) });
   };
 
   jobs = async (req: Request, res: Response<{ data: JenkinsListResponse<JenkinsJob> }>): Promise<void> => {
@@ -54,7 +56,7 @@ export class JenkinsController {
   builds = async (req: Request, res: Response<{ data: JenkinsListResponse<JenkinsBuild> }>): Promise<void> => {
     const auth = this._requireAuth(req);
     await requireProviderInventoryAccess(req.auth);
-    const data = await jenkinsService.listBuilds();
+    const data = await jenkinsService.listBuilds(auth.orgId);
     await this._registerJenkins(auth.orgId, { builds: data.items });
     res.json({ data });
   };

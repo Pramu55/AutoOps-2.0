@@ -10,6 +10,7 @@ import type {
   OpsObservabilityResponse,
   OpsQueueHealthSummary,
   ResourceGraphReadinessResponse,
+  SignalReadinessResponse,
 } from '@autoops/types';
 import {
   Boxes,
@@ -19,6 +20,7 @@ import {
   RefreshCw,
   Server,
   ShieldCheck,
+  Terminal,
   UserCircle,
   Wrench,
   X,
@@ -29,6 +31,7 @@ import { Button } from '@/components/ui/button';
 type OpsObservabilityApiResponse = { data: OpsObservabilityResponse };
 type OperationActivityApiResponse = { data: OperationActivityResponse };
 type ResourceGraphReadinessApiResponse = { data: ResourceGraphReadinessResponse };
+type SignalReadinessApiResponse = { data: SignalReadinessResponse };
 type ApprovalDecision = 'approve' | 'reject';
 type PendingApprovalDecision = {
   operation: OperationActivityItem;
@@ -233,6 +236,54 @@ function ResourceGraphCard({ readiness }: { readiness: ResourceGraphReadinessRes
     </section>
   );
 }
+function SignalsCard({ readiness }: { readiness: SignalReadinessResponse | null }) {
+  const latestSeen = readiness?.latestObservedAt ? formatTime(readiness.latestObservedAt) : 'Never';
+
+  return (
+    <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">Signals</h3>
+          <span
+            className={`mt-3 inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusTone(
+              readiness?.status ?? 'EMPTY'
+            )}`}
+          >
+            {readiness?.status ?? 'EMPTY'}
+          </span>
+        </div>
+        <div className="rounded-xl bg-cyan-300/10 p-2 text-blue-600">
+          <Terminal className="h-5 w-5" />
+        </div>
+      </div>
+      <p className="mt-4 text-sm leading-6 text-slate-600">
+        Tenant-scoped observations and alerts from connected providers.
+      </p>
+      <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+        <div className="rounded border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Active</p>
+          <p className="mt-1 font-semibold text-slate-950">{readiness?.activeSignals ?? 0}</p>
+        </div>
+        <div className="rounded border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Critical</p>
+          <p className="mt-1 font-semibold text-slate-950">{readiness?.criticalCount ?? 0}</p>
+        </div>
+        <div className="rounded border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Errors</p>
+          <p className="mt-1 font-semibold text-slate-950">{readiness?.errorCount ?? 0}</p>
+        </div>
+      </div>
+      <p className="mt-3 text-xs text-slate-500">Latest observed: {latestSeen}</p>
+      <Link
+        href="/dashboard/signals"
+        className="mt-4 inline-flex text-sm font-semibold text-blue-700 hover:underline"
+      >
+        Open Signal Inventory
+      </Link>
+    </section>
+  );
+}
+
 function WorkerRuntimeCard({
   worker,
 }: {
@@ -462,6 +513,7 @@ export function OperationsClient() {
   const [activityItems, setActivityItems] = useState<OperationActivityItem[]>([]);
   const [pendingApprovalItems, setPendingApprovalItems] = useState<OperationActivityItem[]>([]);
   const [resourceGraph, setResourceGraph] = useState<ResourceGraphReadinessResponse | null>(null);
+  const [signalReadiness, setSignalReadiness] = useState<SignalReadinessResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDecidingApproval, setIsDecidingApproval] = useState(false);
@@ -485,14 +537,17 @@ export function OperationsClient() {
         observabilityResponse,
         pendingApprovalResponse,
         resourceGraphResponse,
+        signalReadinessResponse,
       ] = await Promise.all([
         api.get<OpsObservabilityApiResponse>('/v1/ops/observability'),
         api.get<OperationActivityApiResponse>('/v1/ops/activity?status=PENDING_APPROVAL&limit=20'),
         api.get<ResourceGraphReadinessApiResponse>('/v1/resources/readiness'),
+        api.get<SignalReadinessApiResponse>('/v1/signals/readiness'),
       ]);
       setObservability(observabilityResponse.data);
       setPendingApprovalItems(pendingApprovalResponse.data.items);
       setResourceGraph(resourceGraphResponse.data);
+      setSignalReadiness(signalReadinessResponse.data);
 
       try {
         const activityResponse = await api.get<OperationActivityApiResponse>('/v1/ops/activity');
@@ -634,13 +689,14 @@ export function OperationsClient() {
         </div>
       ) : null}
 
-      <section className="grid grid-cols-2 gap-3 xl:grid-cols-6">
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {[
           ['Platform', platform?.api.status ?? 'UNKNOWN', 'API readiness'],
           ['Providers', providerHealth ? 'LIVE' : 'UNKNOWN', 'Connector checks'],
           ['Active operations', operationObservability?.active.length ?? 0, 'Queued/running/pending'],
           ['Pending approvals', pendingApprovals.length, 'Need decision'],
           ['Open incidents', incidentSummary?.open ?? 0, 'Failure response'],
+          ['Active signals', signalReadiness?.activeSignals ?? 0, 'Infrastructure observations'],
           ['Resources', resourceGraph?.totalResources ?? 0, 'Graph nodes'],
         ].map(([label, value, caption]) => (
           <div key={label} className="rounded-md border border-slate-200 bg-slate-50 p-4">
@@ -651,7 +707,10 @@ export function OperationsClient() {
         ))}
       </section>
 
-      <ResourceGraphCard readiness={resourceGraph} />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <ResourceGraphCard readiness={resourceGraph} />
+        <SignalsCard readiness={signalReadiness} />
+      </div>
 
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">

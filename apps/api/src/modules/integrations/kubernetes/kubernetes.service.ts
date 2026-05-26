@@ -22,11 +22,15 @@ import {
   type KubernetesStatus,
   type KubernetesSummary,
   type KubernetesWorkload,
+  SignalSeverity,
+  SignalSource,
+  SignalType,
   type Operation,
 } from '@autoops/types';
 import { AuditAction, prisma, type Prisma } from '@autoops/database';
 import { BadRequestError, ExternalServiceError } from '@autoops/utils';
 import { operationService } from '../../operations/operation.service.js';
+import { signalService } from '../../signals/signal.service.js';
 import { kubernetesClientProvider, type KubernetesClientBundle } from './kubernetes.client.js';
 
 const EMPTY_COUNTS: KubernetesSummary['counts'] = {
@@ -63,7 +67,7 @@ type AuditContext = {
 };
 
 export class KubernetesService {
-  async getStatus(): Promise<KubernetesStatus> {
+  async getStatus(organizationId?: string): Promise<KubernetesStatus> {
     try {
       const client = this._getClient();
       if (!client) return kubernetesClientProvider.notConfiguredStatus();
@@ -73,6 +77,18 @@ export class KubernetesService {
         client.core.listNode({}),
         client.core.listNamespace({}),
       ]);
+
+      if (organizationId) {
+        void signalService.ingestSignal(organizationId, {
+          source: SignalSource.KUBERNETES,
+          type: SignalType.PROVIDER_CONNECTED,
+          severity: SignalSeverity.INFO,
+          title: 'Kubernetes Provider Connected',
+          message: 'Successfully connected to Kubernetes API.',
+          metadata: { version: version.gitVersion },
+          dedupeMode: 'DEDUPE',
+        });
+      }
 
       const readyNodeCount = nodes.items.filter((node) => this._nodeReady(node)).length;
       return {
@@ -87,11 +103,25 @@ export class KubernetesService {
         message: 'Kubernetes API is connected. Controlled backend operations require confirmation and audit.',
       };
     } catch (error) {
-      return this._connectionFailure(error);
+      const failure = this._connectionFailure(error);
+      if (organizationId) {
+        void signalService.ingestSignal(organizationId, {
+          source: SignalSource.KUBERNETES,
+          type: failure.status === KubernetesConnectionStatus.AUTH_FAILED
+            ? SignalType.PROVIDER_AUTH_FAILED
+            : SignalType.PROVIDER_UNREACHABLE,
+          severity: SignalSeverity.ERROR,
+          title: `Kubernetes Provider ${failure.status}`,
+          message: failure.message ?? 'Failed to connect to Kubernetes API.',
+          metadata: { status: failure.status, error: error instanceof Error ? error.message : String(error) },
+          dedupeMode: 'DEDUPE',
+        });
+      }
+      return failure;
     }
   }
 
-  async getSummary(): Promise<KubernetesSummary> {
+  async getSummary(organizationId?: string): Promise<KubernetesSummary> {
     try {
       const client = this._getClient();
       if (!client) {
@@ -121,6 +151,11 @@ export class KubernetesService {
         client.apps.listReplicaSetForAllNamespaces({}),
         this._metricsApiSummary(client),
       ]);
+
+      if (organizationId) {
+        void this._ingestPodSignals(organizationId, pods.items);
+        void this._ingestNodeSignals(organizationId, nodes.items);
+      }
 
       const readyNodes = nodes.items.filter((node) => this._nodeReady(node)).length;
       const podStats = this._podStats(pods.items);
@@ -299,9 +334,12 @@ export class KubernetesService {
     });
   }
 
-  async listPods(): Promise<KubernetesListResponse<KubernetesPod>> {
+  async listPods(organizationId?: string): Promise<KubernetesListResponse<KubernetesPod>> {
     return this._list(async (client) => {
       const response = await client.core.listPodForAllNamespaces({});
+      if (organizationId) {
+        void this._ingestPodSignals(organizationId, response.items);
+      }
       return response.items.map((pod) => this._toPod(pod));
     });
   }
@@ -335,9 +373,12 @@ export class KubernetesService {
     });
   }
 
-  async listNodes(): Promise<KubernetesListResponse<KubernetesNode>> {
+  async listNodes(organizationId?: string): Promise<KubernetesListResponse<KubernetesNode>> {
     return this._list(async (client) => {
       const response = await client.core.listNode({});
+      if (organizationId) {
+        void this._ingestNodeSignals(organizationId, response.items);
+      }
       return response.items.map((node) => ({
         name: node.metadata?.name ?? 'unknown',
         ready: this._nodeReady(node),
@@ -1029,6 +1070,94 @@ export class KubernetesService {
   private _labels(value: Record<string, string> | undefined): Record<string, string> | undefined {
     if (!value || Object.keys(value).length === 0) return undefined;
     return value;
+  }
+
+  private async _ingestPodSignals(organizationId: string, pods: k8s.V1Pod[]): Promise<void> {
+    const signals = pods.flatMap((pod) => {
+      const podSignals: any[] = [];
+      const namespace = pod.metadata?.namespace ?? 'default';
+      const name = pod.metadata?.name ?? 'unknown';
+      const phase = pod.status?.phase;
+
+      if (phase === 'Failed') {
+        podSignals.push({
+          source: SignalSource.KUBERNETES,
+          type: SignalType.KUBERNETES_POD_PHASE_CHANGED,
+          severity: SignalSeverity.ERROR,
+          title: `Pod ${name} Failed`,
+          message: `Pod ${name} in namespace ${namespace} is in Failed phase.`,
+          metadata: { namespace, name, phase },
+          dedupeMode: 'DEDUPE' as const,
+        });
+      }
+
+      const containerStatuses = pod.status?.containerStatuses ?? [];
+      const totalRestarts = containerStatuses.reduce((sum, s) => sum + s.restartCount, 0);
+      if (totalRestarts > 0) {
+        podSignals.push({
+          source: SignalSource.KUBERNETES,
+          type: SignalType.KUBERNETES_RESTART_COUNT_CHANGED,
+          severity: SignalSeverity.WARNING,
+          title: `Pod ${name} Restarts Detected`,
+          message: `Pod ${name} in namespace ${namespace} has restarted ${totalRestarts} times.`,
+          metadata: {
+            namespace,
+            name,
+            totalRestarts,
+            containerStatuses: containerStatuses.map((s) => ({
+              name: s.name,
+              restartCount: s.restartCount,
+            })),
+          },
+          dedupeMode: 'DEDUPE' as const,
+        });
+      }
+
+      const waitingReason = this._waitingReasons(pod)[0];
+      if (waitingReason === 'CrashLoopBackOff') {
+        podSignals.push({
+          source: SignalSource.KUBERNETES,
+          type: SignalType.KUBERNETES_POD_PHASE_CHANGED,
+          severity: SignalSeverity.CRITICAL,
+          title: `Pod ${name} in CrashLoopBackOff`,
+          message: `Pod ${name} in namespace ${namespace} is stuck in CrashLoopBackOff.`,
+          metadata: { namespace, name, waitingReason },
+          dedupeMode: 'DEDUPE' as const,
+        });
+      }
+
+      return podSignals;
+    });
+
+    if (signals.length > 0) {
+      void signalService.ingestSignals(organizationId, signals);
+    }
+  }
+
+  private async _ingestNodeSignals(organizationId: string, nodes: k8s.V1Node[]): Promise<void> {
+    const signals = nodes.flatMap((node) => {
+      const name = node.metadata?.name ?? 'unknown';
+      const isReady = this._nodeReady(node);
+
+      if (!isReady) {
+        return [
+          {
+            source: SignalSource.KUBERNETES,
+            type: SignalType.RESOURCE_CHANGED,
+            severity: SignalSeverity.ERROR,
+            title: `Node ${name} Not Ready`,
+            message: `Kubernetes node ${name} is in NotReady state.`,
+            metadata: { name, conditions: node.status?.conditions },
+            dedupeMode: 'DEDUPE' as const,
+          },
+        ];
+      }
+      return [];
+    });
+
+    if (signals.length > 0) {
+      void signalService.ingestSignals(organizationId, signals);
+    }
   }
 }
 

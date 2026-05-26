@@ -33,3 +33,4 @@ export * from './system.js';
 export * from './events.js';
 export * from './integration-access.js';
 export * from './resource-graph.js';
+export * from './signal.js';

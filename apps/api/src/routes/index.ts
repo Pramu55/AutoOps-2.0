@@ -17,7 +17,9 @@ import { opsRouter } from '../modules/ops/ops.routes.js';
 import { operationRouter } from '../modules/operations/operation.routes.js';
 import { projectRouter } from '../modules/projects/project.routes.js';
 import { resourceGraphRouter } from '../modules/resources/resource-graph.routes.js';
+import { signalRouter } from '../modules/signals/signal.routes.js';
 import { systemRouter } from '../modules/system/system.routes.js';
+
 
 /**
  * Versioned API mount point. Mount Phase 2+ modules here as they land:
@@ -30,7 +32,9 @@ export const v1Router: Router = Router();
 v1Router.use('/auth', authRouter);
 v1Router.use('/projects', projectRouter);
 v1Router.use('/resources', resourceGraphRouter);
+v1Router.use('/signals', signalRouter);
 v1Router.use('/deployments', deploymentRouter);
+
 v1Router.use('/incidents', incidentRouter);
 v1Router.use('/operations', operationRouter);
 v1Router.use('/audit-logs', auditLogRouter);

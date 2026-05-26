@@ -1,4 +1,4 @@
-import { prisma, type Prisma } from '@autoops/database';
+import { prisma } from '@autoops/database';
 import {
   JenkinsBuild,
   JenkinsJob,
@@ -13,9 +13,14 @@ import {
   OperationProvider,
   OperationType,
   ProviderConnectionStatus,
+  SignalSeverity,
+  SignalSource,
+  SignalType,
+  type SignalIngestInput,
 } from '@autoops/types';
 import { BadRequestError } from '@autoops/utils';
 import { operationService } from '../../operations/operation.service.js';
+import { signalService } from '../../signals/signal.service.js';
 import {
   JenkinsClient,
   classifyJenkinsError,
@@ -76,7 +81,7 @@ type JenkinsOperationRecord = {
 };
 
 export class JenkinsService {
-  async getStatus(): Promise<JenkinsStatusResponse> {
+  async getStatus(organizationId?: string): Promise<JenkinsStatusResponse> {
     const checkedAt = new Date().toISOString();
     const config = getJenkinsConfiguration();
     if (!config.configured) {
@@ -97,6 +102,19 @@ export class JenkinsService {
       const response = await client.getJson<JenkinsRoot>(
         '/api/json?tree=mode,nodeDescription,nodeName,numExecutors,useCrumbs,jobs[name]',
       );
+
+      if (organizationId) {
+        void signalService.ingestSignal(organizationId, {
+          source: SignalSource.JENKINS,
+          type: SignalType.PROVIDER_CONNECTED,
+          severity: SignalSeverity.INFO,
+          title: 'Jenkins Provider Connected',
+          message: 'Successfully connected to Jenkins API.',
+          metadata: { baseUrl: config.baseUrl },
+          dedupeMode: 'DEDUPE',
+        });
+      }
+
       return {
         status: ProviderConnectionStatus.CONNECTED,
         configured: true,
@@ -114,8 +132,22 @@ export class JenkinsService {
         checkedAt,
       };
     } catch (error) {
+      const failureStatus = classifyJenkinsError(error);
+      if (organizationId) {
+        void signalService.ingestSignal(organizationId, {
+          source: SignalSource.JENKINS,
+          type: failureStatus === ProviderConnectionStatus.AUTH_FAILED
+            ? SignalType.PROVIDER_AUTH_FAILED
+            : SignalType.PROVIDER_UNREACHABLE,
+          severity: SignalSeverity.ERROR,
+          title: `Jenkins Provider ${failureStatus}`,
+          message: safeJenkinsMessage(error),
+          metadata: { status: failureStatus, error: error instanceof Error ? error.message : String(error) },
+          dedupeMode: 'DEDUPE',
+        });
+      }
       return {
-        status: classifyJenkinsError(error),
+        status: failureStatus,
         configured: true,
         baseUrl: config.baseUrl,
         username: config.username,
@@ -127,9 +159,9 @@ export class JenkinsService {
     }
   }
 
-  async getSummary(): Promise<JenkinsSummaryResponse> {
+  async getSummary(organizationId?: string): Promise<JenkinsSummaryResponse> {
     const checkedAt = new Date().toISOString();
-    const status = await this.getStatus();
+    const status = await this.getStatus(organizationId);
     if (status.status !== ProviderConnectionStatus.CONNECTED) {
       return {
         status: status.status,
@@ -155,6 +187,11 @@ export class JenkinsService {
       );
       const jobs = (root.data.jobs ?? []).map((job) => this._toJob(job));
       const recentBuilds = jobs.flatMap((job) => [job.lastBuild].filter(Boolean) as JenkinsBuild[]);
+
+      if (organizationId && recentBuilds.length > 0) {
+        void this._ingestBuildSignals(organizationId, recentBuilds);
+      }
+
       return {
         status: ProviderConnectionStatus.CONNECTED,
         configured: true,
@@ -199,15 +236,23 @@ export class JenkinsService {
     });
   }
 
-  async listBuilds(): Promise<JenkinsListResponse<JenkinsBuild>> {
+  async listBuilds(organizationId?: string): Promise<JenkinsListResponse<JenkinsBuild>> {
     return this._listResponse(async (client) => {
       const response = await client.getJson<JenkinsRoot>(
         '/api/json?tree=jobs[name,fullName,builds[number,url,result,building,timestamp,duration,estimatedDuration,displayName,fullDisplayName]]',
       );
-      return (response.data.jobs ?? [])
-        .flatMap((job) => (job.builds ?? []).map((build) => this._toBuild(job.fullName ?? job.name ?? 'unknown', build)))
+      const builds = (response.data.jobs ?? [])
+        .flatMap((job) =>
+          (job.builds ?? []).map((build) => this._toBuild(job.fullName ?? job.name ?? 'unknown', build)),
+        )
         .sort((a, b) => new Date(b.timestamp ?? 0).getTime() - new Date(a.timestamp ?? 0).getTime())
         .slice(0, 100);
+
+      if (organizationId && builds.length > 0) {
+        void this._ingestBuildSignals(organizationId, builds);
+      }
+
+      return builds;
     });
   }
 
@@ -277,19 +322,15 @@ export class JenkinsService {
         role,
         provider: OperationProvider.JENKINS,
         operationType: OperationType.JENKINS_BUILD_TRIGGER,
+        input: { jobName, ...input },
         projectId: input.projectId,
         environmentId: input.environmentId,
         confirmationToken: input.confirmationToken,
-        idempotencyKey: `jenkins-build-${jobName}-${Date.now()}`,
-        input: {
-          jobName,
-          parameters: input.parameters ?? {},
-          reason: input.reason,
-        } as Prisma.InputJsonObject,
       },
       auditContext,
     );
-    const policy = this._policyFromOperation(operation.input);
+
+    const policy = this._policyFromOperation(this._toRecord(operation.input));
 
     return {
       operationId: operation.id,
@@ -298,10 +339,7 @@ export class JenkinsService {
       approvalReason: policy.approvalReason,
       riskLevel: policy.riskLevel,
       policyName: policy.policyName,
-      message:
-        operation.status === 'PENDING_APPROVAL'
-          ? 'Jenkins build trigger submitted for approval.'
-          : 'Jenkins build trigger operation queued.',
+      message: `Jenkins build trigger ${operation.status.toLowerCase()}.`,
     };
   }
 
@@ -450,6 +488,55 @@ export class JenkinsService {
   private _riskLevel(record: Record<string, unknown>): JenkinsTriggerBuildResponse['riskLevel'] {
     const value = record.riskLevel;
     return value === 'LOW' || value === 'MEDIUM' || value === 'HIGH' ? value : 'LOW';
+  }
+
+  private async _ingestBuildSignals(organizationId: string, builds: JenkinsBuild[]): Promise<void> {
+    const signals = builds.flatMap((build) => {
+      const jobName = build.jobName;
+      const buildNumber = build.buildNumber;
+      const result = build.result;
+      const building = build.building;
+
+      const signals: SignalIngestInput[] = [];
+
+      if (building) {
+        signals.push({
+          source: SignalSource.JENKINS,
+          type: SignalType.JENKINS_BUILD_STARTED,
+          severity: SignalSeverity.INFO,
+          title: `Jenkins Build Started: ${jobName} #${buildNumber}`,
+          message: `Jenkins job ${jobName} build #${buildNumber} has started.`,
+          metadata: { jobName, buildNumber, url: build.url },
+          dedupeMode: 'EVENT' as const,
+        });
+      } else if (result === 'SUCCESS') {
+        signals.push({
+          source: SignalSource.JENKINS,
+          type: SignalType.JENKINS_BUILD_SUCCEEDED,
+          severity: SignalSeverity.INFO,
+          title: `Jenkins Build Succeeded: ${jobName} #${buildNumber}`,
+          message: `Jenkins job ${jobName} build #${buildNumber} succeeded.`,
+          metadata: { jobName, buildNumber, result, url: build.url },
+          dedupeMode: 'EVENT' as const,
+        });
+      } else if (result === 'FAILURE' || result === 'ABORTED' || result === 'UNSTABLE') {
+        signals.push({
+          source: SignalSource.JENKINS,
+          type: SignalType.JENKINS_BUILD_FAILED,
+          severity: result === 'FAILURE' ? SignalSeverity.ERROR : SignalSeverity.WARNING,
+          title: `Jenkins Build ${result}: ${jobName} #${buildNumber}`,
+          message: `Jenkins job ${jobName} build #${buildNumber} finished with status ${result}.`,
+          metadata: { jobName, buildNumber, result, url: build.url },
+          dedupeMode: 'EVENT' as const,
+        });
+      }
+
+      return signals;
+    });
+
+    if (signals.length > 0) {
+      void signalService.ingestSignals(organizationId, signals);
+    }
   }
 }
 

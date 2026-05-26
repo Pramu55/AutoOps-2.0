@@ -23,6 +23,8 @@ Real DevOps work is not only clicking buttons. Teams need safe execution, clear 
 - Kubernetes status, Metrics API status, namespaces, workloads, pods, services, scale, and rollout restart.
 - Infrastructure Automation Center for allowlisted Terraform/OpenTofu validate/plan/apply and Ansible syntax/check/run workflows.
 - GitHub Actions workflow/run visibility for a configured repository.
+- Resource Graph for tenant-scoped infrastructure topology discovery.
+- Signal Ingest for normalized, deduplicated observation stream.
 - Prometheus/Grafana integration readiness checks.
 - DevOps tools readiness for Helm, Kustomize, kubectl, Docker CLI, Terraform/OpenTofu, Ansible, Node, and pnpm.
 - Cloud Provider Readiness Center for AWS/Azure/GCP without unsafe direct cloud writes.
@@ -86,6 +88,8 @@ See [Architecture Overview](./docs/ARCHITECTURE_OVERVIEW.md).
 | AWS Deployments | Governed AWS ECS Fargate deployment workflows using safe IaC |
 | AWS ECR | Separate governed Docker image build and ECR push operations |
 | Projects | Project and environment ownership |
+| Resource Graph | Tenant-scoped infrastructure topology discovery |
+| Signal Ingest | Normalized, deduplicated observation stream |
 | Deployments | Deployment records and safe simulation workflow |
 
 ## Safety and Governance Model
