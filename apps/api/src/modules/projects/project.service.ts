@@ -1,7 +1,16 @@
 import { prisma } from '@autoops/database';
-import type { CreateProjectInput, Project, UpdateProjectInput } from '@autoops/types';
+import {
+  CreateProjectInput,
+  Project,
+  UpdateProjectInput,
+  SignalSeverity,
+  SignalSource,
+  SignalType,
+} from '@autoops/types';
 import { BadRequestError, ConflictError, NotFoundError } from '@autoops/utils';
 import { resourceGraphService } from '../resources/resource-graph.service.js';
+import { signalService } from '../signals/signal.service.js';
+
 
 export class ProjectService {
   async listProjects(organizationId: string): Promise<Project[]> {
@@ -60,7 +69,19 @@ export class ProjectService {
       },
     });
 
+    // Side-effect: Emit signal
+    void signalService.ingestSignal(organizationId, {
+      source: SignalSource.AUTOOPS,
+      type: SignalType.RESOURCE_DISCOVERED,
+      severity: SignalSeverity.INFO,
+      title: 'Project Created',
+      message: `Project ${project.name} (${project.slug}) created.`,
+      projectId: project.id,
+      dedupeMode: 'EVENT',
+    }).catch(() => undefined);
+
     await this._registerProjectNode(organizationId, project);
+
     return this._toProject(project);
   }
 

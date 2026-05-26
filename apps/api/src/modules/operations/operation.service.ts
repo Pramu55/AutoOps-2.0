@@ -10,6 +10,9 @@ import { enqueueOperationJob } from './operation.queue.js';
 import { operationAuthorizationService } from './operation-authorization.service.js';
 import { evaluateOperationPolicy, type OperationPolicyDecision } from './operation-policy.service.js';
 import { resourceGraphService } from '../resources/resource-graph.service.js';
+import { signalService } from '../signals/signal.service.js';
+import { SignalSeverity, SignalSource, SignalType } from '@autoops/types';
+
 
 type CreateOperationInput = {
   organizationId: string;
@@ -133,7 +136,21 @@ export class OperationService {
       return operation;
     });
 
+    // Side-effect: Emit signal
+    void signalService.ingestSignal(input.organizationId, {
+      source: SignalSource.AUTOOPS,
+      type: SignalType.OPERATION_CREATED,
+      severity: SignalSeverity.INFO,
+      title: `Operation Created: ${input.operationType}`,
+      message: `Operation ${created.id} of type ${input.operationType} created by user ${input.userId}.`,
+      operationId: created.id,
+      projectId: created.projectId ?? undefined,
+      environmentId: created.environmentId ?? undefined,
+      dedupeMode: 'EVENT',
+    }).catch(() => undefined);
+
     if (!policy.approvalRequired) {
+
       await enqueueOperationJob({
         operationId: created.id,
         organizationId: input.organizationId,
@@ -199,7 +216,21 @@ export class OperationService {
       return approved;
     });
 
+    // Side-effect: Emit signal
+    void signalService.ingestSignal(organizationId, {
+      source: SignalSource.AUTOOPS,
+      type: SignalType.APPROVAL_APPROVED,
+      severity: SignalSeverity.INFO,
+      title: 'Operation Approved',
+      message: `Operation ${updated.id} was approved by user ${userId}.`,
+      operationId: updated.id,
+      projectId: updated.projectId ?? undefined,
+      environmentId: updated.environmentId ?? undefined,
+      dedupeMode: 'EVENT',
+    }).catch(() => undefined);
+
     await enqueueOperationJob({
+
       operationId: updated.id,
       organizationId,
       requestedByUserId: operation.requestedByUserId ?? userId,
@@ -263,7 +294,21 @@ export class OperationService {
       return rejected;
     });
 
+    // Side-effect: Emit signal
+    void signalService.ingestSignal(organizationId, {
+      source: SignalSource.AUTOOPS,
+      type: SignalType.APPROVAL_REJECTED,
+      severity: SignalSeverity.WARNING,
+      title: 'Operation Rejected',
+      message: `Operation ${updated.id} was rejected by user ${userId}. Reason: ${reason ?? 'No reason provided'}.`,
+      operationId: updated.id,
+      projectId: updated.projectId ?? undefined,
+      environmentId: updated.environmentId ?? undefined,
+      dedupeMode: 'EVENT',
+    }).catch(() => undefined);
+
     return this._toOperation(updated);
+
   }
 
   private _auditAction(operationType: OperationType): AuditAction {

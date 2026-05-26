@@ -10,6 +10,9 @@ import {
 import { ConflictError, NotFoundError } from '@autoops/utils';
 import { enqueueDeploymentJob } from './deployment.queue.js';
 import { resourceGraphService } from '../resources/resource-graph.service.js';
+import { signalService } from '../signals/signal.service.js';
+import { SignalSeverity, SignalSource, SignalType } from '@autoops/types';
+
 
 const ACTIVE_DEPLOYMENT_STATUSES = [
   DeploymentStatus.QUEUED,
@@ -150,7 +153,21 @@ export class DeploymentService {
       throw err;
     }
 
+    // Side-effect: Emit signal
+    void signalService.ingestSignal(organizationId, {
+      source: SignalSource.AUTOOPS,
+      type: SignalType.DEPLOYMENT_CREATED,
+      severity: SignalSeverity.INFO,
+      title: 'Deployment Created',
+      message: `Deployment ${deployment.id} triggered by user ${userId} for project ${projectId}.`,
+      deploymentId: deployment.id,
+      projectId,
+      environmentId,
+      dedupeMode: 'EVENT',
+    }).catch(() => undefined);
+
     await this._registerDeploymentNode(organizationId, deployment);
+
     return this._toDeployment(deployment);
   }
 

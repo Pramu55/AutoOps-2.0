@@ -29,13 +29,14 @@ type WorkloadParams = {
 
 export class KubernetesController {
   status = async (req: Request, res: Response<{ data: KubernetesStatus }>): Promise<void> => {
+    const orgId = req.auth?.orgId;
     const blocked = await getProviderInventoryBlockedStatus(req.auth);
     if (blocked) {
       res.json({ data: { ...blocked, readOnly: true } as unknown as KubernetesStatus });
       return;
     }
 
-    const raw = await kubernetesService.getStatus();
+    const raw = await kubernetesService.getStatus(orgId);
     const safeStatus = {
       status: raw.status,
       version: raw.version,
@@ -47,8 +48,9 @@ export class KubernetesController {
   };
 
   summary = async (req: Request, res: Response<{ data: KubernetesSummary }>): Promise<void> => {
+    const auth = this._requireAuth(req);
     await requireProviderInventoryAccess(req.auth);
-    res.json({ data: await kubernetesService.getSummary() });
+    res.json({ data: await kubernetesService.getSummary(auth.orgId) });
   };
 
   namespaces = async (
@@ -79,7 +81,7 @@ export class KubernetesController {
   ): Promise<void> => {
     const auth = this._requireAuth(req);
     await requireProviderInventoryAccess(req.auth);
-    const data = await kubernetesService.listPods();
+    const data = await kubernetesService.listPods(auth.orgId);
     await this._registerKubernetes(auth.orgId, { pods: data.items });
     res.json({ data });
   };
@@ -101,7 +103,7 @@ export class KubernetesController {
   ): Promise<void> => {
     const auth = this._requireAuth(req);
     await requireProviderInventoryAccess(req.auth);
-    const data = await kubernetesService.listNodes();
+    const data = await kubernetesService.listNodes(auth.orgId);
     await this._registerKubernetes(auth.orgId, { nodes: data.items });
     res.json({ data });
   };

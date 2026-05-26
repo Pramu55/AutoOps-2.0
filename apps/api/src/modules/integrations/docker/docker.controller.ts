@@ -25,13 +25,14 @@ type ContainerParams = {
 
 export class DockerController {
   status = async (req: Request, res: Response<{ data: DockerStatusResponse }>): Promise<void> => {
+    const orgId = req.auth?.orgId;
     const blocked = await getProviderInventoryBlockedStatus(req.auth);
     if (blocked) {
       res.json({ data: blocked as unknown as DockerStatusResponse });
       return;
     }
 
-    const raw = await dockerService.getStatus();
+    const raw = await dockerService.getStatus(orgId);
     const safeStatus = {
       status: raw.status,
       configured: raw.configured,
@@ -51,7 +52,7 @@ export class DockerController {
   ): Promise<void> => {
     const auth = this._requireAuth(req);
     await requireProviderInventoryAccess(req.auth);
-    const data = await dockerService.listContainers();
+    const data = await dockerService.listContainers(auth.orgId);
     await this._registerDocker(auth.orgId, { containers: data.items });
     res.json({ data });
   };

@@ -22,8 +22,12 @@ import {
   OperationStatus,
   OperationType,
   ProviderConnectionStatus,
+  SignalSeverity,
+  SignalSource,
+  SignalType,
 } from '@autoops/types';
 import { operationService } from '../../operations/operation.service.js';
+import { signalService } from '../../signals/signal.service.js';
 
 type AuditContext = { ipAddress?: string; userAgent?: string };
 
@@ -36,7 +40,7 @@ type DockerActionConfig = {
 const AUTOOPS_LABEL_PREFIX = 'com.docker.compose.';
 
 export class DockerService {
-  async getStatus(): Promise<DockerStatusResponse> {
+  async getStatus(organizationId?: string): Promise<DockerStatusResponse> {
     const checkedAt = new Date().toISOString();
     const client = new DockerEngineClient();
     if (!client.isConfigured()) {
@@ -57,6 +61,19 @@ export class DockerService {
         client.listImages(),
       ]);
 
+      if (organizationId) {
+        void signalService.ingestSignal(organizationId, {
+          source: SignalSource.DOCKER,
+          type: SignalType.PROVIDER_CONNECTED,
+          severity: SignalSeverity.INFO,
+          title: 'Docker Engine Connected',
+          message: 'Successfully connected to Docker Engine API.',
+          metadata: { version: version.Version, apiVersion: version.ApiVersion },
+          dedupeMode: 'DEDUPE',
+        });
+        void this._ingestContainerSignals(organizationId, containers);
+      }
+
       return {
         status: ProviderConnectionStatus.CONNECTED,
         configured: true,
@@ -70,13 +87,30 @@ export class DockerService {
         message: 'Docker is connected.',
       };
     } catch (error) {
-      return this._connectionFailure(error, checkedAt);
+      const failure = this._connectionFailure(error, checkedAt);
+      if (organizationId) {
+        void signalService.ingestSignal(organizationId, {
+          source: SignalSource.DOCKER,
+          type: failure.status === ProviderConnectionStatus.AUTH_FAILED
+            ? SignalType.PROVIDER_AUTH_FAILED
+            : SignalType.PROVIDER_UNREACHABLE,
+          severity: SignalSeverity.ERROR,
+          title: `Docker Provider ${failure.status}`,
+          message: failure.message ?? 'Failed to connect to Docker Engine API.',
+          metadata: { status: failure.status, error: error instanceof Error ? error.message : String(error) },
+          dedupeMode: 'DEDUPE' as const,
+        });
+      }
+      return failure;
     }
   }
 
-  async listContainers(): Promise<DockerListResponse<DockerContainer>> {
+  async listContainers(organizationId?: string): Promise<DockerListResponse<DockerContainer>> {
     return this._list(async (client) => {
       const containers = await client.listContainers();
+      if (organizationId) {
+        void this._ingestContainerSignals(organizationId, containers);
+      }
       return containers.map((container) => this._toContainer(container));
     });
   }
@@ -326,6 +360,36 @@ export class DockerService {
   private _riskLevel(record: Record<string, unknown>): DockerActionResponse['riskLevel'] {
     const value = record.riskLevel;
     return value === 'LOW' || value === 'MEDIUM' || value === 'HIGH' ? value : 'MEDIUM';
+  }
+
+  private async _ingestContainerSignals(
+    organizationId: string,
+    containers: DockerContainerSummary[],
+  ): Promise<void> {
+    const signals = containers.flatMap((container) => {
+      const name = container.Names?.[0]?.replace(/^\//, '') ?? container.Id?.slice(0, 12) ?? 'unknown';
+      const state = container.State;
+      const status = container.Status;
+
+      if (state === 'exited' || state === 'dead' || status?.toLowerCase().includes('restarting')) {
+        return [
+          {
+            source: SignalSource.DOCKER,
+            type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+            severity: state === 'dead' ? SignalSeverity.CRITICAL : SignalSeverity.ERROR,
+            title: `Docker Container ${name} ${state}`,
+            message: `Docker container ${name} is in ${state} state (Status: ${status}).`,
+            metadata: { id: container.Id, name, state, status, image: container.Image },
+            dedupeMode: 'DEDUPE' as const,
+          },
+        ];
+      }
+      return [];
+    });
+
+    if (signals.length > 0) {
+      void signalService.ingestSignals(organizationId, signals);
+    }
   }
 }
 

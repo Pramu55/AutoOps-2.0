@@ -47,6 +47,7 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 - [AWS ECS Gated Apply](./AWS_APPROVAL_GATED_ECS_APPLY.md)
 - [Resource Graph Foundation](./RESOURCE_GRAPH_FOUNDATION.md)
 - [Resource Graph Foundation Plan](./RESOURCE_GRAPH_FOUNDATION_PLAN.md)
+- [Signal Ingest Foundation](./SIGNAL_INGESTION_FOUNDATION.md)
 - [Incident Graph and Runbook Automation Roadmap](./INCIDENT_GRAPH_AND_RUNBOOK_AUTOMATION_ROADMAP.md)
 
 ## Company Pilot Evaluation

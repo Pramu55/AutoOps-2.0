@@ -281,7 +281,59 @@ enum ResourceEdgeType {
   PART_OF
 }
 
+enum SignalSource {
+  AUTOOPS
+  JENKINS
+  DOCKER
+  KUBERNETES
+  AWS
+  GITHUB_ACTIONS
+  SYSTEM
+}
+
+enum SignalSeverity {
+  INFO
+  WARNING
+  ERROR
+  CRITICAL
+}
+
+enum SignalStatus {
+  ACTIVE
+  RESOLVED
+  ARCHIVED
+}
+
+enum SignalType {
+  DEPLOYMENT_CREATED
+  DEPLOYMENT_STATUS_CHANGED
+  OPERATION_CREATED
+  OPERATION_STATUS_CHANGED
+  APPROVAL_REQUIRED
+  APPROVAL_APPROVED
+  APPROVAL_REJECTED
+  PROVIDER_CONNECTED
+  PROVIDER_UNREACHABLE
+  PROVIDER_AUTH_FAILED
+  RESOURCE_DISCOVERED
+  RESOURCE_CHANGED
+  RESOURCE_STALE
+  RESOURCE_ARCHIVED
+  KUBERNETES_POD_PHASE_CHANGED
+  KUBERNETES_RESTART_COUNT_CHANGED
+  DOCKER_CONTAINER_STATE_CHANGED
+  JENKINS_BUILD_STARTED
+  JENKINS_BUILD_SUCCEEDED
+  JENKINS_BUILD_FAILED
+  AWS_GUARDRAIL_BLOCKED
+  AWS_PLAN_READY
+  AWS_APPLY_BLOCKED
+  SECURITY_POLICY_BLOCKED
+  SYSTEM_HEALTH_CHANGED
+}
+
 // ----- Identity ---------------------------------------------------------------
+
 
 model User {
   id            String    @id @default(uuid()) @db.Uuid
@@ -347,9 +399,11 @@ model Organization {
   aiConversations AIConversation[]
   awsReleases     AwsRelease[]
   resourceNodes   ResourceNode[]
+  resourceSignals ResourceSignal[]
 
   @@map("organizations")
 }
+
 
 model OrgMembership {
   id             String       @id @default(uuid()) @db.Uuid
@@ -831,8 +885,10 @@ model ResourceNode {
 
   outgoingEdges ResourceEdge[] @relation("ResourceEdgeSource")
   incomingEdges ResourceEdge[] @relation("ResourceEdgeTarget")
+  signals       ResourceSignal[]
 
   @@unique([organizationId, urn])
+
   @@index([organizationId])
   @@index([organizationId, provider])
   @@index([organizationId, kind])
@@ -867,4 +923,47 @@ model ResourceEdge {
   @@index([organizationId, archivedAt])
   @@index([organizationId, lastSeenAt])
   @@map("resource_edges")
+}
+
+model ResourceSignal {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  resourceNodeId String?        @db.Uuid
+  resourceNode   ResourceNode?  @relation(fields: [resourceNodeId], references: [id], onDelete: SetNull)
+  operationId    String?        @db.Uuid
+  deploymentId   String?        @db.Uuid
+  projectId      String?        @db.Uuid
+  environmentId  String?        @db.Uuid
+  source         SignalSource
+  type           SignalType
+  severity       SignalSeverity @default(INFO)
+  status         SignalStatus   @default(ACTIVE)
+  title          String
+  message        String         @db.Text
+  fingerprint    String
+  metadata       Json           @default("{}")
+  labels         Json?
+  observedAt     DateTime       @db.Timestamptz(3)
+  firstSeenAt    DateTime       @default(now()) @db.Timestamptz(3)
+  lastSeenAt     DateTime       @default(now()) @db.Timestamptz(3)
+  count          Int            @default(1)
+  archivedAt     DateTime?      @db.Timestamptz(3)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+
+  @@unique([organizationId, fingerprint])
+  @@index([organizationId])
+  @@index([organizationId, observedAt])
+  @@index([organizationId, severity])
+  @@index([organizationId, source])
+  @@index([organizationId, type])
+  @@index([organizationId, status])
+  @@index([organizationId, resourceNodeId])
+  @@index([organizationId, operationId])
+  @@index([organizationId, deploymentId])
+  @@index([organizationId, projectId])
+  @@index([organizationId, environmentId])
+  @@index([organizationId, archivedAt])
+  @@map("resource_signals")
 }
