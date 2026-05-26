@@ -20,6 +20,7 @@ import type {
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { kubernetesService } from './kubernetes.service.js';
 import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
+import { resourceGraphService } from '../../resources/resource-graph.service.js';
 
 type WorkloadParams = {
   namespace: string;
@@ -54,40 +55,55 @@ export class KubernetesController {
     req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesNamespace> }>,
   ): Promise<void> => {
+    const auth = this._requireAuth(req);
     await requireProviderInventoryAccess(req.auth);
-    res.json({ data: await kubernetesService.listNamespaces() });
+    const data = await kubernetesService.listNamespaces();
+    await this._registerKubernetes(auth.orgId, { namespaces: data.items });
+    res.json({ data });
   };
 
   workloads = async (
     req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesWorkload> }>,
   ): Promise<void> => {
+    const auth = this._requireAuth(req);
     await requireProviderInventoryAccess(req.auth);
-    res.json({ data: await kubernetesService.listWorkloads() });
+    const data = await kubernetesService.listWorkloads();
+    await this._registerKubernetes(auth.orgId, { workloads: data.items });
+    res.json({ data });
   };
 
   pods = async (
     req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesPod> }>,
   ): Promise<void> => {
+    const auth = this._requireAuth(req);
     await requireProviderInventoryAccess(req.auth);
-    res.json({ data: await kubernetesService.listPods() });
+    const data = await kubernetesService.listPods();
+    await this._registerKubernetes(auth.orgId, { pods: data.items });
+    res.json({ data });
   };
 
   services = async (
     req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesServiceDto> }>,
   ): Promise<void> => {
+    const auth = this._requireAuth(req);
     await requireProviderInventoryAccess(req.auth);
-    res.json({ data: await kubernetesService.listServices() });
+    const data = await kubernetesService.listServices();
+    await this._registerKubernetes(auth.orgId, { services: data.items });
+    res.json({ data });
   };
 
   nodes = async (
     req: Request,
     res: Response<{ data: KubernetesListResponse<KubernetesNode> }>,
   ): Promise<void> => {
+    const auth = this._requireAuth(req);
     await requireProviderInventoryAccess(req.auth);
-    res.json({ data: await kubernetesService.listNodes() });
+    const data = await kubernetesService.listNodes();
+    await this._registerKubernetes(auth.orgId, { nodes: data.items });
+    res.json({ data });
   };
 
   rolloutStatus = async (
@@ -181,6 +197,26 @@ export class KubernetesController {
       ipAddress: req.ip,
       userAgent: req.header('user-agent'),
     };
+  }
+
+  private async _registerKubernetes(
+    organizationId: string,
+    input: {
+      namespaces?: KubernetesNamespace[];
+      nodes?: KubernetesNode[];
+      workloads?: KubernetesWorkload[];
+      pods?: KubernetesPod[];
+      services?: KubernetesServiceDto[];
+    },
+  ): Promise<void> {
+    try {
+      await resourceGraphService.registerKubernetesInventory(organizationId, input);
+    } catch (error) {
+      console.warn('Resource graph Kubernetes registration failed', {
+        organizationId,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    }
   }
 }
 

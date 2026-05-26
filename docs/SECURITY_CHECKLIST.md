@@ -223,3 +223,14 @@ Do not release if build/typecheck fails, migration status is unsafe, or secrets 
 - Disable force pushes on `main`.
 - Require pull request review for production branches.
 - Require AutoOps CI status checks before merge.
+
+## Resource Graph Safety
+
+- Resource Graph is a tenant-scoped read model, not a permission source.
+- Every ResourceNode and ResourceEdge query is filtered by authenticated organization ID.
+- Same URN values can exist in different organizations without collision.
+- Edges can only connect nodes from the same organization.
+- Provider nodes are registered only after provider inventory access is allowed for that organization.
+- Metadata is curated, redacted, and capped before storage.
+- Raw provider payloads, secrets, kubeconfig content, Docker socket details, AWS credentials, GitHub/Jenkins tokens, Terraform state, and raw provider output are never stored or returned.
+- The Resource Graph UI has no action buttons and cannot execute automation.

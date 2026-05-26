@@ -1,6 +1,7 @@
 import { prisma } from '@autoops/database';
 import type { CreateProjectInput, Project, UpdateProjectInput } from '@autoops/types';
 import { BadRequestError, ConflictError, NotFoundError } from '@autoops/utils';
+import { resourceGraphService } from '../resources/resource-graph.service.js';
 
 export class ProjectService {
   async listProjects(organizationId: string): Promise<Project[]> {
@@ -59,6 +60,7 @@ export class ProjectService {
       },
     });
 
+    await this._registerProjectNode(organizationId, project);
     return this._toProject(project);
   }
 
@@ -112,6 +114,7 @@ export class ProjectService {
       },
     });
 
+    await this._registerProjectNode(organizationId, updated);
     return this._toProject(updated);
   }
 
@@ -140,7 +143,23 @@ export class ProjectService {
       },
     });
 
+    await this._registerProjectNode(organizationId, archived).catch(() => undefined);
     return this._toProject(archived);
+  }
+
+  private async _registerProjectNode(
+    organizationId: string,
+    project: { id: string; name: string; slug: string },
+  ): Promise<void> {
+    try {
+      await resourceGraphService.registerAutoOpsProjectNode(organizationId, project);
+    } catch (error) {
+      console.warn('Resource graph project registration failed', {
+        organizationId,
+        projectId: project.id,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    }
   }
 
   private _toProject(project: {

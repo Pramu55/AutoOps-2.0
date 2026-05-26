@@ -17,6 +17,7 @@ import {
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { dockerService } from './docker.service.js';
 import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
+import { resourceGraphService } from '../../resources/resource-graph.service.js';
 
 type ContainerParams = {
   containerId: string;
@@ -45,29 +46,41 @@ export class DockerController {
   };
 
   containers = async (
-    _req: Request,
+    req: Request,
     res: Response<{ data: DockerListResponse<DockerContainer> }>,
   ): Promise<void> => {
-    await requireProviderInventoryAccess(_req.auth);
-    res.json({ data: await dockerService.listContainers() });
+    const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
+    const data = await dockerService.listContainers();
+    await this._registerDocker(auth.orgId, { containers: data.items });
+    res.json({ data });
   };
 
-  images = async (_req: Request, res: Response<{ data: DockerListResponse<DockerImage> }>): Promise<void> => {
-    await requireProviderInventoryAccess(_req.auth);
-    res.json({ data: await dockerService.listImages() });
+  images = async (req: Request, res: Response<{ data: DockerListResponse<DockerImage> }>): Promise<void> => {
+    const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
+    const data = await dockerService.listImages();
+    await this._registerDocker(auth.orgId, { images: data.items });
+    res.json({ data });
   };
 
   networks = async (
-    _req: Request,
+    req: Request,
     res: Response<{ data: DockerListResponse<DockerNetwork> }>,
   ): Promise<void> => {
-    await requireProviderInventoryAccess(_req.auth);
-    res.json({ data: await dockerService.listNetworks() });
+    const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
+    const data = await dockerService.listNetworks();
+    await this._registerDocker(auth.orgId, { networks: data.items });
+    res.json({ data });
   };
 
-  volumes = async (_req: Request, res: Response<{ data: DockerListResponse<DockerVolume> }>): Promise<void> => {
-    await requireProviderInventoryAccess(_req.auth);
-    res.json({ data: await dockerService.listVolumes() });
+  volumes = async (req: Request, res: Response<{ data: DockerListResponse<DockerVolume> }>): Promise<void> => {
+    const auth = this._requireAuth(req);
+    await requireProviderInventoryAccess(req.auth);
+    const data = await dockerService.listVolumes();
+    await this._registerDocker(auth.orgId, { volumes: data.items });
+    res.json({ data });
   };
 
   logs = async (
@@ -160,6 +173,25 @@ export class DockerController {
       ipAddress: req.ip,
       userAgent: req.header('user-agent'),
     };
+  }
+
+  private async _registerDocker(
+    organizationId: string,
+    input: {
+      containers?: DockerContainer[];
+      images?: DockerImage[];
+      networks?: DockerNetwork[];
+      volumes?: DockerVolume[];
+    },
+  ): Promise<void> {
+    try {
+      await resourceGraphService.registerDockerInventory(organizationId, input);
+    } catch (error) {
+      console.warn('Resource graph Docker registration failed', {
+        organizationId,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    }
   }
 }
 

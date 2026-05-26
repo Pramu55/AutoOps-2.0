@@ -75,3 +75,7 @@ Safety constraints:
 - no secrets in prompts,
 - no provider mutation,
 - human approval remains mandatory for actions.
+
+## Current Status
+
+`RESOURCE_GRAPH_FOUNDATION_GREEN` is the implemented base for the roadmap. The next milestone remains `SIGNAL_INGESTION_GREEN`, which should ingest safe event/signal records and attach them to existing graph resources without changing Resource Graph into a permission or automation layer.

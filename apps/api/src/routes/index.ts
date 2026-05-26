@@ -16,6 +16,7 @@ import { providerRegistryRouter } from '../modules/integrations/providers/provid
 import { opsRouter } from '../modules/ops/ops.routes.js';
 import { operationRouter } from '../modules/operations/operation.routes.js';
 import { projectRouter } from '../modules/projects/project.routes.js';
+import { resourceGraphRouter } from '../modules/resources/resource-graph.routes.js';
 import { systemRouter } from '../modules/system/system.routes.js';
 
 /**
@@ -28,6 +29,7 @@ export const v1Router: Router = Router();
 
 v1Router.use('/auth', authRouter);
 v1Router.use('/projects', projectRouter);
+v1Router.use('/resources', resourceGraphRouter);
 v1Router.use('/deployments', deploymentRouter);
 v1Router.use('/incidents', incidentRouter);
 v1Router.use('/operations', operationRouter);

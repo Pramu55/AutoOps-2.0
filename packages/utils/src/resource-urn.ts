@@ -28,6 +28,10 @@ export function buildJenkinsJobUrn(instanceSlug: string, jobName: string): strin
   return `urn:autoops:jenkins:${sanitizeUrnSegment(instanceSlug)}:job/${sanitizeUrnSegment(jobName)}`;
 }
 
+export function buildJenkinsInstanceUrn(instanceSlug: string): string {
+  return `urn:autoops:jenkins:${sanitizeUrnSegment(instanceSlug)}:instance/default`;
+}
+
 export function buildJenkinsBuildUrn(
   instanceSlug: string,
   jobName: string,
@@ -40,12 +44,32 @@ export function buildDockerContainerUrn(engineSlug: string, containerNameOrId: s
   return `urn:autoops:docker:${sanitizeUrnSegment(engineSlug)}:container/${sanitizeUrnSegment(containerNameOrId)}`;
 }
 
+export function buildDockerEngineUrn(engineSlug: string): string {
+  return `urn:autoops:docker:${sanitizeUrnSegment(engineSlug)}:engine/default`;
+}
+
 export function buildDockerImageUrn(engineSlug: string, imageIdOrRepoTag: string): string {
   return `urn:autoops:docker:${sanitizeUrnSegment(engineSlug)}:image/${sanitizeUrnSegment(imageIdOrRepoTag)}`;
 }
 
+export function buildDockerNetworkUrn(engineSlug: string, networkNameOrId: string): string {
+  return `urn:autoops:docker:${sanitizeUrnSegment(engineSlug)}:network/${sanitizeUrnSegment(networkNameOrId)}`;
+}
+
+export function buildDockerVolumeUrn(engineSlug: string, volumeName: string): string {
+  return `urn:autoops:docker:${sanitizeUrnSegment(engineSlug)}:volume/${sanitizeUrnSegment(volumeName)}`;
+}
+
+export function buildKubernetesClusterUrn(clusterSlug: string): string {
+  return `urn:autoops:kubernetes:${sanitizeUrnSegment(clusterSlug)}:cluster/default`;
+}
+
 export function buildKubernetesNamespaceUrn(clusterSlug: string, namespace: string): string {
   return `urn:autoops:kubernetes:${sanitizeUrnSegment(clusterSlug)}:namespace/${sanitizeUrnSegment(namespace)}`;
+}
+
+export function buildKubernetesNodeUrn(clusterSlug: string, nodeName: string): string {
+  return `urn:autoops:kubernetes:${sanitizeUrnSegment(clusterSlug)}:node/${sanitizeUrnSegment(nodeName)}`;
 }
 
 export function buildKubernetesDeploymentUrn(
@@ -72,10 +96,18 @@ export function buildAutoOpsProjectUrn(projectId: string): string {
   return `urn:autoops:autoops:project/${sanitizeUrnSegment(projectId)}`;
 }
 
+export function buildAutoOpsOrganizationUrn(): string {
+  return 'urn:autoops:autoops:organization/current';
+}
+
 export function buildAutoOpsEnvironmentUrn(environmentId: string): string {
   return `urn:autoops:autoops:environment/${sanitizeUrnSegment(environmentId)}`;
 }
 
 export function buildAutoOpsDeploymentUrn(deploymentId: string): string {
   return `urn:autoops:autoops:deployment/${sanitizeUrnSegment(deploymentId)}`;
+}
+
+export function buildAutoOpsOperationUrn(operationId: string): string {
+  return `urn:autoops:autoops:operation/${sanitizeUrnSegment(operationId)}`;
 }

@@ -226,3 +226,22 @@
 - Data shown: Runtime/provider/queue data where implemented.
 - Key actions: Inspect live readiness.
 - Safety notes: Metrics are real or reported unavailable honestly.
+
+## `/dashboard/resources`
+
+- Purpose: Tenant-scoped Resource Graph explorer.
+- Who uses it: Operators, admins, platform reviewers.
+- Data shown: Resource readiness, provider counts, resource table, selected resource safe metadata, and graph neighbors.
+- Key actions: Filter, search, select a resource, inspect neighbors.
+- Safety notes: Read-only. No action buttons. Does not grant provider access or bypass RBAC/governance.
+
+## Resource Graph API Routes
+
+| Method | Path | Access | Purpose |
+|--------|------|--------|---------|
+| GET | `/v1/resources/readiness` | Authenticated | Tenant-scoped graph readiness and counts |
+| GET | `/v1/resources` | Authenticated | Tenant-scoped resource list with filters |
+| GET | `/v1/resources/:resourceId` | Authenticated | Tenant-scoped resource detail |
+| GET | `/v1/resources/:resourceId/neighbors` | Authenticated | Tenant-scoped incoming/outgoing edges |
+
+Resource Graph responses never expose raw provider payloads, secrets, kubeconfig, tokens, Docker socket internals, Terraform state, or raw provider output.

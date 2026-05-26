@@ -9,8 +9,10 @@ import type {
   OperationObservabilityItem,
   OpsObservabilityResponse,
   OpsQueueHealthSummary,
+  ResourceGraphReadinessResponse,
 } from '@autoops/types';
 import {
+  Boxes,
   Database,
   ExternalLink,
   RadioTower,
@@ -26,6 +28,7 @@ import { Button } from '@/components/ui/button';
 
 type OpsObservabilityApiResponse = { data: OpsObservabilityResponse };
 type OperationActivityApiResponse = { data: OperationActivityResponse };
+type ResourceGraphReadinessApiResponse = { data: ResourceGraphReadinessResponse };
 type ApprovalDecision = 'approve' | 'reject';
 type PendingApprovalDecision = {
   operation: OperationActivityItem;
@@ -184,6 +187,52 @@ function HealthCheckCard({
   );
 }
 
+function ResourceGraphCard({ readiness }: { readiness: ResourceGraphReadinessResponse | null }) {
+  const providerCounts = readiness?.providerCounts ?? null;
+  const providerSummary = providerCounts
+    ? Object.entries(providerCounts)
+        .filter(([, count]) => count > 0)
+        .map(([provider, count]) => `${provider.toLowerCase().replaceAll('_', ' ')} ${count}`)
+        .join(' | ')
+    : 'No discovered resources yet';
+
+  return (
+    <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">Resource Graph</h3>
+          <span className={`mt-3 inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusTone(readiness?.status ?? 'EMPTY')}`}>
+            {readiness?.status ?? 'EMPTY'}
+          </span>
+        </div>
+        <div className="rounded-xl bg-cyan-300/10 p-2 text-blue-600">
+          <Boxes className="h-5 w-5" />
+        </div>
+      </div>
+      <p className="mt-4 text-sm leading-6 text-slate-600">
+        Tenant-scoped resource topology. It does not grant provider access or execute actions.
+      </p>
+      <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+        <div className="rounded border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Resources</p>
+          <p className="mt-1 font-semibold text-slate-950">{readiness?.totalResources ?? 0}</p>
+        </div>
+        <div className="rounded border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Edges</p>
+          <p className="mt-1 font-semibold text-slate-950">{readiness?.totalEdges ?? 0}</p>
+        </div>
+        <div className="rounded border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Stale</p>
+          <p className="mt-1 font-semibold text-slate-950">{readiness?.staleCount ?? 0}</p>
+        </div>
+      </div>
+      <p className="mt-3 line-clamp-2 text-xs text-slate-500">{providerSummary}</p>
+      <Link href="/dashboard/resources" className="mt-4 inline-flex text-sm font-semibold text-blue-700 hover:underline">
+        Open Resource Graph
+      </Link>
+    </section>
+  );
+}
 function WorkerRuntimeCard({
   worker,
 }: {
@@ -412,6 +461,7 @@ export function OperationsClient() {
   const [observability, setObservability] = useState<OpsObservabilityResponse | null>(null);
   const [activityItems, setActivityItems] = useState<OperationActivityItem[]>([]);
   const [pendingApprovalItems, setPendingApprovalItems] = useState<OperationActivityItem[]>([]);
+  const [resourceGraph, setResourceGraph] = useState<ResourceGraphReadinessResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDecidingApproval, setIsDecidingApproval] = useState(false);
@@ -434,12 +484,15 @@ export function OperationsClient() {
       const [
         observabilityResponse,
         pendingApprovalResponse,
+        resourceGraphResponse,
       ] = await Promise.all([
         api.get<OpsObservabilityApiResponse>('/v1/ops/observability'),
         api.get<OperationActivityApiResponse>('/v1/ops/activity?status=PENDING_APPROVAL&limit=20'),
+        api.get<ResourceGraphReadinessApiResponse>('/v1/resources/readiness'),
       ]);
       setObservability(observabilityResponse.data);
       setPendingApprovalItems(pendingApprovalResponse.data.items);
+      setResourceGraph(resourceGraphResponse.data);
 
       try {
         const activityResponse = await api.get<OperationActivityApiResponse>('/v1/ops/activity');
@@ -581,13 +634,14 @@ export function OperationsClient() {
         </div>
       ) : null}
 
-      <section className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-6">
         {[
           ['Platform', platform?.api.status ?? 'UNKNOWN', 'API readiness'],
           ['Providers', providerHealth ? 'LIVE' : 'UNKNOWN', 'Connector checks'],
           ['Active operations', operationObservability?.active.length ?? 0, 'Queued/running/pending'],
           ['Pending approvals', pendingApprovals.length, 'Need decision'],
           ['Open incidents', incidentSummary?.open ?? 0, 'Failure response'],
+          ['Resources', resourceGraph?.totalResources ?? 0, 'Graph nodes'],
         ].map(([label, value, caption]) => (
           <div key={label} className="rounded-md border border-slate-200 bg-slate-50 p-4">
             <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
@@ -596,6 +650,8 @@ export function OperationsClient() {
           </div>
         ))}
       </section>
+
+      <ResourceGraphCard readiness={resourceGraph} />
 
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">

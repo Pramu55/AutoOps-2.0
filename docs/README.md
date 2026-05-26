@@ -45,6 +45,7 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 - [AWS ECR Image Build and Push](./AWS_ECR_IMAGE_BUILD_AND_PUSH.md)
 - [AWS Terraform ECS Plan](./AWS_TERRAFORM_ECS_PLAN.md)
 - [AWS ECS Gated Apply](./AWS_APPROVAL_GATED_ECS_APPLY.md)
+- [Resource Graph Foundation](./RESOURCE_GRAPH_FOUNDATION.md)
 - [Resource Graph Foundation Plan](./RESOURCE_GRAPH_FOUNDATION_PLAN.md)
 - [Incident Graph and Runbook Automation Roadmap](./INCIDENT_GRAPH_AND_RUNBOOK_AUTOMATION_ROADMAP.md)
 

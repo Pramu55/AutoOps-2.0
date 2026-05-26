@@ -9,6 +9,7 @@ import {
 } from '@autoops/types';
 import { ConflictError, NotFoundError } from '@autoops/utils';
 import { enqueueDeploymentJob } from './deployment.queue.js';
+import { resourceGraphService } from '../resources/resource-graph.service.js';
 
 const ACTIVE_DEPLOYMENT_STATUSES = [
   DeploymentStatus.QUEUED,
@@ -149,6 +150,7 @@ export class DeploymentService {
       throw err;
     }
 
+    await this._registerDeploymentNode(organizationId, deployment);
     return this._toDeployment(deployment);
   }
 
@@ -276,6 +278,27 @@ export class DeploymentService {
     }
 
     return {};
+  }
+
+  private async _registerDeploymentNode(
+    organizationId: string,
+    deployment: {
+      id: string;
+      projectId: string;
+      environmentId: string;
+      status: string;
+      imageTag?: string | null;
+    },
+  ): Promise<void> {
+    try {
+      await resourceGraphService.registerAutoOpsDeploymentNode(organizationId, deployment);
+    } catch (error) {
+      console.warn('Resource graph deployment registration failed', {
+        organizationId,
+        deploymentId: deployment.id,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    }
   }
 }
 

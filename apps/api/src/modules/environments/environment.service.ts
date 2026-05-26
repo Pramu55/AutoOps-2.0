@@ -5,6 +5,7 @@ import type {
   UpdateEnvironmentInput,
 } from '@autoops/types';
 import { BadRequestError, ConflictError, NotFoundError } from '@autoops/utils';
+import { resourceGraphService } from '../resources/resource-graph.service.js';
 
 export class EnvironmentService {
   async listEnvironments(projectId: string, organizationId: string): Promise<Environment[]> {
@@ -42,6 +43,7 @@ export class EnvironmentService {
       },
     });
 
+    await this._registerEnvironmentNode(organizationId, environment);
     return this._toEnvironment(environment);
   }
 
@@ -110,6 +112,7 @@ export class EnvironmentService {
       },
     });
 
+    await this._registerEnvironmentNode(organizationId, updated);
     return this._toEnvironment(updated);
   }
 
@@ -144,7 +147,23 @@ export class EnvironmentService {
       },
     });
 
+    await this._registerEnvironmentNode(organizationId, archived).catch(() => undefined);
     return this._toEnvironment(archived);
+  }
+
+  private async _registerEnvironmentNode(
+    organizationId: string,
+    environment: { id: string; name: string; slug: string; projectId: string },
+  ): Promise<void> {
+    try {
+      await resourceGraphService.registerAutoOpsEnvironmentNode(organizationId, environment);
+    } catch (error) {
+      console.warn('Resource graph environment registration failed', {
+        organizationId,
+        environmentId: environment.id,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    }
   }
 
   private async _requireProject(projectId: string, organizationId: string): Promise<void> {
