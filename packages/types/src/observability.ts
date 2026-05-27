@@ -20,7 +20,8 @@ export const createIncidentSchema = z.object({
   projectId: z.string().uuid(),
   title: z.string().min(2).max(200),
   description: z.string().max(8000).optional(),
-  severity: z.nativeEnum(IncidentSeverity).default(IncidentSeverity.SEV3),
+  severity: z.nativeEnum(IncidentSeverity).default(IncidentSeverity.ERROR),
+
 });
 export type CreateIncidentInput = z.infer<typeof createIncidentSchema>;
 

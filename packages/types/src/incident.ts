@@ -1,27 +1,34 @@
 import { z } from 'zod';
 import { idSchema } from './common.js';
-import { IncidentSeverity, IncidentStatus } from './enums.js';
-import type { OperationProvider } from './operation.js';
+import {
+  IncidentSeverity,
+  IncidentStatus,
+  IncidentSource,
+  IncidentSignalRole,
+} from './enums.js';
 
-export const IncidentRunbookActionType = {
-  OBSERVE: 'OBSERVE',
-  VERIFY: 'VERIFY',
-  RECOVER: 'RECOVER',
-  ESCALATE: 'ESCALATE',
-} as const;
-export type IncidentRunbookActionType =
-  (typeof IncidentRunbookActionType)[keyof typeof IncidentRunbookActionType];
+export { IncidentSeverity, IncidentStatus, IncidentSource, IncidentSignalRole };
 
 export const incidentParamsSchema = z.object({
   incidentId: idSchema,
 });
 
-export const incidentListQuerySchema = z.object({
+export const incidentFilterSchema = z.object({
   status: z.nativeEnum(IncidentStatus).optional(),
   severity: z.nativeEnum(IncidentSeverity).optional(),
-  limit: z.coerce.number().int().min(1).max(50).default(25),
+  source: z.nativeEnum(IncidentSource).optional(),
+  primaryResourceNodeId: idSchema.optional(),
+  projectId: idSchema.optional(),
+  environmentId: idSchema.optional(),
+  deploymentId: idSchema.optional(),
+  operationId: idSchema.optional(),
+  search: z.string().optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().optional(),
 });
-export type IncidentListQuery = z.infer<typeof incidentListQuerySchema>;
+export type IncidentFilter = z.infer<typeof incidentFilterSchema>;
 
 export const acknowledgeIncidentSchema = z.object({
   confirmationToken: z.literal('ACKNOWLEDGE'),
@@ -29,7 +36,11 @@ export const acknowledgeIncidentSchema = z.object({
 
 export const resolveIncidentSchema = z.object({
   confirmationToken: z.literal('RESOLVE'),
-  resolutionNote: z.string().trim().min(3).max(1000),
+  resolutionNote: z.string().trim().min(3).max(1000).optional(),
+});
+
+export const archiveIncidentSchema = z.object({
+  confirmationToken: z.literal('ARCHIVE'),
 });
 
 export interface IncidentActor {
@@ -38,76 +49,78 @@ export interface IncidentActor {
   email: string | null;
 }
 
-export interface IncidentPermissionHints {
-  canAcknowledge: boolean;
-  canResolve: boolean;
-  reason: string | null;
-}
-
-export interface IncidentRunbookStep {
-  order: number;
-  title: string;
-  description: string;
-  actionType: IncidentRunbookActionType;
-  linkLabel?: string;
-  linkHref?: string;
-}
-
-export interface IncidentRunbookAction {
-  label: string;
-  href: string;
-}
-
-export interface IncidentRunbook {
-  key: string;
-  title: string;
-  summary: string;
-  steps: IncidentRunbookStep[];
-  relatedActions: IncidentRunbookAction[];
-}
-
-export interface IncidentListItem {
+export interface IncidentSignalEvidence {
   id: string;
+  signalId: string;
+  role: IncidentSignalRole;
+  type: string;
   title: string;
-  severity: IncidentSeverity;
-  status: IncidentStatus;
-  source: string;
-  provider: OperationProvider | null;
-  targetLabel: string | null;
-  safeErrorMessage: string | null;
-  linkedOperationId: string | null;
-  createdAt: string;
-  updatedAt: string;
-  acknowledgedAt: string | null;
-  acknowledgedBy: IncidentActor | null;
-  resolvedAt: string | null;
-  resolvedBy: IncidentActor | null;
-  resolutionNote: string | null;
-  permissions: IncidentPermissionHints;
-}
-
-export interface IncidentDetail extends IncidentListItem {
-  description: string | null;
-  runbook: IncidentRunbook;
+  severity: string;
+  observedAt: string;
 }
 
 export interface IncidentSummary {
-  open: number;
-  acknowledged: number;
-  resolvedRecent: number;
-  criticalOpen: number;
-  latest: IncidentListItem[];
+  id: string;
+  title: string;
+  summary: string;
+  severity: IncidentSeverity;
+  status: IncidentStatus;
+  source: IncidentSource;
+  correlationKey: string;
+  primaryResourceNodeId: string | null;
+  projectId: string | null;
+  environmentId: string | null;
+  deploymentId: string | null;
+  operationId: string | null;
+  signalCount: number;
+  firstObservedAt: string;
+  lastObservedAt: string;
+  openedAt: string;
+  acknowledgedAt: string | null;
+  resolvedAt: string | null;
+  archivedAt: string | null;
+  metadataSummary: Record<string, any>;
+  labelsSummary: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IncidentDetail extends IncidentSummary {
+  evidence: IncidentSignalEvidence[];
+  acknowledgedBy: IncidentActor | null;
+  resolvedBy: IncidentActor | null;
+}
+
+export interface IncidentReadinessResponse {
+  status: 'READY' | 'EMPTY' | 'DEGRADED';
+  totalIncidents: number;
+  openIncidents: number;
+  acknowledgedIncidents: number;
+  resolvedIncidents: number;
+  criticalOpenCount: number;
+  errorOpenCount: number;
+  warningOpenCount: number;
+  latestOpenedAt: string | null;
+  checkedAt: string;
 }
 
 export interface IncidentListResponse {
-  items: IncidentListItem[];
-  summary: IncidentSummary;
+  data: IncidentSummary[];
+  pagination: {
+    total: number;
+    limit: number;
+    hasMore: boolean;
+    nextCursor?: string;
+  };
 }
 
-export interface AcknowledgeIncidentResponse {
-  incident: IncidentDetail;
+export interface IncidentCorrelationResponse {
+  createdCount: number;
+  updatedCount: number;
+  linkedSignalCount: number;
+  skippedSignalCount: number;
 }
 
-export interface ResolveIncidentResponse {
-  incident: IncidentDetail;
+export interface IncidentActionResponse {
+  incident: IncidentSummary;
 }

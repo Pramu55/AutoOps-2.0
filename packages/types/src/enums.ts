@@ -74,25 +74,34 @@ export const PipelineRunStatus = {
 export type PipelineRunStatus = (typeof PipelineRunStatus)[keyof typeof PipelineRunStatus];
 
 export const IncidentSeverity = {
-  LOW: 'LOW',
-  MEDIUM: 'MEDIUM',
-  HIGH: 'HIGH',
+  INFO: 'INFO',
+  WARNING: 'WARNING',
+  ERROR: 'ERROR',
   CRITICAL: 'CRITICAL',
-  SEV1: 'SEV1',
-  SEV2: 'SEV2',
-  SEV3: 'SEV3',
-  SEV4: 'SEV4',
 } as const;
 export type IncidentSeverity = (typeof IncidentSeverity)[keyof typeof IncidentSeverity];
 
 export const IncidentStatus = {
   OPEN: 'OPEN',
-  TRIGGERED: 'TRIGGERED',
   ACKNOWLEDGED: 'ACKNOWLEDGED',
-  MITIGATED: 'MITIGATED',
   RESOLVED: 'RESOLVED',
+  ARCHIVED: 'ARCHIVED',
 } as const;
 export type IncidentStatus = (typeof IncidentStatus)[keyof typeof IncidentStatus];
+
+export const IncidentSource = {
+  SIGNAL_CORRELATION: 'SIGNAL_CORRELATION',
+  MANUAL: 'MANUAL',
+  SYSTEM: 'SYSTEM',
+} as const;
+export type IncidentSource = (typeof IncidentSource)[keyof typeof IncidentSource];
+
+export const IncidentSignalRole = {
+  TRIGGER: 'TRIGGER',
+  RELATED: 'RELATED',
+  EVIDENCE: 'EVIDENCE',
+} as const;
+export type IncidentSignalRole = (typeof IncidentSignalRole)[keyof typeof IncidentSignalRole];
 
 export const AlertChannelKind = {
   EMAIL: 'EMAIL',

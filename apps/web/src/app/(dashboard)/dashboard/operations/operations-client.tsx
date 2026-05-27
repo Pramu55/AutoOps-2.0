@@ -11,6 +11,8 @@ import type {
   OpsQueueHealthSummary,
   ResourceGraphReadinessResponse,
   SignalReadinessResponse,
+  IncidentSummary,
+  IncidentListResponse,
 } from '@autoops/types';
 import {
   Boxes,
@@ -514,6 +516,7 @@ export function OperationsClient() {
   const [pendingApprovalItems, setPendingApprovalItems] = useState<OperationActivityItem[]>([]);
   const [resourceGraph, setResourceGraph] = useState<ResourceGraphReadinessResponse | null>(null);
   const [signalReadiness, setSignalReadiness] = useState<SignalReadinessResponse | null>(null);
+  const [recentIncidents, setRecentIncidents] = useState<IncidentSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDecidingApproval, setIsDecidingApproval] = useState(false);
@@ -538,16 +541,19 @@ export function OperationsClient() {
         pendingApprovalResponse,
         resourceGraphResponse,
         signalReadinessResponse,
+        incidentsResponse,
       ] = await Promise.all([
         api.get<OpsObservabilityApiResponse>('/v1/ops/observability'),
         api.get<OperationActivityApiResponse>('/v1/ops/activity?status=PENDING_APPROVAL&limit=20'),
         api.get<ResourceGraphReadinessApiResponse>('/v1/resources/readiness'),
         api.get<SignalReadinessApiResponse>('/v1/signals/readiness'),
+        api.get<IncidentListResponse>('/v1/incidents?status=OPEN&limit=10'),
       ]);
       setObservability(observabilityResponse.data);
       setPendingApprovalItems(pendingApprovalResponse.data.items);
       setResourceGraph(resourceGraphResponse.data);
       setSignalReadiness(signalReadinessResponse.data);
+      setRecentIncidents(incidentsResponse.data);
 
       try {
         const activityResponse = await api.get<OperationActivityApiResponse>('/v1/ops/activity');
@@ -608,11 +614,11 @@ export function OperationsClient() {
   const pendingApprovals = useMemo(() => pendingApprovalItems, [pendingApprovalItems]);
   const importantIncidents = useMemo(
     () =>
-      (incidentSummary?.latest ?? [])
-        .filter((incident) => incident.status === 'OPEN' || incident.status === 'ACKNOWLEDGED')
-        .filter((incident) => incident.severity === 'CRITICAL' || incident.severity === 'HIGH' || incident.severity === 'MEDIUM')
+      recentIncidents
+        .filter((incident: IncidentSummary) => incident.status === 'OPEN' || incident.status === 'ACKNOWLEDGED')
+        .filter((incident: IncidentSummary) => incident.severity === 'CRITICAL' || incident.severity === 'ERROR' || incident.severity === 'WARNING')
         .slice(0, 3),
-    [incidentSummary?.latest],
+    [recentIncidents],
   );
 
   const openDecisionModal = (operation: OperationActivityItem, decision: ApprovalDecision) => {
@@ -695,7 +701,7 @@ export function OperationsClient() {
           ['Providers', providerHealth ? 'LIVE' : 'UNKNOWN', 'Connector checks'],
           ['Active operations', operationObservability?.active.length ?? 0, 'Queued/running/pending'],
           ['Pending approvals', pendingApprovals.length, 'Need decision'],
-          ['Open incidents', incidentSummary?.open ?? 0, 'Failure response'],
+          ['Open incidents', incidentSummary?.openIncidents ?? 0, 'Failure response'],
           ['Active signals', signalReadiness?.activeSignals ?? 0, 'Infrastructure observations'],
           ['Resources', resourceGraph?.totalResources ?? 0, 'Graph nodes'],
         ].map(([label, value, caption]) => (
@@ -748,10 +754,10 @@ export function OperationsClient() {
                   </span>
                 </div>
                 <p className="mt-3 line-clamp-2 text-sm font-semibold text-slate-950">{incident.title}</p>
-                <p className="mt-1 truncate text-xs text-slate-600">{incident.targetLabel ?? MISSING_VALUE}</p>
-                {incident.safeErrorMessage ? (
+                <p className="mt-1 truncate text-xs text-slate-600">{(incident.labelsSummary?.targetName as string) ?? (incident.metadataSummary?.targetName as string) ?? MISSING_VALUE}</p>
+                {(incident.metadataSummary?.safeErrorMessage as string) ? (
                   <p className="mt-3 line-clamp-2 rounded border border-rose-200 bg-rose-50 p-2 text-xs text-rose-800">
-                    {incident.safeErrorMessage}
+                    {(incident.metadataSummary?.safeErrorMessage as string)}
                   </p>
                 ) : null}
               </Link>

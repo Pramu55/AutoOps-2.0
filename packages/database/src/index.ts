@@ -12,7 +12,10 @@ export {
   PipelineStepKind,
   IncidentSeverity,
   IncidentStatus,
+  IncidentSource,
+  IncidentSignalRole,
   AlertChannelKind,
+
   AlertComparator,
   AIProvider,
   AIMessageRole,

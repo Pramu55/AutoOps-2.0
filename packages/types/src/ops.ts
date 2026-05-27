@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Deployment } from './deployment.js';
 import type { IncidentSeverity } from './enums.js';
-import type { IncidentListItem, IncidentSummary } from './incident.js';
+import type { IncidentSummary, IncidentReadinessResponse } from './incident.js';
 import {
   OperationProvider,
   OperationStatus,
@@ -282,7 +282,7 @@ export interface OperationDetailResponse extends OperationActivityItem {
   providerDetails: OperationProviderDetails;
   lifecycle: OperationLifecycleItem[];
   retry: OperationRetryInfo;
-  incident: Pick<IncidentListItem, 'id' | 'title' | 'severity' | 'status'> | null;
+  incident: Pick<IncidentSummary, 'id' | 'title' | 'severity' | 'status'> | null;
   governanceEvidence: GovernanceEvidenceItem;
 }
 
@@ -335,7 +335,7 @@ export interface OpsObservabilityResponse {
     recentFailures: OperationObservabilityItem[];
     latest: OperationObservabilityItem[];
   };
-  incidents: IncidentSummary;
+  incidents: IncidentReadinessResponse;
   generatedAt: string;
 }
 
@@ -374,7 +374,7 @@ export interface GovernanceEvidenceIncidentSummary {
   id: string;
   title: string;
   severity: IncidentSeverity;
-  status: IncidentListItem['status'];
+  status: IncidentSummary['status'];
 }
 
 export interface GovernanceEvidenceItem {
