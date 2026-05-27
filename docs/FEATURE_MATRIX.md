@@ -44,6 +44,7 @@
 | Company Handoff | Company deployment handoff package | Complete | N/A | Documentation and readiness script | Does not claim company deployment; requires official approval and credentials |
 | Company Handoff | Company security review checklist | Complete | N/A | Identity, provider, secret, network, audit, worker, and guardrail checks | Company pilot gate |
 | Provider Onboarding | Organization provider access UX | Complete | Yes | `BLOCKED_BY_ORG_POLICY` for blocked orgs | New orgs see onboarding instead of misleading connector misconfiguration |
+| Integrations | Integrations Hub | Complete | Yes | Read-only aggregator | Does not execute actions, fake data, or expose secrets |
 | Resource Graph | Resource graph foundation planning | Planned foundation | N/A | Docs and shared contracts only | No DB migration or fake graph data |
 | Resource Graph | URN helper foundation | Complete | N/A | Deterministic secret-rejecting URN builders | No organization IDs in public URNs |
 | AWS ECS Releases | Release history & timeline | Complete | Yes | Tenant-scoped by organizationId | No fake demo releases; empty history for new orgs |

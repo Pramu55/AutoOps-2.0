@@ -64,6 +64,14 @@
 - Key actions: Acknowledge, resolve, open linked operation.
 - Safety notes: Acknowledge/resolve permissions are enforced by backend.
 
+## `/dashboard/integrations`
+
+- Purpose: Integrations Hub for control plane connectors.
+- Who uses it: Operators and admins.
+- Data shown: Readiness and connection status for Jenkins, Docker, Kubernetes, AWS, GitHub Actions, Observability, Cloud, and DevOps tools.
+- Key actions: Open specific connector dashboards.
+- Safety notes: Read-only status aggregator. It does not execute provider actions, bypass boundaries, fake data, or expose secrets.
+
 ## `/dashboard/integrations/jenkins`
 
 - Purpose: Jenkins control connector.
