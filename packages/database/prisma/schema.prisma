@@ -112,6 +112,20 @@ enum IncidentSignalRole {
   EVIDENCE
 }
 
+enum IncidentEventType {
+  INCIDENT_OPENED
+  INCIDENT_UPDATED
+  SIGNAL_LINKED
+  SEVERITY_CHANGED
+  STATUS_CHANGED
+  ACKNOWLEDGED
+  RESOLVED
+  ARCHIVED
+  NOTE_ADDED
+  CORRELATION_RAN
+  EVIDENCE_ADDED
+}
+
 enum AlertChannelKind {
   EMAIL
   SLACK
@@ -407,6 +421,7 @@ model Organization {
   awsReleases     AwsRelease[]
   resourceNodes   ResourceNode[]
   resourceSignals ResourceSignal[]
+  incidentEvents  IncidentEvent[]
 
   @@map("organizations")
 }
@@ -662,6 +677,7 @@ model Incident {
   updatedAt            DateTime         @updatedAt @db.Timestamptz(3)
 
   linkedSignals IncidentSignal[]
+  events        IncidentEvent[]
 
   @@index([organizationId])
   @@index([organizationId, status])
@@ -694,6 +710,28 @@ model IncidentSignal {
   @@index([organizationId, incidentId])
   @@index([organizationId, signalId])
   @@map("incident_signals")
+}
+
+model IncidentEvent {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @db.Uuid
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  incidentId     String            @db.Uuid
+  incident       Incident          @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  type           IncidentEventType
+  actorUserId    String?           @db.Uuid
+  actorUserEmail String?
+  title          String
+  message        String            @db.Text
+  metadata       Json              @default("{}")
+  occurredAt     DateTime          @default(now()) @db.Timestamptz(3)
+  createdAt      DateTime          @default(now()) @db.Timestamptz(3)
+
+  @@index([organizationId])
+  @@index([organizationId, incidentId])
+  @@index([organizationId, occurredAt])
+  @@index([incidentId, occurredAt])
+  @@map("incident_events")
 }
 
 model Alert {

@@ -11,6 +11,8 @@ router.get('/readiness', incidentController.readiness);
 router.post('/correlate', incidentController.correlate);
 
 router.get('/:incidentId', incidentController.detail);
+router.get('/:incidentId/timeline', incidentController.timeline);
+router.post('/:incidentId/notes', incidentController.addNote);
 router.post('/:incidentId/acknowledge', incidentController.acknowledge);
 router.post('/:incidentId/resolve', incidentController.resolve);
 router.post('/:incidentId/archive', incidentController.archive);

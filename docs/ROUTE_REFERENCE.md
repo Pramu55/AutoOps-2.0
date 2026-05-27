@@ -245,3 +245,17 @@
 | GET | `/v1/resources/:resourceId/neighbors` | Authenticated | Tenant-scoped incoming/outgoing edges |
 
 Resource Graph responses never expose raw provider payloads, secrets, kubeconfig, tokens, Docker socket internals, Terraform state, or raw provider output.
+
+## Incident and Timeline API Routes
+
+| Method | Path | Access | Purpose |
+|--------|------|--------|---------|
+| GET | `/v1/incidents` | Authenticated | Tenant-scoped incident list with filters |
+| GET | `/v1/incidents/readiness` | Authenticated | Tenant-scoped incident readiness and counts |
+| GET | `/v1/incidents/:incidentId` | Authenticated | Tenant-scoped incident detail with evidence |
+| GET | `/v1/incidents/:incidentId/timeline` | Authenticated | Tenant-scoped vertical timeline events |
+| POST | `/v1/incidents/:incidentId/notes` | Member+ | Add operator note to incident workflow |
+| POST | `/v1/incidents/:incidentId/acknowledge` | Member+ | Acknowledge open incident |
+| POST | `/v1/incidents/:incidentId/resolve` | Member+ | Resolve open/acknowledged incident |
+| POST | `/v1/incidents/:incidentId/archive` | Admin+ | Archive resolved incident |
+| POST | `/v1/incidents/correlate` | Authenticated | Run deterministic signal correlation |

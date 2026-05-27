@@ -178,7 +178,10 @@ Authorization:
 
 - Verify failed operations create incidents.
 - Verify incident runbooks are deterministic and safe.
-- Verify incident acknowledge/resolve permissions.
+- Verify incident acknowledge/resolve/archive permissions.
+- Verify incident timeline and operator notes are strictly tenant-scoped by organizationId.
+- Verify operator notes are validated (empty note blocks, 2000 character limits).
+- Verify all timeline events are recorded transactionally with state transitions.
 - Verify no AI-generated or automatic remediation is enabled.
 
 ## Backups and Restore

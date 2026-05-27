@@ -5,9 +5,10 @@ import {
   IncidentStatus,
   IncidentSource,
   IncidentSignalRole,
+  IncidentEventType,
 } from './enums.js';
 
-export { IncidentSeverity, IncidentStatus, IncidentSource, IncidentSignalRole };
+export { IncidentSeverity, IncidentStatus, IncidentSource, IncidentSignalRole, IncidentEventType };
 
 export const incidentParamsSchema = z.object({
   incidentId: idSchema,
@@ -42,6 +43,11 @@ export const resolveIncidentSchema = z.object({
 export const archiveIncidentSchema = z.object({
   confirmationToken: z.literal('ARCHIVE'),
 });
+
+export const incidentNoteSchema = z.object({
+  message: z.string().trim().min(1).max(2000),
+});
+export type IncidentNoteInput = z.infer<typeof incidentNoteSchema>;
 
 export interface IncidentActor {
   id: string;
@@ -79,7 +85,7 @@ export interface IncidentSummary {
   acknowledgedAt: string | null;
   resolvedAt: string | null;
   archivedAt: string | null;
-  metadataSummary: Record<string, any>;
+  metadataSummary: Record<string, string | number | boolean | null>;
   labelsSummary: Record<string, string>;
   createdAt: string;
   updatedAt: string;
@@ -123,4 +129,20 @@ export interface IncidentCorrelationResponse {
 
 export interface IncidentActionResponse {
   incident: IncidentSummary;
+}
+
+export interface IncidentTimelineEventSummary {
+  id: string;
+  type: IncidentEventType;
+  title: string;
+  message: string;
+  actorUserId: string | null;
+  actorUserEmail: string | null;
+  metadata: Record<string, string | number | boolean | null>;
+  occurredAt: string;
+  createdAt: string;
+}
+
+export interface IncidentTimelineResponse {
+  data: IncidentTimelineEventSummary[];
 }

@@ -5,7 +5,9 @@ import {
   IncidentDetail,
   IncidentListResponse,
   IncidentReadinessResponse,
+  IncidentTimelineResponse,
   incidentFilterSchema,
+  incidentNoteSchema,
 } from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { incidentService } from './incident.service.js';
@@ -76,6 +78,34 @@ export class IncidentController {
       req.params.incidentId,
     );
     res.json({ incident });
+  };
+
+  timeline = async (
+    req: Request<{ incidentId: string }>,
+    res: Response<IncidentTimelineResponse>,
+  ): Promise<void> => {
+    const auth = this._requireAuth(req);
+    const data = await incidentService.listIncidentTimeline(
+      auth.organizationId,
+      auth.userId,
+      req.params.incidentId,
+    );
+    res.json(data);
+  };
+
+  addNote = async (
+    req: Request<{ incidentId: string }>,
+    res: Response<IncidentTimelineResponse>,
+  ): Promise<void> => {
+    const auth = this._requireAuth(req);
+    const input = incidentNoteSchema.parse(req.body);
+    const data = await incidentService.addIncidentNote(
+      auth.organizationId,
+      auth.userId,
+      req.params.incidentId,
+      input,
+    );
+    res.json(data);
   };
 
   private _requireAuth(req: Request): { organizationId: string; userId: string } {

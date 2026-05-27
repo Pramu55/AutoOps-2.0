@@ -78,4 +78,4 @@ Safety constraints:
 
 ## Current Status
 
-`RESOURCE_GRAPH_FOUNDATION_GREEN` is the implemented base for the roadmap. The next milestone remains `SIGNAL_INGESTION_GREEN`, which should ingest safe event/signal records and attach them to existing graph resources without changing Resource Graph into a permission or automation layer.
+`RESOURCE_GRAPH_FOUNDATION_GREEN`, `SIGNAL_INGESTION_GREEN`, `INCIDENT_CORRELATION_GREEN`, and `INCIDENT_WAR_ROOM_UI_GREEN` (Incident Workflow & Timeline) are fully implemented. The next logical milestone is `RUNBOOK_AUTOMATION_GREEN` to add governed, approval-gated runbook definitions and worker-executed runbook steps.
