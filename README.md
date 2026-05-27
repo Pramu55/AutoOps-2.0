@@ -76,7 +76,7 @@ See [Architecture Overview](./docs/ARCHITECTURE_OVERVIEW.md).
 | --- | --- |
 | Dashboard | Command overview for runtime and platform posture |
 | Operations Hub | Health, approvals, activity, failures, incidents, queues, worker runtime |
-| Incidents | Failed-operation incident lifecycle and runbooks |
+| Incidents | Failed-operation incident lifecycle, vertical activity timeline, operator notes, and runbooks |
 | Jenkins | Status, jobs, builds, allowlisted governed build trigger |
 | Docker | Inventory, logs, governed start/stop/restart |
 | Kubernetes | Cluster inventory, Metrics API, governed scale and rollout restart |
@@ -208,6 +208,7 @@ Start with [Documentation Home](./docs/README.md).
 - [Production Deployment Readiness](./docs/PRODUCTION_DEPLOYMENT_READINESS.md)
 - [Security Checklist](./docs/SECURITY_CHECKLIST.md)
 - [Tenant Isolation and Authorization](./docs/TENANT_ISOLATION_AND_AUTHORIZATION.md)
+- [Incident Workflow and Timeline](./docs/INCIDENT_WORKFLOW_AND_TIMELINE.md)
 - [CI and Release Gates](./docs/CI_AND_RELEASE_GATES.md)
 - [Controlled Operations Overview](./docs/CONTROLLED_OPERATIONS_OVERVIEW.md)
 - [Infrastructure Automation Center](./docs/INFRASTRUCTURE_AUTOMATION_CENTER.md)

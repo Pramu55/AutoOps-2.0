@@ -57,7 +57,7 @@ user -> membership -> organization -> tenant-owned resources
 organization -> provider inventory allowlist -> provider inventory access
 ```
 
-Tenant-owned resources include projects, environments, deployments, operations, incidents, governance evidence, ECR image metadata, AWS plan/apply history, and release records.
+Tenant-owned resources include projects, environments, deployments, operations, incidents, incident events, governance evidence, ECR image metadata, AWS plan/apply history, and release records.
 
 ## Connector Flow
 

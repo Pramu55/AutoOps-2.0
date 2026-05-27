@@ -2,8 +2,28 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import type { IncidentActionResponse, IncidentDetail } from '@autoops/types';
-import { ArrowLeft, ExternalLink, RefreshCw, X, Shield, Clock, Archive, CheckCircle2 } from 'lucide-react';
+import type {
+  IncidentActionResponse,
+  IncidentDetail,
+  IncidentTimelineEventSummary,
+  IncidentTimelineResponse,
+} from '@autoops/types';
+import {
+  ArrowLeft,
+  ExternalLink,
+  RefreshCw,
+  X,
+  Shield,
+  Clock,
+  Archive,
+  CheckCircle2,
+  MessageSquare,
+  AlertTriangle,
+  Link2,
+  TrendingUp,
+  Activity,
+  Send,
+} from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -51,22 +71,78 @@ function actorLabel(actor: IncidentDetail['acknowledgedBy']): string {
   return actor.name ?? actor.email ?? actor.id;
 }
 
+function getEventIcon(type: string) {
+  switch (type) {
+    case 'INCIDENT_OPENED':
+      return <AlertTriangle className="h-4 w-4 text-rose-600" />;
+    case 'SIGNAL_LINKED':
+    case 'EVIDENCE_ADDED':
+      return <Link2 className="h-4 w-4 text-blue-600" />;
+    case 'SEVERITY_CHANGED':
+      return <TrendingUp className="h-4 w-4 text-purple-600" />;
+    case 'STATUS_CHANGED':
+      return <Activity className="h-4 w-4 text-indigo-600" />;
+    case 'ACKNOWLEDGED':
+      return <Shield className="h-4 w-4 text-amber-600" />;
+    case 'RESOLVED':
+      return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
+    case 'ARCHIVED':
+      return <Archive className="h-4 w-4 text-slate-600" />;
+    case 'NOTE_ADDED':
+      return <MessageSquare className="h-4 w-4 text-slate-600" />;
+    default:
+      return <Clock className="h-4 w-4 text-slate-400" />;
+  }
+}
+
+function getEventColorClass(type: string): string {
+  switch (type) {
+    case 'INCIDENT_OPENED':
+      return 'bg-rose-50 border-rose-200';
+    case 'SIGNAL_LINKED':
+    case 'EVIDENCE_ADDED':
+      return 'bg-blue-50 border-blue-200';
+    case 'SEVERITY_CHANGED':
+      return 'bg-purple-50 border-purple-200';
+    case 'STATUS_CHANGED':
+      return 'bg-indigo-50 border-indigo-200';
+    case 'ACKNOWLEDGED':
+      return 'bg-amber-50 border-amber-200';
+    case 'RESOLVED':
+      return 'bg-emerald-50 border-emerald-200';
+    case 'ARCHIVED':
+      return 'bg-slate-100 border-slate-350';
+    case 'NOTE_ADDED':
+      return 'bg-slate-50 border-slate-200';
+    default:
+      return 'bg-slate-50 border-slate-200';
+  }
+}
+
 export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
   const [incident, setIncident] = useState<IncidentDetail | null>(null);
+  const [timelineEvents, setTimelineEvents] = useState<IncidentTimelineEventSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isNoteSubmitting, setIsNoteSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [noteError, setNoteError] = useState<string | null>(null);
   const [modalAction, setModalAction] = useState<ModalAction | null>(null);
   const [confirmation, setConfirmation] = useState('');
   const [resolutionNote, setResolutionNote] = useState('');
+  const [newNote, setNewNote] = useState('');
 
   const loadIncident = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await api.get<IncidentDetailApiResponse>(`/v1/incidents/${encodeURIComponent(incidentId)}`);
-      setIncident(response.data);
+      const [incidentRes, timelineRes] = await Promise.all([
+        api.get<IncidentDetailApiResponse>(`/v1/incidents/${encodeURIComponent(incidentId)}`),
+        api.get<IncidentTimelineResponse>(`/v1/incidents/${encodeURIComponent(incidentId)}/timeline`),
+      ]);
+      setIncident(incidentRes.data);
+      setTimelineEvents(timelineRes.data);
     } catch (loadError) {
       setError(getErrorMessage(loadError));
     } finally {
@@ -94,7 +170,7 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
         await api.post<IncidentActionResponse>(`/v1/incidents/${incident.id}/archive`, { confirmationToken: 'ARCHIVE' });
       }
 
-      setIncident(null); // Force reload or use mapper if available locally
+      setIncident(null);
       await loadIncident();
       setModalAction(null);
       setConfirmation('');
@@ -103,6 +179,25 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
       setActionError(getErrorMessage(actionSubmitError));
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleAddNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newNote.trim() || !incident) return;
+
+    setIsNoteSubmitting(true);
+    setNoteError(null);
+    try {
+      const res = await api.post<IncidentTimelineResponse>(`/v1/incidents/${incident.id}/notes`, {
+        message: newNote.trim(),
+      });
+      setTimelineEvents(res.data);
+      setNewNote('');
+    } catch (err) {
+      setNoteError(getErrorMessage(err));
+    } finally {
+      setIsNoteSubmitting(false);
     }
   };
 
@@ -187,7 +282,7 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
                   Acknowledge
                 </Button>
               )}
-              {incident.status !== 'RESOLVED' && (
+              {incident.status !== 'RESOLVED' && incident.status !== 'ARCHIVED' && (
                 <Button type="button" onClick={() => setModalAction('resolve')} className="rounded-full bg-emerald-400 text-slate-950 hover:bg-emerald-300">
                   Resolve
                 </Button>
@@ -223,41 +318,109 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
               )}
             </div>
           </section>
+
+          {/* Note Composer */}
+          {incident.status !== 'ARCHIVED' && (
+            <section className="rounded-lg border border-slate-200 bg-white p-5">
+              <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                <MessageSquare className="h-4 w-4 text-slate-500" />
+                Add Operator Note
+              </h2>
+              <form onSubmit={handleAddNote} className="mt-4 space-y-3">
+                <textarea
+                  value={newNote}
+                  onChange={(e) => setNewNote(e.target.value)}
+                  placeholder="Type a workflow note, findings, or update..."
+                  maxLength={2000}
+                  className="w-full min-h-24 rounded-md border border-slate-200 bg-white p-3 text-sm text-slate-900 placeholder-slate-400 outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 resize-y"
+                  disabled={isNoteSubmitting}
+                />
+                {noteError && <p className="text-xs text-rose-600">{noteError}</p>}
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-400">{newNote.length}/2000 chars</span>
+                  <Button
+                    type="submit"
+                    disabled={isNoteSubmitting || !newNote.trim()}
+                    size="sm"
+                    className="rounded-full bg-slate-900 text-white hover:bg-slate-800 flex items-center gap-1.5"
+                  >
+                    <Send className="h-3 w-3" />
+                    {isNoteSubmitting ? 'Posting...' : 'Post Note'}
+                  </Button>
+                </div>
+              </form>
+            </section>
+          )}
         </div>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
-          <h2 className="text-base font-semibold text-slate-900">Signal Evidence ({incident.evidence.length})</h2>
-          <p className="mt-1 text-sm text-slate-600">Correlated observations that support this incident.</p>
-          <div className="mt-5 overflow-hidden rounded-md border border-slate-200">
-            <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
-              <thead className="bg-slate-50 font-medium text-slate-500 uppercase tracking-wider">
-                <tr>
-                  <th className="px-4 py-3">Role</th>
-                  <th className="px-4 py-3">Severity</th>
-                  <th className="px-4 py-3">Signal</th>
-                  <th className="px-4 py-3">Observed</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {incident.evidence.map((sig) => (
-                  <tr key={sig.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3">
-                      <span className={`font-semibold ${sig.role === 'TRIGGER' ? 'text-blue-700' : 'text-slate-500'}`}>{sig.role}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`font-semibold ${severityTone(sig.severity)}`}>{sig.severity}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <p className="font-medium text-slate-900">{sig.title}</p>
-                      <p className="text-slate-500">{sig.type}</p>
-                    </td>
-                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{formatDate(sig.observedAt)}</td>
-                  </tr>
+        <div className="space-y-4">
+          {/* Vertical Timeline */}
+          <section className="rounded-lg border border-slate-200 bg-white p-5">
+            <h2 className="text-base font-semibold text-slate-900 mb-5">Activity Timeline</h2>
+            {timelineEvents.length === 0 ? (
+              <p className="text-sm text-slate-500 italic">No timeline events recorded.</p>
+            ) : (
+              <div className="relative pl-6 border-l border-slate-100 space-y-6">
+                {timelineEvents.map((event) => (
+                  <div key={event.id} className="relative group">
+                    {/* Event badge/icon marker */}
+                    <div className={`absolute -left-[35px] top-1 rounded-full border p-1.5 flex items-center justify-center bg-white shadow-sm transition-transform duration-200 group-hover:scale-110 ${getEventColorClass(event.type)}`}>
+                      {getEventIcon(event.type)}
+                    </div>
+                    {/* Event details */}
+                    <div>
+                      <div className="flex items-baseline justify-between gap-4">
+                        <h4 className="text-xs font-semibold text-slate-800">{event.title}</h4>
+                        <span className="text-[10px] text-slate-400 whitespace-nowrap">{formatDate(event.occurredAt)}</span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-650 leading-relaxed whitespace-pre-wrap">{event.message}</p>
+                      {event.actorUserEmail && (
+                        <div className="mt-1.5 flex items-center gap-1">
+                          <span className="text-[10px] text-slate-400">Actor:</span>
+                          <span className="text-[10px] font-medium text-slate-600 bg-slate-100 rounded px-1.5 py-0.5">{event.actorUserEmail}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-lg border border-slate-200 bg-white p-5">
+            <h2 className="text-base font-semibold text-slate-900">Signal Evidence ({incident.evidence.length})</h2>
+            <p className="mt-1 text-sm text-slate-600">Correlated observations that support this incident.</p>
+            <div className="mt-5 overflow-hidden rounded-md border border-slate-200">
+              <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+                <thead className="bg-slate-50 font-medium text-slate-500 uppercase tracking-wider">
+                  <tr>
+                    <th className="px-4 py-3">Role</th>
+                    <th className="px-4 py-3">Severity</th>
+                    <th className="px-4 py-3">Signal</th>
+                    <th className="px-4 py-3">Observed</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {incident.evidence.map((sig) => (
+                    <tr key={sig.id} className="hover:bg-slate-50">
+                      <td className="px-4 py-3">
+                        <span className={`font-semibold ${sig.role === 'TRIGGER' ? 'text-blue-700' : 'text-slate-500'}`}>{sig.role}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`font-semibold ${severityTone(sig.severity)}`}>{sig.severity}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-slate-900">{sig.title}</p>
+                        <p className="text-slate-500">{sig.type}</p>
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{formatDate(sig.observedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
       </div>
 
       {modalAction && (

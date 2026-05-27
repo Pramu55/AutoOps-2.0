@@ -4,6 +4,7 @@ import {
   IncidentStatus as DbIncidentStatus,
   IncidentSource as DbIncidentSource,
   IncidentSignalRole as DbIncidentSignalRole,
+  IncidentEventType as DbIncidentEventType,
   OrgRole,
   type Prisma,
 } from '@autoops/database';
@@ -13,14 +14,29 @@ import {
   IncidentListResponse,
   IncidentReadinessResponse,
   IncidentCorrelationResponse,
+  IncidentNoteInput,
   IncidentStatus,
   SignalType,
   SignalSeverity,
   SignalStatus,
+  type IncidentTimelineResponse,
 } from '@autoops/types';
 import { BadRequestError, NotFoundError, UnauthorizedError } from '@autoops/utils';
+import { sanitizeMetadata } from '@autoops/utils';
 import { operationAuthorizationService } from '../operations/operation-authorization.service.js';
 import { IncidentMapper } from './incident.mapper.js';
+
+interface RecordEventInput {
+  organizationId: string;
+  incidentId: string;
+  type: DbIncidentEventType;
+  title: string;
+  message: string;
+  actorUserId?: string | null;
+  actorUserEmail?: string | null;
+  metadata?: Record<string, unknown>;
+  occurredAt?: Date;
+}
 
 export class IncidentService {
   async listIncidents(
@@ -176,21 +192,56 @@ export class IncidentService {
       throw new BadRequestError('Only open incidents can be acknowledged.');
     }
 
-    const updated = await prisma.incident.update({
-      where: { id: incidentId },
-      data: {
-        status: DbIncidentStatus.ACKNOWLEDGED,
-        acknowledgedByUserId: userId,
-        acknowledgedAt: new Date(),
-      },
-      include: {
-        linkedSignals: { include: { signal: true } },
-        acknowledgedBy: true,
-        resolvedBy: true,
-      },
+    const now = new Date();
+    const userInfo = await this._getUserInfo(userId);
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.incident.update({
+        where: { id: incidentId },
+        data: {
+          status: DbIncidentStatus.ACKNOWLEDGED,
+          acknowledgedByUserId: userId,
+          acknowledgedAt: now,
+        },
+        include: {
+          linkedSignals: { include: { signal: true } },
+          acknowledgedBy: true,
+          resolvedBy: true,
+        },
+      });
+
+      await tx.incidentEvent.create({
+        data: {
+          organizationId,
+          incidentId,
+          type: DbIncidentEventType.ACKNOWLEDGED,
+          actorUserId: userId,
+          actorUserEmail: userInfo.email,
+          title: 'Incident acknowledged',
+          message: `Acknowledged by ${userInfo.email}`,
+          metadata: {},
+          occurredAt: now,
+        },
+      });
+
+      await tx.incidentEvent.create({
+        data: {
+          organizationId,
+          incidentId,
+          type: DbIncidentEventType.STATUS_CHANGED,
+          actorUserId: userId,
+          actorUserEmail: userInfo.email,
+          title: 'Status changed to ACKNOWLEDGED',
+          message: `Status transitioned from OPEN to ACKNOWLEDGED by ${userInfo.email}`,
+          metadata: { previousStatus: 'OPEN', newStatus: 'ACKNOWLEDGED' },
+          occurredAt: now,
+        },
+      });
+
+      return result;
     });
 
-    return IncidentMapper.toDetail(updated as any);
+    return IncidentMapper.toDetail(updated as Parameters<typeof IncidentMapper.toDetail>[0]);
   }
 
   async resolveIncident(
@@ -207,22 +258,61 @@ export class IncidentService {
     if (incident.status === DbIncidentStatus.RESOLVED) {
       throw new BadRequestError('Incident is already resolved.');
     }
+    if (incident.status === DbIncidentStatus.ARCHIVED) {
+      throw new BadRequestError('Archived incidents cannot be resolved.');
+    }
 
-    const updated = await prisma.incident.update({
-      where: { id: incidentId },
-      data: {
-        status: DbIncidentStatus.RESOLVED,
-        resolvedByUserId: userId,
-        resolvedAt: new Date(),
-      },
-      include: {
-        linkedSignals: { include: { signal: true } },
-        acknowledgedBy: true,
-        resolvedBy: true,
-      },
+    const now = new Date();
+    const previousStatus = incident.status;
+    const userInfo = await this._getUserInfo(userId);
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.incident.update({
+        where: { id: incidentId },
+        data: {
+          status: DbIncidentStatus.RESOLVED,
+          resolvedByUserId: userId,
+          resolvedAt: now,
+        },
+        include: {
+          linkedSignals: { include: { signal: true } },
+          acknowledgedBy: true,
+          resolvedBy: true,
+        },
+      });
+
+      await tx.incidentEvent.create({
+        data: {
+          organizationId,
+          incidentId,
+          type: DbIncidentEventType.RESOLVED,
+          actorUserId: userId,
+          actorUserEmail: userInfo.email,
+          title: 'Incident resolved',
+          message: `Resolved by ${userInfo.email}`,
+          metadata: {},
+          occurredAt: now,
+        },
+      });
+
+      await tx.incidentEvent.create({
+        data: {
+          organizationId,
+          incidentId,
+          type: DbIncidentEventType.STATUS_CHANGED,
+          actorUserId: userId,
+          actorUserEmail: userInfo.email,
+          title: `Status changed to RESOLVED`,
+          message: `Status transitioned from ${previousStatus} to RESOLVED by ${userInfo.email}`,
+          metadata: { previousStatus, newStatus: 'RESOLVED' },
+          occurredAt: now,
+        },
+      });
+
+      return result;
     });
 
-    return IncidentMapper.toDetail(updated as any);
+    return IncidentMapper.toDetail(updated as Parameters<typeof IncidentMapper.toDetail>[0]);
   }
 
   async archiveIncident(
@@ -236,20 +326,133 @@ export class IncidentService {
       where: { id: incidentId, organizationId },
     });
     if (!incident) throw new NotFoundError('Incident');
+    if (incident.archivedAt) {
+      throw new BadRequestError('Incident is already archived.');
+    }
 
-    const updated = await prisma.incident.update({
-      where: { id: incidentId },
+    const now = new Date();
+    const previousStatus = incident.status;
+    const userInfo = await this._getUserInfo(userId);
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.incident.update({
+        where: { id: incidentId },
+        data: {
+          archivedAt: now,
+        },
+        include: {
+          linkedSignals: { include: { signal: true } },
+          acknowledgedBy: true,
+          resolvedBy: true,
+        },
+      });
+
+      await tx.incidentEvent.create({
+        data: {
+          organizationId,
+          incidentId,
+          type: DbIncidentEventType.ARCHIVED,
+          actorUserId: userId,
+          actorUserEmail: userInfo.email,
+          title: 'Incident archived',
+          message: `Archived by ${userInfo.email}`,
+          metadata: {},
+          occurredAt: now,
+        },
+      });
+
+      await tx.incidentEvent.create({
+        data: {
+          organizationId,
+          incidentId,
+          type: DbIncidentEventType.STATUS_CHANGED,
+          actorUserId: userId,
+          actorUserEmail: userInfo.email,
+          title: 'Status changed to ARCHIVED',
+          message: `Status transitioned from ${previousStatus} to ARCHIVED by ${userInfo.email}`,
+          metadata: { previousStatus, newStatus: 'ARCHIVED' },
+          occurredAt: now,
+        },
+      });
+
+      return result;
+    });
+
+    return IncidentMapper.toDetail(updated as Parameters<typeof IncidentMapper.toDetail>[0]);
+  }
+
+  async listIncidentTimeline(
+    organizationId: string,
+    userId: string,
+    incidentId: string,
+  ): Promise<IncidentTimelineResponse> {
+    await this._requireOrganizationMember(organizationId, userId);
+
+    const incident = await prisma.incident.findFirst({
+      where: { id: incidentId, organizationId },
+      select: { id: true },
+    });
+    if (!incident) throw new NotFoundError('Incident');
+
+    const events = await prisma.incidentEvent.findMany({
+      where: { organizationId, incidentId },
+      orderBy: { occurredAt: 'asc' },
+      take: 200,
+    });
+
+    return {
+      data: events.map((e) => IncidentMapper.toTimelineEventSummary(e)),
+    };
+  }
+
+  async addIncidentNote(
+    organizationId: string,
+    userId: string,
+    incidentId: string,
+    input: IncidentNoteInput,
+  ): Promise<IncidentTimelineResponse> {
+    await this._requirePermission(organizationId, userId, 'ADD_NOTE');
+
+    const incident = await prisma.incident.findFirst({
+      where: { id: incidentId, organizationId },
+      select: { id: true },
+    });
+    if (!incident) throw new NotFoundError('Incident');
+
+    const userInfo = await this._getUserInfo(userId);
+    const now = new Date();
+
+    await prisma.incidentEvent.create({
       data: {
-        archivedAt: new Date(),
-      },
-      include: {
-        linkedSignals: { include: { signal: true } },
-        acknowledgedBy: true,
-        resolvedBy: true,
+        organizationId,
+        incidentId,
+        type: DbIncidentEventType.NOTE_ADDED,
+        actorUserId: userId,
+        actorUserEmail: userInfo.email,
+        title: 'Operator note added',
+        message: input.message,
+        metadata: {},
+        occurredAt: now,
       },
     });
 
-    return IncidentMapper.toDetail(updated as any);
+    return this.listIncidentTimeline(organizationId, userId, incidentId);
+  }
+
+  async recordIncidentEvent(input: RecordEventInput): Promise<void> {
+    await prisma.incidentEvent.create({
+      data: {
+        organizationId: input.organizationId,
+        incidentId: input.incidentId,
+        type: input.type,
+        actorUserId: input.actorUserId ?? null,
+        actorUserEmail: input.actorUserEmail ?? null,
+        title: input.title,
+        message: input.message,
+        metadata: input.metadata ? sanitizeMetadata(input.metadata) : {},
+        occurredAt: input.occurredAt ?? new Date(),
+      },
+    });
   }
 
   async correlateSignalsForOrg(
@@ -298,7 +501,7 @@ export class IncidentService {
 
     if (!signal) return { action: 'SKIPPED' };
 
-    const correlationKey = this.buildCorrelationKey(signal as any);
+    const correlationKey = this.buildCorrelationKey(signal as Record<string, unknown>);
 
     const existing = await prisma.incident.findFirst({
       where: {
@@ -316,24 +519,71 @@ export class IncidentService {
       });
 
       if (!link) {
-        await prisma.$transaction([
-          prisma.incidentSignal.create({
+        const previousSeverity = existing.severity;
+        const newSeverity = this._escalateSeverity(existing.severity as DbIncidentSeverity, signal.severity as SignalSeverity);
+        const severityChanged = previousSeverity !== newSeverity;
+
+        await prisma.$transaction(async (tx) => {
+          await tx.incidentSignal.create({
             data: {
               organizationId,
               incidentId: existing.id,
               signalId: signal.id,
               role: DbIncidentSignalRole.RELATED,
             },
-          }),
-          prisma.incident.update({
+          });
+
+          await tx.incident.update({
             where: { id: existing.id },
             data: {
               signalCount: { increment: 1 },
               lastObservedAt: signal.observedAt > existing.lastObservedAt ? signal.observedAt : undefined,
-              severity: this._escalateSeverity(existing.severity as DbIncidentSeverity, signal.severity as SignalSeverity),
+              severity: newSeverity,
             },
-          }),
-        ]);
+          });
+
+          // Record INCIDENT_UPDATED
+          await tx.incidentEvent.create({
+            data: {
+              organizationId,
+              incidentId: existing.id,
+              type: DbIncidentEventType.INCIDENT_UPDATED,
+              title: 'Incident updated by correlation',
+              message: `New signal linked: ${signal.title}`,
+              metadata: sanitizeMetadata({ signalId: signal.id, signalType: signal.type, signalSource: signal.source }),
+              occurredAt: new Date(),
+            },
+          });
+
+          // Record SIGNAL_LINKED
+          await tx.incidentEvent.create({
+            data: {
+              organizationId,
+              incidentId: existing.id,
+              type: DbIncidentEventType.SIGNAL_LINKED,
+              title: `Signal linked: ${signal.title}`,
+              message: `Signal ${signal.id} (${signal.type}) linked as RELATED evidence`,
+              metadata: sanitizeMetadata({ signalId: signal.id, signalType: signal.type, signalSeverity: signal.severity }),
+              occurredAt: new Date(),
+            },
+          });
+
+          // Record SEVERITY_CHANGED if severity escalated
+          if (severityChanged) {
+            await tx.incidentEvent.create({
+              data: {
+                organizationId,
+                incidentId: existing.id,
+                type: DbIncidentEventType.SEVERITY_CHANGED,
+                title: `Severity escalated to ${newSeverity}`,
+                message: `Severity changed from ${previousSeverity} to ${newSeverity} due to incoming signal`,
+                metadata: { previousSeverity, newSeverity },
+                occurredAt: new Date(),
+              },
+            });
+          }
+        });
+
         return { action: 'UPDATED' };
       }
       return { action: 'SKIPPED' };
@@ -344,7 +594,7 @@ export class IncidentService {
       const incident = await tx.incident.create({
         data: {
           organizationId,
-          title: this._deriveTitle(signal as any),
+          title: this._deriveTitle(signal as Record<string, unknown>),
           summary: `Correlated from signal: ${signal.title}. ${signal.message}`,
           severity: this._mapSeverity(signal.severity as SignalSeverity),
           status: DbIncidentStatus.OPEN,
@@ -374,15 +624,41 @@ export class IncidentService {
           role: DbIncidentSignalRole.TRIGGER,
         },
       });
+
+      // Record INCIDENT_OPENED
+      await tx.incidentEvent.create({
+        data: {
+          organizationId,
+          incidentId: incident.id,
+          type: DbIncidentEventType.INCIDENT_OPENED,
+          title: 'Incident opened',
+          message: `Incident created by deterministic signal correlation from: ${signal.title}`,
+          metadata: sanitizeMetadata({ correlationKey, signalId: signal.id, signalType: signal.type, signalSource: signal.source, rule: 'DETERMINISTIC_V1' }),
+          occurredAt: new Date(),
+        },
+      });
+
+      // Record initial SIGNAL_LINKED for trigger signal
+      await tx.incidentEvent.create({
+        data: {
+          organizationId,
+          incidentId: incident.id,
+          type: DbIncidentEventType.SIGNAL_LINKED,
+          title: `Trigger signal linked: ${signal.title}`,
+          message: `Signal ${signal.id} (${signal.type}) linked as TRIGGER evidence`,
+          metadata: sanitizeMetadata({ signalId: signal.id, signalType: signal.type, signalSeverity: signal.severity, role: 'TRIGGER' }),
+          occurredAt: new Date(),
+        },
+      });
     });
 
     return { action: 'CREATED' };
   }
 
-  buildCorrelationKey(signal: any): string {
-    const resourcePart = signal.resourceNodeId || signal.resourceNode?.urn || 'no-resource';
-    const typePart = this._groupType(signal.type);
-    const sourcePart = signal.source;
+  buildCorrelationKey(signal: Record<string, unknown>): string {
+    const resourcePart = signal.resourceNodeId || (signal.resourceNode as Record<string, unknown>)?.urn || 'no-resource';
+    const typePart = this._groupType(signal.type as string);
+    const sourcePart = signal.source as string;
 
     // For some types, we want broader grouping
     if (signal.type === SignalType.PROVIDER_UNREACHABLE || signal.type === SignalType.PROVIDER_AUTH_FAILED) {
@@ -407,11 +683,12 @@ export class IncidentService {
     return type;
   }
 
-  private _deriveTitle(signal: any): string {
-    if (signal.resourceNode) {
-      return `${signal.resourceNode.displayName}: ${signal.title}`;
+  private _deriveTitle(signal: Record<string, unknown>): string {
+    const resourceNode = signal.resourceNode as Record<string, unknown> | undefined;
+    if (resourceNode) {
+      return `${resourceNode.displayName}: ${signal.title}`;
     }
-    return signal.title;
+    return signal.title as string;
   }
 
   private _mapSeverity(severity: SignalSeverity): DbIncidentSeverity {
@@ -451,6 +728,14 @@ export class IncidentService {
     if (!allowed.includes(role)) {
       throw new UnauthorizedError(`You do not have permission to ${action.toLowerCase()} incidents.`);
     }
+  }
+
+  private async _getUserInfo(userId: string): Promise<{ email: string; name: string | null }> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, name: true },
+    });
+    return { email: user?.email ?? 'unknown', name: user?.name ?? null };
   }
 }
 

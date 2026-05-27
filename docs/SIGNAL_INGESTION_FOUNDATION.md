@@ -36,10 +36,9 @@ Signals are strictly organization-scoped.
 
 ## Signals are not Incidents
 
-It is important to note that signals represent **raw observations**. They do not imply a service outage or require immediate human response unless they are correlated into an **Incident** (planned for a future milestone).
+Signals represent **raw observations**. They do not imply a service outage or require immediate human response until they are correlated into an **Incident** by the deterministic correlation engine. When signals are linked to incidents as trigger or related evidence, `SIGNAL_LINKED` events are automatically recorded on the incident workflow timeline.
 
 ## Future Work (Roadmap)
 
 - **Retention Worker**: Automated pruning of old signals to maintain database performance.
-- **Incident Correlation**: Grouping related signals into actionable incidents.
 - **Notification Routing**: Pushing critical signals to Slack, Email, or Webhooks.

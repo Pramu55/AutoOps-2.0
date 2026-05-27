@@ -1,11 +1,13 @@
 import type { Prisma } from '@autoops/database';
 import {
   IncidentDetail,
+  IncidentEventType,
   IncidentSeverity,
   IncidentSignalRole,
   IncidentSource,
   IncidentStatus,
   IncidentSummary,
+  IncidentTimelineEventSummary,
 } from '@autoops/types';
 
 export class IncidentMapper {
@@ -30,7 +32,7 @@ export class IncidentMapper {
       acknowledgedAt: record.acknowledgedAt?.toISOString() ?? null,
       resolvedAt: record.resolvedAt?.toISOString() ?? null,
       archivedAt: record.archivedAt?.toISOString() ?? null,
-      metadataSummary: (record.metadata as Record<string, any>) || {},
+      metadataSummary: (record.metadata as Record<string, string | number | boolean | null>) || {},
       labelsSummary: (record.labels as Record<string, string>) || {},
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
@@ -73,6 +75,22 @@ export class IncidentMapper {
             email: record.resolvedBy.email,
           }
         : null,
+    };
+  }
+
+  static toTimelineEventSummary(
+    record: Prisma.IncidentEventGetPayload<{}>,
+  ): IncidentTimelineEventSummary {
+    return {
+      id: record.id,
+      type: record.type as IncidentEventType,
+      title: record.title,
+      message: record.message,
+      actorUserId: record.actorUserId,
+      actorUserEmail: record.actorUserEmail,
+      metadata: (record.metadata as Record<string, string | number | boolean | null>) || {},
+      occurredAt: record.occurredAt.toISOString(),
+      createdAt: record.createdAt.toISOString(),
     };
   }
 }

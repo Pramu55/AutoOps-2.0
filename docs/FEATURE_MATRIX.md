@@ -55,7 +55,8 @@
 | Governance | Governance Center | Complete | Yes | Tenant-scoped safe evidence | Requester, approver, policy, provider, lifecycle, incident linkage |
 | Governance | Safe evidence export | Complete | Yes | OWNER/ADMIN export + safe DTO | JSON only; no raw metadata or secrets |
 | Incidents | Failed operation incident | Complete | Yes | Safe summary + lifecycle | One incident per failed operation |
-| Runbooks | Deterministic runbooks | Complete | Yes | Observe/verify/recover/escalate guidance | No AI runbooks yet |
+| Incidents | Incident workflow timeline & notes | Complete | Yes | Transactional events + note composer | Strict tenant isolation by organizationId; no AI/automated remediation |
+| Runbooks | Deterministic runbooks | Complete | Yes | Observe/verify/recover/escalate guidance | No AI runbooks |
 | Production Readiness | `.env.example` | Complete | N/A | Safe placeholders | Local-only notes |
 | Production Readiness | Production compose | Complete | N/A | No default socket/kubeconfig | Company pilot topology |
 | CI/Release Gates | GitHub Actions CI | Complete | N/A | Build/typecheck/test/scan | Optional connectors not required |

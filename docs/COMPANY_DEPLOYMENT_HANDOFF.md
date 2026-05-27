@@ -78,7 +78,7 @@ Never commit these values to Git.
 
 ## Tenant Isolation
 
-Users belong to organizations through memberships. Tenant-owned resources such as projects, deployments, operations, incidents, governance evidence, AWS release history, and ECR metadata are scoped by `organizationId`.
+Users belong to organizations through memberships. Tenant-owned resources such as projects, deployments, operations, incidents, incident events, governance evidence, AWS release history, and ECR metadata are scoped by `organizationId`.
 
 Newly registered users receive a new organization and do not inherit demo provider access or historical data.
 

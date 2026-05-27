@@ -547,7 +547,7 @@ export function OperationsClient() {
         api.get<OperationActivityApiResponse>('/v1/ops/activity?status=PENDING_APPROVAL&limit=20'),
         api.get<ResourceGraphReadinessApiResponse>('/v1/resources/readiness'),
         api.get<SignalReadinessApiResponse>('/v1/signals/readiness'),
-        api.get<IncidentListResponse>('/v1/incidents?status=OPEN&limit=10'),
+        api.get<IncidentListResponse>('/v1/incidents?limit=10'),
       ]);
       setObservability(observabilityResponse.data);
       setPendingApprovalItems(pendingApprovalResponse.data.items);

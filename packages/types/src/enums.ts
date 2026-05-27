@@ -103,6 +103,21 @@ export const IncidentSignalRole = {
 } as const;
 export type IncidentSignalRole = (typeof IncidentSignalRole)[keyof typeof IncidentSignalRole];
 
+export const IncidentEventType = {
+  INCIDENT_OPENED: 'INCIDENT_OPENED',
+  INCIDENT_UPDATED: 'INCIDENT_UPDATED',
+  SIGNAL_LINKED: 'SIGNAL_LINKED',
+  SEVERITY_CHANGED: 'SEVERITY_CHANGED',
+  STATUS_CHANGED: 'STATUS_CHANGED',
+  ACKNOWLEDGED: 'ACKNOWLEDGED',
+  RESOLVED: 'RESOLVED',
+  ARCHIVED: 'ARCHIVED',
+  NOTE_ADDED: 'NOTE_ADDED',
+  CORRELATION_RAN: 'CORRELATION_RAN',
+  EVIDENCE_ADDED: 'EVIDENCE_ADDED',
+} as const;
+export type IncidentEventType = (typeof IncidentEventType)[keyof typeof IncidentEventType];
+
 export const AlertChannelKind = {
   EMAIL: 'EMAIL',
   SLACK: 'SLACK',

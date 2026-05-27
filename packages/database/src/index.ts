@@ -14,6 +14,7 @@ export {
   IncidentStatus,
   IncidentSource,
   IncidentSignalRole,
+  IncidentEventType,
   AlertChannelKind,
 
   AlertComparator,
