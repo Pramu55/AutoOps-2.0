@@ -490,20 +490,20 @@ export class OpsService {
       canViewProviderDetails
         ? this._getInfrastructureHealth()
         : Promise.resolve(this._restrictedProviderHealth('/dashboard/integrations/infrastructure')),
-      incidentService.getSummary(organizationId, userId),
+      incidentService.getIncidentReadiness(organizationId),
     ]);
 
-    const observableOperations = recentOperations.map((operation) =>
+    const observableOperations = recentOperations.map((operation: OperationActivityRecord) =>
       this._toObservabilityItem(operation, role, userId),
     );
     const statusBreakdown = this._operationStatusBreakdown(recentOperations);
     const active = observableOperations
-      .filter((operation) =>
+      .filter((operation: OperationObservabilityItem) =>
         ACTIVE_OPERATION_STATUSES.includes(operation.status as (typeof ACTIVE_OPERATION_STATUSES)[number]),
       )
       .slice(0, 10);
     const recentFailures = observableOperations
-      .filter((operation) => operation.status === OperationStatus.FAILED)
+      .filter((operation: OperationObservabilityItem) => operation.status === OperationStatus.FAILED)
       .slice(0, 10);
 
     return {
@@ -1502,12 +1502,7 @@ export class OpsService {
             id: operation.incident.id,
             title: operation.incident.title,
             severity: operation.incident.severity as IncidentSeverity,
-            status:
-              operation.incident.status === 'TRIGGERED'
-                ? IncidentStatus.OPEN
-                : operation.incident.status === 'MITIGATED'
-                  ? IncidentStatus.ACKNOWLEDGED
-                  : (operation.incident.status as NonNullable<OperationDetailResponse['incident']>['status']),
+            status: operation.incident.status as IncidentStatus,
           }
         : null,
       errorMessage: activity.errorMessage ?? this._stringField(error, 'reason'),
@@ -1564,12 +1559,7 @@ export class OpsService {
             id: operation.incident.id,
             title: operation.incident.title,
             severity: operation.incident.severity as IncidentSeverity,
-            status:
-              operation.incident.status === 'TRIGGERED'
-                ? IncidentStatus.OPEN
-                : operation.incident.status === 'MITIGATED'
-                  ? IncidentStatus.ACKNOWLEDGED
-                  : (operation.incident.status as NonNullable<GovernanceEvidenceItem['incident']>['status']),
+            status: operation.incident.status as IncidentStatus,
           }
         : null,
       safeResultSummary,

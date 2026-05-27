@@ -2,79 +2,88 @@ import {
   prisma,
   IncidentSeverity as DbIncidentSeverity,
   IncidentStatus as DbIncidentStatus,
+  IncidentSource as DbIncidentSource,
+  IncidentSignalRole as DbIncidentSignalRole,
   OrgRole,
-  OperationProvider,
-  OperationType,
   type Prisma,
 } from '@autoops/database';
 import {
-  IncidentSeverity,
+  IncidentDetail,
+  IncidentFilter,
+  IncidentListResponse,
+  IncidentReadinessResponse,
+  IncidentCorrelationResponse,
   IncidentStatus,
-  OperationStatus,
-  type IncidentDetail,
-  type IncidentListItem,
-  type IncidentListQuery,
-  type IncidentPermissionHints,
-  type IncidentSummary,
+  SignalType,
+  SignalSeverity,
+  SignalStatus,
 } from '@autoops/types';
-import { BadRequestError, ConflictError, NotFoundError, UnauthorizedError } from '@autoops/utils';
+import { BadRequestError, NotFoundError, UnauthorizedError } from '@autoops/utils';
 import { operationAuthorizationService } from '../operations/operation-authorization.service.js';
-import { incidentRunbookService } from './incident-runbook.service.js';
-
-const ACKNOWLEDGE_ROLES = new Set<OrgRole>([OrgRole.OWNER, OrgRole.ADMIN, OrgRole.MEMBER]);
-const RESOLVE_ROLES = new Set<OrgRole>([OrgRole.OWNER, OrgRole.ADMIN]);
-const OPEN_STATUSES = [DbIncidentStatus.OPEN, DbIncidentStatus.TRIGGERED] as const;
-const ACKNOWLEDGED_STATUSES = [DbIncidentStatus.ACKNOWLEDGED, DbIncidentStatus.MITIGATED] as const;
-const HIGH_SEVERITIES = [
-  DbIncidentSeverity.CRITICAL,
-  DbIncidentSeverity.HIGH,
-  DbIncidentSeverity.SEV1,
-  DbIncidentSeverity.SEV2,
-] as const;
-
-type IncidentRecord = Prisma.IncidentGetPayload<{
-  include: {
-    acknowledgedBy: { select: { id: true; name: true; email: true } };
-    resolvedBy: { select: { id: true; name: true; email: true } };
-    operation: { select: { operationType: true } };
-  };
-}>;
-
-type FailedOperationRecord = {
-  id: string;
-  organizationId: string;
-  projectId: string | null;
-  provider: OperationProvider;
-  operationType: OperationType;
-  input: unknown;
-  error: unknown;
-};
+import { IncidentMapper } from './incident.mapper.js';
 
 export class IncidentService {
   async listIncidents(
     organizationId: string,
     userId: string,
-    query: IncidentListQuery,
-  ): Promise<{ items: IncidentListItem[]; summary: IncidentSummary }> {
+    filter: IncidentFilter,
+  ): Promise<IncidentListResponse> {
     await this._requireOrganizationMember(organizationId, userId);
-    const [incidents, summary] = await Promise.all([
+
+    const where: Prisma.IncidentWhereInput = {
+      organizationId,
+      archivedAt: filter.status === IncidentStatus.ARCHIVED ? { not: null } : null,
+      ...(filter.status && filter.status !== IncidentStatus.ARCHIVED
+        ? { status: filter.status as DbIncidentStatus }
+        : {}),
+      ...(filter.severity ? { severity: filter.severity as DbIncidentSeverity } : {}),
+      ...(filter.source ? { source: filter.source as DbIncidentSource } : {}),
+      ...(filter.primaryResourceNodeId ? { primaryResourceNodeId: filter.primaryResourceNodeId } : {}),
+      ...(filter.projectId ? { projectId: filter.projectId } : {}),
+      ...(filter.environmentId ? { environmentId: filter.environmentId } : {}),
+      ...(filter.deploymentId ? { deploymentId: filter.deploymentId } : {}),
+      ...(filter.operationId ? { operationId: filter.operationId } : {}),
+      ...(filter.search
+        ? {
+            OR: [
+              { title: { contains: filter.search, mode: 'insensitive' } },
+              { summary: { contains: filter.search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+      ...(filter.from || filter.to
+        ? {
+            openedAt: {
+              ...(filter.from ? { gte: new Date(filter.from) } : {}),
+              ...(filter.to ? { lte: new Date(filter.to) } : {}),
+            },
+          }
+        : {}),
+    };
+
+    const [total, items] = await Promise.all([
+      prisma.incident.count({ where }),
       prisma.incident.findMany({
-        where: {
-          organizationId,
-          ...(query.status ? { status: query.status as DbIncidentStatus } : {}),
-          ...(query.severity ? { severity: query.severity as DbIncidentSeverity } : {}),
-        },
-        orderBy: { detectedAt: 'desc' },
-        take: query.limit,
-        include: this._include(),
+        where,
+        orderBy: { openedAt: 'desc' },
+        take: filter.limit + 1,
+        cursor: filter.cursor ? { id: filter.cursor } : undefined,
       }),
-      this.getSummary(organizationId, userId),
     ]);
 
-    const role = await operationAuthorizationService.getOrganizationRole({ organizationId, userId });
+    const hasMore = items.length > filter.limit;
+    const data = hasMore ? items.slice(0, filter.limit) : items;
+    const lastItem = data.at(-1);
+    const nextCursor = hasMore ? lastItem?.id : undefined;
+
     return {
-      items: incidents.map((incident) => this._toListItem(incident, role)),
-      summary,
+      data: data.map((item) => IncidentMapper.toSummary(item)),
+      pagination: {
+        total,
+        limit: filter.limit,
+        hasMore,
+        nextCursor,
+      },
     };
   }
 
@@ -84,13 +93,72 @@ export class IncidentService {
     incidentId: string,
   ): Promise<IncidentDetail> {
     await this._requireOrganizationMember(organizationId, userId);
-    const role = await operationAuthorizationService.getOrganizationRole({ organizationId, userId });
+
     const incident = await prisma.incident.findFirst({
       where: { id: incidentId, organizationId },
-      include: this._include(),
+      include: {
+        linkedSignals: {
+          include: { signal: true },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        },
+        acknowledgedBy: { select: { id: true, name: true, email: true } },
+        resolvedBy: { select: { id: true, name: true, email: true } },
+      },
     });
+
     if (!incident) throw new NotFoundError('Incident');
-    return this._toDetail(incident, role);
+
+    return IncidentMapper.toDetail(incident);
+  }
+
+  async getIncidentReadiness(organizationId: string): Promise<IncidentReadinessResponse> {
+    const [counts, latest] = await Promise.all([
+      prisma.incident.groupBy({
+        by: ['status', 'severity'],
+        where: { organizationId, archivedAt: null },
+        _count: true,
+      }),
+      prisma.incident.findFirst({
+        where: { organizationId, archivedAt: null },
+        orderBy: { openedAt: 'desc' },
+        select: { openedAt: true },
+      }),
+    ]);
+
+    const totalIncidents = counts.reduce((sum, c) => sum + c._count, 0);
+    const openIncidents = counts
+      .filter((c) => c.status === DbIncidentStatus.OPEN)
+      .reduce((sum, c) => sum + c._count, 0);
+    const acknowledgedIncidents = counts
+      .filter((c) => c.status === DbIncidentStatus.ACKNOWLEDGED)
+      .reduce((sum, c) => sum + c._count, 0);
+    const resolvedIncidents = counts
+      .filter((c) => c.status === DbIncidentStatus.RESOLVED)
+      .reduce((sum, c) => sum + c._count, 0);
+
+    const criticalOpenCount = counts
+      .filter((c) => c.status === DbIncidentStatus.OPEN && c.severity === DbIncidentSeverity.CRITICAL)
+      .reduce((sum, c) => sum + c._count, 0);
+    const errorOpenCount = counts
+      .filter((c) => c.status === DbIncidentStatus.OPEN && c.severity === DbIncidentSeverity.ERROR)
+      .reduce((sum, c) => sum + c._count, 0);
+    const warningOpenCount = counts
+      .filter((c) => c.status === DbIncidentStatus.OPEN && c.severity === DbIncidentSeverity.WARNING)
+      .reduce((sum, c) => sum + c._count, 0);
+
+    return {
+      status: totalIncidents === 0 ? 'EMPTY' : 'READY',
+      totalIncidents,
+      openIncidents,
+      acknowledgedIncidents,
+      resolvedIncidents,
+      criticalOpenCount,
+      errorOpenCount,
+      warningOpenCount,
+      latestOpenedAt: latest?.openedAt.toISOString() ?? null,
+      checkedAt: new Date().toISOString(),
+    };
   }
 
   async acknowledgeIncident(
@@ -98,187 +166,272 @@ export class IncidentService {
     userId: string,
     incidentId: string,
   ): Promise<IncidentDetail> {
-    const role = await operationAuthorizationService.getOrganizationRole({ organizationId, userId });
-    if (!role || !ACKNOWLEDGE_ROLES.has(role as OrgRole)) {
-      throw new UnauthorizedError('You do not have permission to acknowledge this incident.');
-    }
+    await this._requirePermission(organizationId, userId, 'ACKNOWLEDGE');
 
     const incident = await prisma.incident.findFirst({
       where: { id: incidentId, organizationId },
     });
     if (!incident) throw new NotFoundError('Incident');
-    if (!OPEN_STATUSES.includes(incident.status as (typeof OPEN_STATUSES)[number])) {
-      throw new ConflictError('Only open incidents can be acknowledged.');
+    if (incident.status !== DbIncidentStatus.OPEN) {
+      throw new BadRequestError('Only open incidents can be acknowledged.');
     }
 
-    const updated = await prisma.$transaction(async (tx) => {
-      const acknowledged = await tx.incident.update({
-        where: { id: incident.id },
-        data: {
-          status: DbIncidentStatus.ACKNOWLEDGED,
-          acknowledgedByUserId: userId,
-          acknowledgedAt: new Date(),
-        },
-        include: this._include(),
-      });
-      await tx.incidentEvent.create({
-        data: {
-          incidentId: incident.id,
-          type: 'ACKNOWLEDGED',
-          message: 'Incident acknowledged.',
-          metadata: {},
-        },
-      });
-      return acknowledged;
+    const updated = await prisma.incident.update({
+      where: { id: incidentId },
+      data: {
+        status: DbIncidentStatus.ACKNOWLEDGED,
+        acknowledgedByUserId: userId,
+        acknowledgedAt: new Date(),
+      },
+      include: {
+        linkedSignals: { include: { signal: true } },
+        acknowledgedBy: true,
+        resolvedBy: true,
+      },
     });
 
-    return this._toDetail(updated, role);
+    return IncidentMapper.toDetail(updated as any);
   }
 
   async resolveIncident(
     organizationId: string,
     userId: string,
     incidentId: string,
-    resolutionNote: string,
   ): Promise<IncidentDetail> {
-    const role = await operationAuthorizationService.getOrganizationRole({ organizationId, userId });
-    if (!role || !RESOLVE_ROLES.has(role as OrgRole)) {
-      throw new UnauthorizedError('You do not have permission to resolve this incident.');
-    }
-
-    const note = resolutionNote.trim();
-    if (note.length < 3) throw new BadRequestError('A resolution note is required.');
+    await this._requirePermission(organizationId, userId, 'RESOLVE');
 
     const incident = await prisma.incident.findFirst({
       where: { id: incidentId, organizationId },
     });
     if (!incident) throw new NotFoundError('Incident');
     if (incident.status === DbIncidentStatus.RESOLVED) {
-      throw new ConflictError('Incident is already resolved.');
+      throw new BadRequestError('Incident is already resolved.');
     }
 
-    const updated = await prisma.$transaction(async (tx) => {
-      const resolved = await tx.incident.update({
-        where: { id: incident.id },
-        data: {
-          status: DbIncidentStatus.RESOLVED,
-          resolvedByUserId: userId,
-          resolvedAt: new Date(),
-          resolutionNote: note,
-        },
-        include: this._include(),
-      });
-      await tx.incidentEvent.create({
-        data: {
-          incidentId: incident.id,
-          type: 'RESOLVED',
-          message: 'Incident resolved.',
-          metadata: {},
-        },
-      });
-      return resolved;
+    const updated = await prisma.incident.update({
+      where: { id: incidentId },
+      data: {
+        status: DbIncidentStatus.RESOLVED,
+        resolvedByUserId: userId,
+        resolvedAt: new Date(),
+      },
+      include: {
+        linkedSignals: { include: { signal: true } },
+        acknowledgedBy: true,
+        resolvedBy: true,
+      },
     });
 
-    return this._toDetail(updated, role);
+    return IncidentMapper.toDetail(updated as any);
   }
 
-  async getSummary(organizationId: string, userId: string): Promise<IncidentSummary> {
-    await this.ensureForRecentFailedOperations(organizationId);
-    const role = await operationAuthorizationService.getOrganizationRole({ organizationId, userId });
-    const resolvedSince = new Date(Date.now() - 24 * 60 * 60 * 1_000);
-    const [open, acknowledged, resolvedRecent, criticalOpen, latest] = await Promise.all([
-      prisma.incident.count({ where: { organizationId, status: { in: [...OPEN_STATUSES] } } }),
-      prisma.incident.count({ where: { organizationId, status: { in: [...ACKNOWLEDGED_STATUSES] } } }),
-      prisma.incident.count({
-        where: { organizationId, status: DbIncidentStatus.RESOLVED, resolvedAt: { gte: resolvedSince } },
-      }),
-      prisma.incident.count({
-        where: {
-          organizationId,
-          status: { in: [...OPEN_STATUSES, ...ACKNOWLEDGED_STATUSES] },
-          severity: { in: [...HIGH_SEVERITIES] },
-        },
-      }),
-      prisma.incident.findMany({
-        where: { organizationId },
-        orderBy: { detectedAt: 'desc' },
-        take: 5,
-        include: this._include(),
-      }),
-    ]);
+  async archiveIncident(
+    organizationId: string,
+    userId: string,
+    incidentId: string,
+  ): Promise<IncidentDetail> {
+    await this._requirePermission(organizationId, userId, 'ARCHIVE');
+
+    const incident = await prisma.incident.findFirst({
+      where: { id: incidentId, organizationId },
+    });
+    if (!incident) throw new NotFoundError('Incident');
+
+    const updated = await prisma.incident.update({
+      where: { id: incidentId },
+      data: {
+        archivedAt: new Date(),
+      },
+      include: {
+        linkedSignals: { include: { signal: true } },
+        acknowledgedBy: true,
+        resolvedBy: true,
+      },
+    });
+
+    return IncidentMapper.toDetail(updated as any);
+  }
+
+  async correlateSignalsForOrg(
+    organizationId: string,
+  ): Promise<IncidentCorrelationResponse> {
+    const signals = await prisma.resourceSignal.findMany({
+      where: {
+        organizationId,
+        status: SignalStatus.ACTIVE,
+        severity: { in: [SignalSeverity.WARNING, SignalSeverity.ERROR, SignalSeverity.CRITICAL] },
+        archivedAt: null,
+      },
+      orderBy: { observedAt: 'asc' },
+    });
+
+    let createdCount = 0;
+    let updatedCount = 0;
+    let linkedSignalCount = 0;
+    let skippedSignalCount = 0;
+
+    for (const signal of signals) {
+      const result = await this.correlateSignal(organizationId, signal.id);
+      if (result.action === 'CREATED') createdCount++;
+      else if (result.action === 'UPDATED') updatedCount++;
+      else if (result.action === 'SKIPPED') skippedSignalCount++;
+
+      if (result.action !== 'SKIPPED') linkedSignalCount++;
+    }
 
     return {
-      open,
-      acknowledged,
-      resolvedRecent,
-      criticalOpen,
-      latest: latest.map((incident) => this._toListItem(incident, role)),
+      createdCount,
+      updatedCount,
+      linkedSignalCount,
+      skippedSignalCount,
     };
   }
 
-  async createForFailedOperation(operation: FailedOperationRecord): Promise<void> {
-    if (!operation.organizationId) return;
-    const existing = await prisma.incident.findUnique({
-      where: { operationId: operation.id },
-      select: { id: true },
+  async correlateSignal(
+    organizationId: string,
+    signalId: string,
+  ): Promise<{ action: 'CREATED' | 'UPDATED' | 'SKIPPED' }> {
+    const signal = await prisma.resourceSignal.findFirst({
+      where: { id: signalId, organizationId },
+      include: { resourceNode: true },
     });
-    if (existing) return;
 
-    const input = this._toRecord(operation.input);
-    const safeErrorMessage = this._safeError(operation.error);
-    const target = this._target(operation.operationType, input);
-    const severity = this._severity(operation.operationType, input);
-    const runbookKey = this._runbookKey(operation.operationType);
+    if (!signal) return { action: 'SKIPPED' };
 
-    await prisma.incident.create({
-      data: {
-        organizationId: operation.organizationId,
-        projectId: operation.projectId,
-        operationId: operation.id,
-        title: this._title(operation.operationType, target.label),
-        description: `AutoOps created this incident from failed operation ${operation.id}.`,
-        severity,
-        status: DbIncidentStatus.OPEN,
-        source: 'operation',
-        provider: operation.provider,
-        targetKind: target.kind,
-        targetName: target.label,
-        safeErrorMessage,
-        runbookKey,
-        events: {
-          create: {
-            type: 'CREATED',
-            message: 'Incident created from failed operation.',
-            metadata: {},
-          },
-        },
-      },
-    });
-  }
+    const correlationKey = this.buildCorrelationKey(signal as any);
 
-  async ensureForRecentFailedOperations(organizationId: string): Promise<void> {
-    const failedOperations = await prisma.operation.findMany({
+    const existing = await prisma.incident.findFirst({
       where: {
         organizationId,
-        status: OperationStatus.FAILED,
-        incident: null,
-      },
-      orderBy: { updatedAt: 'desc' },
-      take: 10,
-      select: {
-        id: true,
-        organizationId: true,
-        projectId: true,
-        provider: true,
-        operationType: true,
-        input: true,
-        error: true,
+        correlationKey,
+        status: { in: [DbIncidentStatus.OPEN, DbIncidentStatus.ACKNOWLEDGED] },
+        archivedAt: null,
       },
     });
 
-    for (const operation of failedOperations) {
-      await this.createForFailedOperation(operation);
+    if (existing) {
+      // Link signal if not already linked
+      const link = await prisma.incidentSignal.findUnique({
+        where: { incidentId_signalId: { incidentId: existing.id, signalId: signal.id } },
+      });
+
+      if (!link) {
+        await prisma.$transaction([
+          prisma.incidentSignal.create({
+            data: {
+              organizationId,
+              incidentId: existing.id,
+              signalId: signal.id,
+              role: DbIncidentSignalRole.RELATED,
+            },
+          }),
+          prisma.incident.update({
+            where: { id: existing.id },
+            data: {
+              signalCount: { increment: 1 },
+              lastObservedAt: signal.observedAt > existing.lastObservedAt ? signal.observedAt : undefined,
+              severity: this._escalateSeverity(existing.severity as DbIncidentSeverity, signal.severity as SignalSeverity),
+            },
+          }),
+        ]);
+        return { action: 'UPDATED' };
+      }
+      return { action: 'SKIPPED' };
     }
+
+    // Create new incident
+    await prisma.$transaction(async (tx) => {
+      const incident = await tx.incident.create({
+        data: {
+          organizationId,
+          title: this._deriveTitle(signal as any),
+          summary: `Correlated from signal: ${signal.title}. ${signal.message}`,
+          severity: this._mapSeverity(signal.severity as SignalSeverity),
+          status: DbIncidentStatus.OPEN,
+          source: DbIncidentSource.SIGNAL_CORRELATION,
+          correlationKey,
+          primaryResourceNodeId: signal.resourceNodeId,
+          projectId: signal.projectId,
+          environmentId: signal.environmentId,
+          deploymentId: signal.deploymentId,
+          operationId: signal.operationId,
+          signalCount: 1,
+          firstObservedAt: signal.observedAt,
+          lastObservedAt: signal.observedAt,
+          metadata: {
+            source: signal.source,
+            type: signal.type,
+            rule: 'DETERMINISTIC_V1',
+          },
+        },
+      });
+
+      await tx.incidentSignal.create({
+        data: {
+          organizationId,
+          incidentId: incident.id,
+          signalId: signal.id,
+          role: DbIncidentSignalRole.TRIGGER,
+        },
+      });
+    });
+
+    return { action: 'CREATED' };
+  }
+
+  buildCorrelationKey(signal: any): string {
+    const resourcePart = signal.resourceNodeId || signal.resourceNode?.urn || 'no-resource';
+    const typePart = this._groupType(signal.type);
+    const sourcePart = signal.source;
+
+    // For some types, we want broader grouping
+    if (signal.type === SignalType.PROVIDER_UNREACHABLE || signal.type === SignalType.PROVIDER_AUTH_FAILED) {
+      return `provider-connectivity:${sourcePart}`;
+    }
+
+    if (signal.operationId) {
+      return `operation:${signal.operationId}`;
+    }
+
+    if (signal.deploymentId) {
+      return `deployment:${signal.deploymentId}`;
+    }
+
+    return `${sourcePart}:${typePart}:${resourcePart}`;
+  }
+
+  private _groupType(type: string): string {
+    if (type.startsWith('KUBERNETES_')) return 'kubernetes-context';
+    if (type.startsWith('DOCKER_')) return 'docker-context';
+    if (type.startsWith('JENKINS_')) return 'jenkins-context';
+    return type;
+  }
+
+  private _deriveTitle(signal: any): string {
+    if (signal.resourceNode) {
+      return `${signal.resourceNode.displayName}: ${signal.title}`;
+    }
+    return signal.title;
+  }
+
+  private _mapSeverity(severity: SignalSeverity): DbIncidentSeverity {
+    switch (severity) {
+      case SignalSeverity.CRITICAL: return DbIncidentSeverity.CRITICAL;
+      case SignalSeverity.ERROR: return DbIncidentSeverity.ERROR;
+      case SignalSeverity.WARNING: return DbIncidentSeverity.WARNING;
+      default: return DbIncidentSeverity.INFO;
+    }
+  }
+
+  private _escalateSeverity(current: DbIncidentSeverity, incoming: SignalSeverity): DbIncidentSeverity {
+    const mapped = this._mapSeverity(incoming);
+    const order = {
+      [DbIncidentSeverity.INFO]: 0,
+      [DbIncidentSeverity.WARNING]: 1,
+      [DbIncidentSeverity.ERROR]: 2,
+      [DbIncidentSeverity.CRITICAL]: 3,
+    };
+    return order[mapped] > order[current] ? mapped : current;
   }
 
   private async _requireOrganizationMember(organizationId: string, userId: string): Promise<void> {
@@ -286,194 +439,18 @@ export class IncidentService {
     if (!role) throw new UnauthorizedError('You do not have permission to view incidents.');
   }
 
-  private _include() {
-    return {
-      acknowledgedBy: { select: { id: true, name: true, email: true } },
-      resolvedBy: { select: { id: true, name: true, email: true } },
-      operation: { select: { operationType: true } },
-    } satisfies Prisma.IncidentInclude;
-  }
+  private async _requirePermission(organizationId: string, userId: string, action: string): Promise<void> {
+    const role = await operationAuthorizationService.getOrganizationRole({ organizationId, userId });
+    if (!role) throw new UnauthorizedError(`You do not have permission to ${action.toLowerCase()} incidents.`);
 
-  private _toDetail(incident: IncidentRecord, role: OrgRole | null): IncidentDetail {
-    const operationType = incident.operation?.operationType ?? null;
-    return {
-      ...this._toListItem(incident, role),
-      description: incident.description,
-      runbook: incidentRunbookService.getRunbook({
-        key: incident.runbookKey,
-        provider: incident.provider,
-        operationType,
-        operationId: incident.operationId,
-      }),
-    };
-  }
+    const allowed: OrgRole[] =
+      action === 'ARCHIVE'
+        ? [OrgRole.OWNER, OrgRole.ADMIN]
+        : [OrgRole.OWNER, OrgRole.ADMIN, OrgRole.MEMBER];
 
-  private _toListItem(incident: IncidentRecord, role: OrgRole | null): IncidentListItem {
-    return {
-      id: incident.id,
-      title: incident.title,
-      severity: incident.severity as IncidentSeverity,
-      status: this._displayStatus(incident.status),
-      source: incident.source,
-      provider: incident.provider,
-      targetLabel: incident.targetName,
-      safeErrorMessage: incident.safeErrorMessage,
-      linkedOperationId: incident.operationId,
-      createdAt: incident.detectedAt.toISOString(),
-      updatedAt: incident.updatedAt.toISOString(),
-      acknowledgedAt: incident.acknowledgedAt?.toISOString() ?? null,
-      acknowledgedBy: incident.acknowledgedBy,
-      resolvedAt: incident.resolvedAt?.toISOString() ?? null,
-      resolvedBy: incident.resolvedBy,
-      resolutionNote: incident.resolutionNote,
-      permissions: this._permissions(incident.status, role),
-    };
-  }
-
-  private _permissions(status: DbIncidentStatus, role: OrgRole | null): IncidentPermissionHints {
-    if (!role) {
-      return { canAcknowledge: false, canResolve: false, reason: 'You do not have permission to manage this incident.' };
+    if (!allowed.includes(role)) {
+      throw new UnauthorizedError(`You do not have permission to ${action.toLowerCase()} incidents.`);
     }
-    if (status === DbIncidentStatus.RESOLVED) {
-      return { canAcknowledge: false, canResolve: false, reason: 'Incident is already resolved.' };
-    }
-
-    const canAcknowledge =
-      OPEN_STATUSES.includes(status as (typeof OPEN_STATUSES)[number]) && ACKNOWLEDGE_ROLES.has(role);
-    const canResolve = RESOLVE_ROLES.has(role);
-    let reason: string | null = null;
-    if (!canAcknowledge && !canResolve) reason = 'You do not have permission to manage this incident.';
-    else if (!canAcknowledge && OPEN_STATUSES.includes(status as (typeof OPEN_STATUSES)[number])) {
-      reason = 'Only owner, admin, or member users can acknowledge incidents.';
-    }
-    return { canAcknowledge, canResolve, reason };
-  }
-
-  private _displayStatus(status: DbIncidentStatus): IncidentStatus {
-    if (status === DbIncidentStatus.TRIGGERED) return IncidentStatus.OPEN;
-    if (status === DbIncidentStatus.MITIGATED) return IncidentStatus.ACKNOWLEDGED;
-    return status as IncidentStatus;
-  }
-
-  private _severity(type: OperationType, input: Record<string, unknown>): DbIncidentSeverity {
-    if (type === OperationType.DOCKER_CONTAINER_RESTART) return DbIncidentSeverity.HIGH;
-    if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) return DbIncidentSeverity.HIGH;
-    if (type === OperationType.KUBERNETES_DEPLOYMENT_SCALE) {
-      const replicas = typeof input.replicas === 'number' ? input.replicas : 0;
-      return replicas > 2 ? DbIncidentSeverity.HIGH : DbIncidentSeverity.MEDIUM;
-    }
-    if (type === OperationType.JENKINS_BUILD_TRIGGER) return DbIncidentSeverity.MEDIUM;
-    if (type === OperationType.TERRAFORM_APPLY || type === OperationType.ANSIBLE_RUN) {
-      return DbIncidentSeverity.HIGH;
-    }
-    if (type === OperationType.AWS_ECR_IMAGE_PUSH) return DbIncidentSeverity.MEDIUM;
-    return DbIncidentSeverity.MEDIUM;
-  }
-
-  private _runbookKey(type: OperationType): string {
-    if (type === OperationType.JENKINS_BUILD_TRIGGER) return 'jenkins-build-failure';
-    if (type === OperationType.DOCKER_CONTAINER_RESTART) return 'docker-restart-failure';
-    if (type === OperationType.DOCKER_CONTAINER_START || type === OperationType.DOCKER_CONTAINER_STOP) {
-      return 'docker-container-action-failure';
-    }
-    if (type === OperationType.KUBERNETES_DEPLOYMENT_SCALE) return 'kubernetes-scale-failure';
-    if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) return 'kubernetes-rollout-failure';
-    if (
-      type === OperationType.TERRAFORM_VALIDATE ||
-      type === OperationType.TERRAFORM_PLAN ||
-      type === OperationType.TERRAFORM_APPLY
-    ) {
-      return 'terraform-operation-failure';
-    }
-    if (
-      type === OperationType.ANSIBLE_SYNTAX_CHECK ||
-      type === OperationType.ANSIBLE_CHECK ||
-      type === OperationType.ANSIBLE_RUN
-    ) {
-      return 'ansible-operation-failure';
-    }
-    if (type === OperationType.AWS_ECR_IMAGE_BUILD || type === OperationType.AWS_ECR_IMAGE_PUSH) {
-      return 'aws-ecr-image-operation-failure';
-    }
-    return 'operation-failure';
-  }
-
-  private _title(type: OperationType, target: string | null): string {
-    const label = target ? `: ${target}` : '';
-    if (type === OperationType.JENKINS_BUILD_TRIGGER) return `Jenkins build failed${label}`;
-    if (type === OperationType.DOCKER_CONTAINER_RESTART) return `Docker container restart failed${label}`;
-    if (type === OperationType.DOCKER_CONTAINER_START) return `Docker container start failed${label}`;
-    if (type === OperationType.DOCKER_CONTAINER_STOP) return `Docker container stop failed${label}`;
-    if (type === OperationType.KUBERNETES_DEPLOYMENT_SCALE) return `Kubernetes deployment scale failed${label}`;
-    if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) return `Kubernetes rollout restart failed${label}`;
-    if (type === OperationType.TERRAFORM_VALIDATE) return `Terraform/OpenTofu validate failed${label}`;
-    if (type === OperationType.TERRAFORM_PLAN) return `Terraform/OpenTofu plan failed${label}`;
-    if (type === OperationType.TERRAFORM_APPLY) return `Terraform/OpenTofu apply failed${label}`;
-    if (type === OperationType.ANSIBLE_SYNTAX_CHECK) return `Ansible syntax check failed${label}`;
-    if (type === OperationType.ANSIBLE_CHECK) return `Ansible check mode failed${label}`;
-    if (type === OperationType.ANSIBLE_RUN) return `Ansible run failed${label}`;
-    if (type === OperationType.AWS_ECR_IMAGE_BUILD) return `AWS ECR image build failed${label}`;
-    if (type === OperationType.AWS_ECR_IMAGE_PUSH) return `AWS ECR image push failed${label}`;
-    return `Operation failed${label}`;
-  }
-
-  private _target(type: OperationType, input: Record<string, unknown>): { kind: string | null; label: string | null } {
-    if (type === OperationType.JENKINS_BUILD_TRIGGER) {
-      return { kind: 'Jenkins job', label: this._string(input, 'jobName') };
-    }
-    if (
-      type === OperationType.DOCKER_CONTAINER_START ||
-      type === OperationType.DOCKER_CONTAINER_STOP ||
-      type === OperationType.DOCKER_CONTAINER_RESTART
-    ) {
-      return {
-        kind: 'Docker container',
-        label: this._string(input, 'containerName') ?? this._string(input, 'containerId'),
-      };
-    }
-    if (
-      type === OperationType.KUBERNETES_DEPLOYMENT_SCALE ||
-      type === OperationType.KUBERNETES_DEPLOYMENT_RESTART
-    ) {
-      const namespace = this._string(input, 'namespace');
-      const name = this._string(input, 'name');
-      return { kind: 'Kubernetes deployment', label: namespace && name ? `${namespace}/${name}` : name };
-    }
-    if (
-      type === OperationType.TERRAFORM_VALIDATE ||
-      type === OperationType.TERRAFORM_PLAN ||
-      type === OperationType.TERRAFORM_APPLY
-    ) {
-      return { kind: 'Terraform/OpenTofu workspace', label: this._string(input, 'workspaceSlug') };
-    }
-    if (
-      type === OperationType.ANSIBLE_SYNTAX_CHECK ||
-      type === OperationType.ANSIBLE_CHECK ||
-      type === OperationType.ANSIBLE_RUN
-    ) {
-      return { kind: 'Ansible playbook', label: this._string(input, 'playbookSlug') };
-    }
-    if (type === OperationType.AWS_ECR_IMAGE_BUILD || type === OperationType.AWS_ECR_IMAGE_PUSH) {
-      const repository = this._string(input, 'repositoryName');
-      const tag = this._string(input, 'imageTag');
-      return { kind: 'AWS ECR image', label: repository && tag ? `${repository}:${tag}` : repository };
-    }
-    return { kind: null, label: null };
-  }
-
-  private _safeError(value: unknown): string {
-    const record = this._toRecord(value);
-    const message = this._string(record, 'message') ?? 'Operation failed.';
-    return message.replace(/\s+/g, ' ').slice(0, 500);
-  }
-
-  private _toRecord(value: unknown): Record<string, unknown> {
-    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-  }
-
-  private _string(record: Record<string, unknown>, key: string): string | null {
-    const value = record[key];
-    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
   }
 }
 

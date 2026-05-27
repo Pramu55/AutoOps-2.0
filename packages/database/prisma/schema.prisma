@@ -87,22 +87,29 @@ enum PipelineStepKind {
 }
 
 enum IncidentSeverity {
-  LOW
-  MEDIUM
-  HIGH
+  INFO
+  WARNING
+  ERROR
   CRITICAL
-  SEV1
-  SEV2
-  SEV3
-  SEV4
 }
 
 enum IncidentStatus {
   OPEN
-  TRIGGERED
   ACKNOWLEDGED
-  MITIGATED
   RESOLVED
+  ARCHIVED
+}
+
+enum IncidentSource {
+  SIGNAL_CORRELATION
+  MANUAL
+  SYSTEM
+}
+
+enum IncidentSignalRole {
+  TRIGGER
+  RELATED
+  EVIDENCE
 }
 
 enum AlertChannelKind {
@@ -492,6 +499,7 @@ model Environment {
 
   deployments Deployment[]
   operations  Operation[]
+  incidents   Incident[]
 
   @@unique([projectId, name])
   @@unique([projectId, slug])
@@ -619,53 +627,73 @@ model PipelineStep {
 
 model Incident {
   id                   String           @id @default(uuid()) @db.Uuid
-  organizationId       String?          @db.Uuid
-  organization         Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  projectId            String?          @db.Uuid
-  project              Project?         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  operationId          String?          @unique @db.Uuid
-  operation            Operation?       @relation(fields: [operationId], references: [id], onDelete: SetNull)
+  organizationId       String           @db.Uuid
+  organization         Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   title                String
-  description          String?
-  severity             IncidentSeverity @default(MEDIUM)
+  summary              String           @db.Text
+  severity             IncidentSeverity @default(ERROR)
   status               IncidentStatus   @default(OPEN)
-  source               String           @default("operation")
-  provider             OperationProvider?
-  targetKind           String?
-  targetName           String?
-  safeErrorMessage     String?
-  runbookKey           String?
-  detectedAt           DateTime         @default(now()) @db.Timestamptz(3)
+  source               IncidentSource   @default(SIGNAL_CORRELATION)
+  correlationKey       String
+  primaryResourceNodeId String?          @db.Uuid
+  primaryResourceNode  ResourceNode?    @relation(fields: [primaryResourceNodeId], references: [id], onDelete: SetNull)
+  projectId            String?          @db.Uuid
+  project              Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  environmentId        String?          @db.Uuid
+  environment          Environment?     @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  deploymentId         String?          @db.Uuid
+  operationId           String?            @unique @db.Uuid
+
+  operation            Operation?       @relation(fields: [operationId], references: [id], onDelete: SetNull)
+  signalCount          Int              @default(0)
+  firstObservedAt      DateTime         @db.Timestamptz(3)
+  lastObservedAt       DateTime         @db.Timestamptz(3)
+  openedAt             DateTime         @default(now()) @db.Timestamptz(3)
   acknowledgedByUserId String?          @db.Uuid
   acknowledgedBy       User?            @relation("IncidentAcknowledgedBy", fields: [acknowledgedByUserId], references: [id], onDelete: SetNull)
   acknowledgedAt       DateTime?        @db.Timestamptz(3)
   resolvedByUserId     String?          @db.Uuid
   resolvedBy           User?            @relation("IncidentResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
   resolvedAt           DateTime?        @db.Timestamptz(3)
-  resolutionNote       String?
-  rootCause            String?
+  archivedAt           DateTime?        @db.Timestamptz(3)
+  metadata             Json             @default("{}")
+  labels               Json?
+  createdAt            DateTime         @default(now()) @db.Timestamptz(3)
   updatedAt            DateTime         @updatedAt @db.Timestamptz(3)
 
-  events IncidentEvent[]
+  linkedSignals IncidentSignal[]
 
-  @@index([organizationId, status, detectedAt(sort: Desc)])
-  @@index([projectId, status, detectedAt(sort: Desc)])
-  @@index([operationId])
-  @@index([severity])
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, severity])
+  @@index([organizationId, source])
+  @@index([organizationId, correlationKey])
+  @@index([organizationId, primaryResourceNodeId])
+  @@index([organizationId, projectId])
+  @@index([organizationId, environmentId])
+  @@index([organizationId, deploymentId])
+  @@index([organizationId, operationId])
+  @@index([organizationId, openedAt])
+  @@index([organizationId, lastObservedAt])
+  @@index([organizationId, archivedAt])
   @@map("incidents")
 }
 
-model IncidentEvent {
-  id         String   @id @default(uuid()) @db.Uuid
-  incidentId String   @db.Uuid
-  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
-  type       String
-  message    String
-  metadata   Json     @default("{}")
-  occurredAt DateTime @default(now()) @db.Timestamptz(3)
+model IncidentSignal {
+  id             String             @id @default(uuid()) @db.Uuid
+  organizationId String             @db.Uuid
+  incidentId     String             @db.Uuid
+  incident       Incident           @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  signalId       String             @db.Uuid
+  signal         ResourceSignal     @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  role           IncidentSignalRole @default(RELATED)
+  createdAt      DateTime           @default(now()) @db.Timestamptz(3)
 
-  @@index([incidentId, occurredAt])
-  @@map("incident_events")
+  @@unique([incidentId, signalId])
+  @@index([organizationId])
+  @@index([organizationId, incidentId])
+  @@index([organizationId, signalId])
+  @@map("incident_signals")
 }
 
 model Alert {
@@ -886,6 +914,7 @@ model ResourceNode {
   outgoingEdges ResourceEdge[] @relation("ResourceEdgeSource")
   incomingEdges ResourceEdge[] @relation("ResourceEdgeTarget")
   signals       ResourceSignal[]
+  incidents     Incident[]
 
   @@unique([organizationId, urn])
 
@@ -951,6 +980,8 @@ model ResourceSignal {
   archivedAt     DateTime?      @db.Timestamptz(3)
   createdAt      DateTime       @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+
+  incidentSignals IncidentSignal[]
 
   @@unique([organizationId, fingerprint])
   @@index([organizationId])

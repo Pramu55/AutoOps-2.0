@@ -1,22 +1,26 @@
 import type { Request, Response } from 'express';
-import type {
-  AcknowledgeIncidentResponse,
+import {
+  IncidentActionResponse,
+  IncidentCorrelationResponse,
   IncidentDetail,
-  IncidentListQuery,
   IncidentListResponse,
-  ResolveIncidentResponse,
+  IncidentReadinessResponse,
+  incidentFilterSchema,
 } from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { incidentService } from './incident.service.js';
 
 export class IncidentController {
-  list = async (req: Request, res: Response<{ data: IncidentListResponse }>): Promise<void> => {
+  list = async (req: Request, res: Response<IncidentListResponse>): Promise<void> => {
     const auth = this._requireAuth(req);
-    const data = await incidentService.listIncidents(
-      auth.organizationId,
-      auth.userId,
-      req.query as unknown as IncidentListQuery,
-    );
+    const filter = incidentFilterSchema.parse(req.query);
+    const data = await incidentService.listIncidents(auth.organizationId, auth.userId, filter);
+    res.json(data);
+  };
+
+  readiness = async (req: Request, res: Response<{ data: IncidentReadinessResponse }>): Promise<void> => {
+    const auth = this._requireAuth(req);
+    const data = await incidentService.getIncidentReadiness(auth.organizationId);
     res.json({ data });
   };
 
@@ -29,9 +33,15 @@ export class IncidentController {
     res.json({ data });
   };
 
+  correlate = async (req: Request, res: Response<{ data: IncidentCorrelationResponse }>): Promise<void> => {
+    const auth = this._requireAuth(req);
+    const data = await incidentService.correlateSignalsForOrg(auth.organizationId);
+    res.json({ data });
+  };
+
   acknowledge = async (
     req: Request<{ incidentId: string }>,
-    res: Response<{ data: AcknowledgeIncidentResponse }>,
+    res: Response<IncidentActionResponse>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
     const incident = await incidentService.acknowledgeIncident(
@@ -39,21 +49,33 @@ export class IncidentController {
       auth.userId,
       req.params.incidentId,
     );
-    res.json({ data: { incident } });
+    res.json({ incident });
   };
 
   resolve = async (
-    req: Request<{ incidentId: string }, unknown, { resolutionNote: string }>,
-    res: Response<{ data: ResolveIncidentResponse }>,
+    req: Request<{ incidentId: string }>,
+    res: Response<IncidentActionResponse>,
   ): Promise<void> => {
     const auth = this._requireAuth(req);
     const incident = await incidentService.resolveIncident(
       auth.organizationId,
       auth.userId,
       req.params.incidentId,
-      req.body.resolutionNote,
     );
-    res.json({ data: { incident } });
+    res.json({ incident });
+  };
+
+  archive = async (
+    req: Request<{ incidentId: string }>,
+    res: Response<IncidentActionResponse>,
+  ): Promise<void> => {
+    const auth = this._requireAuth(req);
+    const incident = await incidentService.archiveIncident(
+      auth.organizationId,
+      auth.userId,
+      req.params.incidentId,
+    );
+    res.json({ incident });
   };
 
   private _requireAuth(req: Request): { organizationId: string; userId: string } {

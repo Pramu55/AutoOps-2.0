@@ -2,6 +2,7 @@ import {
   IncidentSeverity,
   IncidentStatus,
   OperationType,
+  IncidentSource,
   type OperationProvider,
   type Prisma,
 } from '@autoops/database';
@@ -36,49 +37,49 @@ export async function createIncidentForFailedOperation(
   const input = toRecord(operation.input);
   const target = targetForOperation(operation.operationType, input);
   const severity = severityForOperation(operation.operationType, input);
+  const now = new Date();
 
   await db.incident.create({
     data: {
       organizationId: operation.organizationId,
       projectId: operation.projectId,
       operationId: operation.id,
+      correlationKey: `operation:${operation.id}`,
       title: titleForOperation(operation.operationType, target.label),
-      description: `AutoOps created this incident from failed operation ${operation.id}.`,
+      summary: `AutoOps created this incident from failed operation ${operation.id}.`,
       severity,
       status: IncidentStatus.OPEN,
-      source: 'operation',
-      provider: operation.provider,
-      targetKind: target.kind,
-      targetName: target.label,
-      safeErrorMessage: safeError(operation.error),
-      runbookKey: runbookKey(operation.operationType),
-      events: {
-        create: {
-          type: 'CREATED',
-          message: 'Incident created from failed operation.',
-          metadata: {},
-        },
+      source: IncidentSource.SYSTEM,
+      firstObservedAt: now,
+      lastObservedAt: now,
+      openedAt: now,
+      metadata: {
+        provider: operation.provider,
+        targetKind: target.kind,
+        targetName: target.label,
+        safeErrorMessage: safeError(operation.error),
+        runbookKey: runbookKey(operation.operationType),
       },
     },
   });
 }
 
 function severityForOperation(type: OperationType, input: Record<string, unknown>): IncidentSeverity {
-  if (type === OperationType.DOCKER_CONTAINER_RESTART) return IncidentSeverity.HIGH;
-  if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) return IncidentSeverity.HIGH;
+  if (type === OperationType.DOCKER_CONTAINER_RESTART) return IncidentSeverity.ERROR;
+  if (type === OperationType.KUBERNETES_DEPLOYMENT_RESTART) return IncidentSeverity.ERROR;
   if (type === OperationType.KUBERNETES_DEPLOYMENT_SCALE) {
     const replicas = typeof input.replicas === 'number' ? input.replicas : 0;
-    return replicas > 2 ? IncidentSeverity.HIGH : IncidentSeverity.MEDIUM;
+    return replicas > 2 ? IncidentSeverity.ERROR : IncidentSeverity.WARNING;
   }
   if (
     type === OperationType.TERRAFORM_APPLY ||
     type === OperationType.AWS_TERRAFORM_ECS_APPLY ||
     type === OperationType.ANSIBLE_RUN
   ) {
-    return IncidentSeverity.HIGH;
+    return IncidentSeverity.ERROR;
   }
-  if (type === OperationType.AWS_ECR_IMAGE_PUSH) return IncidentSeverity.MEDIUM;
-  return IncidentSeverity.MEDIUM;
+  if (type === OperationType.AWS_ECR_IMAGE_PUSH) return IncidentSeverity.WARNING;
+  return IncidentSeverity.WARNING;
 }
 
 function runbookKey(type: OperationType): string {
