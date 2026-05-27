@@ -2,98 +2,24 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type {
-  IncidentListResponse,
-  IncidentReadinessResponse,
-  IncidentSummary,
-} from '@autoops/types';
-import {
-  ArrowLeft,
-  CheckCircle2,
-  Filter,
-  RefreshCw,
-  Search,
-  Zap,
-} from 'lucide-react';
+import type { IncidentListResponse, IncidentReadinessResponse } from '@autoops/types';
+import { AlertTriangle, CheckCircle2, Zap, RefreshCw, Filter, Search } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/cn';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
+import { WorkQueue } from '@/components/layout/work-queue';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { EmptyState } from '@/components/layout/empty-state';
 
 type IncidentsApiResponse = IncidentListResponse;
 type ReadinessApiResponse = { data: IncidentReadinessResponse };
 
 function getErrorMessage(error: unknown): string {
-  if (error instanceof ApiError && error.code === 'SESSION_EXPIRED')
-    return 'Session expired. Please sign in again.';
+  if (error instanceof ApiError && error.code === 'SESSION_EXPIRED') return 'Session expired. Please sign in again.';
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
   return 'Unable to load incidents.';
-}
-
-function statusTone(status: string): string {
-  if (status === 'RESOLVED') return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-700';
-  if (status === 'ACKNOWLEDGED') return 'border-amber-400/25 bg-amber-400/10 text-amber-700';
-  if (status === 'OPEN') return 'border-rose-400/30 bg-rose-500/10 text-rose-700';
-  if (status === 'ARCHIVED') return 'border-slate-500/25 bg-slate-500/10 text-slate-700';
-  return 'border-slate-500/25 bg-slate-500/10 text-slate-700';
-}
-
-function severityTone(severity: string): string {
-  if (severity === 'CRITICAL' || severity === 'ERROR') {
-    return 'border-rose-400/30 bg-rose-500/10 text-rose-700';
-  }
-  if (severity === 'WARNING') return 'border-amber-400/25 bg-amber-400/10 text-amber-700';
-  return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-700';
-}
-
-function IncidentTable({ incidents }: { incidents: IncidentSummary[] }) {
-  return (
-    <div className="overflow-x-auto rounded-md border border-slate-200">
-      <table className="min-w-full divide-y divide-white/10 text-left text-sm">
-        <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-500">
-          <tr>
-            <th className="px-4 py-3 font-medium">Severity</th>
-            <th className="px-4 py-3 font-medium">Status</th>
-            <th className="px-4 py-3 font-medium">Incident</th>
-            <th className="px-4 py-3 font-medium">Source</th>
-            <th className="px-4 py-3 font-medium">Signals</th>
-            <th className="px-4 py-3 font-medium text-right">Action</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-white/10 bg-slate-50">
-          {incidents.map((incident) => (
-            <tr key={incident.id} className="align-top transition hover:bg-slate-50">
-              <td className="px-4 py-3">
-                <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${severityTone(incident.severity)}`}>
-                  {incident.severity}
-                </span>
-              </td>
-              <td className="px-4 py-3">
-                <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(incident.status)}`}>
-                  {incident.status}
-                </span>
-              </td>
-              <td className="max-w-[26rem] px-4 py-3">
-                <p className="font-medium text-slate-900">{incident.title}</p>
-                <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">{incident.summary}</p>
-              </td>
-              <td className="px-4 py-3 text-slate-700 text-xs uppercase tracking-tight">{incident.source.replace('_', ' ')}</td>
-              <td className="px-4 py-3 text-slate-600">{incident.signalCount}</td>
-              <td className="px-4 py-3">
-                <div className="flex justify-end gap-2">
-                  <Link
-                    href={`/dashboard/incidents/${incident.id}`}
-                    className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-blue-700 transition hover:border-cyan-300/45 hover:bg-cyan-300/15"
-                  >
-                    Details
-                  </Link>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
 }
 
 export function IncidentsClient() {
@@ -105,6 +31,7 @@ export function IncidentsClient() {
   const [isLoading, setIsLoading] = useState(true);
   const [isCorrelating, setIsCorrelating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const loadIncidents = useCallback(async () => {
     setIsLoading(true);
@@ -122,6 +49,7 @@ export function IncidentsClient() {
 
       setResponse(listResult);
       setReadiness(readinessResult.data);
+      setLastUpdated(new Date());
     } catch (loadError) {
       setError(getErrorMessage(loadError));
     } finally {
@@ -156,102 +84,160 @@ export function IncidentsClient() {
     );
   }, [items, query]);
 
-  return (
-    <div className="space-y-6 animate-fade-in">
-      <Button asChild variant="outline" size="sm" className="rounded-full border-slate-200 bg-slate-50">
-        <Link href="/dashboard/operations">
-          <ArrowLeft className="h-4 w-4" />
-          Back to Ops Hub
-        </Link>
-      </Button>
+  const activeIncidents = filteredItems.filter(i => ['OPEN', 'ACKNOWLEDGED'].includes(i.status));
+  const otherIncidents = filteredItems.filter(i => !['OPEN', 'ACKNOWLEDGED'].includes(i.status));
 
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-          <div>
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-rose-300/20 bg-rose-300/10 px-3 py-1.5 text-xs font-medium text-rose-800">
-              <Zap className="h-3.5 w-3.5" />
-              Incident correlation
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900 lg:text-3xl">Incidents</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-              Deterministic incident correlation from real signals and resource graph context. No AI summaries yet.
-            </p>
-          </div>
-          <div className="flex gap-2">
+  return (
+    <div className="flex flex-col min-h-full bg-slate-50">
+      <WorkspaceHeader
+        title="Incident Workspace"
+        purpose="Deterministic correlation of signals into incidents."
+        icon={<AlertTriangle className="h-5 w-5" />}
+        breadcrumbs={[{ label: 'Command', href: '/dashboard' }, { label: 'Incidents' }]}
+        statusSummary={
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-slate-500">Updated {lastUpdated ? lastUpdated.toLocaleTimeString() : 'Never'}</span>
             <Button
               type="button"
               variant="outline"
+              size="sm"
               onClick={handleCorrelate}
               disabled={isCorrelating || isLoading}
-              className="rounded-full bg-cyan-50 border-cyan-200 text-blue-700 hover:bg-cyan-100"
+              className="bg-white"
             >
-              <Zap className={isCorrelating ? 'h-4 w-4 animate-pulse' : 'h-4 w-4'} />
+              <Zap className={cn("h-4 w-4 mr-2", isCorrelating && "animate-pulse")} />
               {isCorrelating ? 'Correlating...' : 'Run Correlation'}
             </Button>
-            <Button type="button" variant="ghost" onClick={() => void loadIncidents()} disabled={isLoading} className="rounded-full text-slate-600 hover:bg-slate-100">
-              <RefreshCw className={isLoading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => void loadIncidents()}
+              disabled={isLoading}
+              className="text-slate-600"
+            >
+              <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
             </Button>
           </div>
-        </div>
-      </section>
+        }
+      />
 
-      {error ? (
-        <section className="rounded-md border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-800">{error}</section>
-      ) : null}
-
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[
-          ['Open', readiness?.openIncidents ?? 0],
-          ['Acknowledged', readiness?.acknowledgedIncidents ?? 0],
-          ['Critical Open', readiness?.criticalOpenCount ?? 0],
-          ['Error Open', readiness?.errorOpenCount ?? 0],
-        ].map(([label, value]) => (
-          <section key={label} className="rounded-md border border-slate-200 bg-white p-4">
-            <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-            <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
-          </section>
-        ))}
-      </div>
-
-      <section className="rounded-md border border-slate-200 bg-white p-5">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Incident Registry</h2>
-            <p className="mt-1 text-sm text-slate-600">Showing {filteredItems.length} correlated incidents.</p>
+      <div className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
+        {error && (
+          <div className="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+            {error}
           </div>
-          <div className="flex flex-wrap gap-2">
-            <label className="relative">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search by title or summary"
-                className="h-9 w-56 rounded-full border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/40"
-              />
-            </label>
-            <Filter className="mt-2 h-4 w-4 text-slate-500" />
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900">
-              {['ALL', 'OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'ARCHIVED'].map((item) => <option key={item}>{item}</option>)}
-            </select>
-            <select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)} className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900">
-              {['ALL', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'].map((item) => <option key={item}>{item}</option>)}
-            </select>
-          </div>
-        </div>
-        <div className="mt-5 space-y-3">
-          {isLoading ? (
-            <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-600">Loading incidents...</div>
-          ) : filteredItems.length === 0 ? (
-            <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
-              <CheckCircle2 className="mx-auto h-5 w-5 text-emerald-700" />
-              <p className="mt-2 text-sm font-medium text-slate-900">No incidents found.</p>
-              <p className="mt-1 text-sm text-slate-500">Run correlation to group active signals into incidents.</p>
+        )}
+
+        {/* Stats Row */}
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {[
+            ['Open', readiness?.openIncidents ?? 0],
+            ['Acknowledged', readiness?.acknowledgedIncidents ?? 0],
+            ['Critical Open', readiness?.criticalOpenCount ?? 0],
+            ['Error Open', readiness?.errorOpenCount ?? 0],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm text-center">
+              <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
+              <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
             </div>
-          ) : (
-            <IncidentTable incidents={filteredItems} />
-          )}
+          ))}
         </div>
-      </section>
+
+        {/* Filters */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search incidents..."
+              className="w-full rounded-md border border-slate-200 pl-9 py-2 text-sm placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <Filter className="h-4 w-4 text-slate-400" />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="rounded-md border border-slate-200 bg-white py-2 pl-3 pr-8 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              {['ALL', 'OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'ARCHIVED'].map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select
+              value={severityFilter}
+              onChange={(e) => setSeverityFilter(e.target.value)}
+              className="rounded-md border border-slate-200 bg-white py-2 pl-3 pr-8 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              {['ALL', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'].map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Active Incidents Queue */}
+        <WorkQueue
+          title="Active Incidents"
+          description="Incidents requiring triage and resolution."
+          isEmpty={activeIncidents.length === 0}
+          emptyState={
+            <EmptyState 
+              title="No active incidents" 
+              description="Run correlation to group active signals into incidents." 
+              icon={<CheckCircle2 className="text-emerald-500" />} 
+              variant="compact" 
+            />
+          }
+        >
+          {activeIncidents.map(inc => (
+            <div key={inc.id} className="p-4 flex items-center justify-between hover:bg-slate-50/50 transition border-b border-slate-100 last:border-0">
+              <div className="flex-1 min-w-0 pr-4">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <StatusBadge status={inc.status} />
+                  <StatusBadge status={inc.severity} />
+                  <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded capitalize">
+                    {inc.source.replace('_', ' ')}
+                  </span>
+                </div>
+                <h3 className="text-sm font-semibold text-slate-900 truncate">{inc.title}</h3>
+                <p className="mt-1 text-sm text-slate-600 line-clamp-1">{inc.summary}</p>
+                <div className="mt-2 text-xs text-slate-500">
+                  {inc.signalCount} correlated signals
+                </div>
+              </div>
+              <Button asChild variant="outline" size="sm" className="shrink-0">
+                <Link href={`/dashboard/incidents/${inc.id}`}>Details</Link>
+              </Button>
+            </div>
+          ))}
+        </WorkQueue>
+
+        {/* Historical/Resolved Incidents */}
+        {otherIncidents.length > 0 && (
+          <WorkQueue
+            title="Archived & Resolved"
+            description="Historical incident records."
+            isEmpty={false}
+            emptyState={<div className="text-sm text-slate-500 py-4 text-center">No historical incidents found.</div>}
+          >
+            {otherIncidents.map(inc => (
+               <div key={inc.id} className="p-4 flex items-center justify-between hover:bg-slate-50/50 transition border-b border-slate-100 last:border-0 opacity-75 hover:opacity-100">
+               <div className="flex-1 min-w-0 pr-4">
+                 <div className="flex flex-wrap items-center gap-2 mb-1">
+                   <StatusBadge status={inc.status} />
+                   <StatusBadge status={inc.severity} />
+                 </div>
+                 <h3 className="text-sm font-medium text-slate-900 truncate">{inc.title}</h3>
+               </div>
+               <Button asChild variant="ghost" size="sm" className="shrink-0">
+                 <Link href={`/dashboard/incidents/${inc.id}`}>View</Link>
+               </Button>
+             </div>
+            ))}
+          </WorkQueue>
+        )}
+
+      </div>
     </div>
   );
 }

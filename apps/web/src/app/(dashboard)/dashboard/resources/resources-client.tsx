@@ -7,15 +7,18 @@ import type {
   ResourceGraphReadinessResponse,
   ResourceKind,
   ResourceNodeDetail,
-  ResourceNodeSummary,
   ResourceProvider,
 } from '@autoops/types';
 import { ResourceKind as ResourceKinds, ResourceProvider as ResourceProviders } from '@autoops/types';
-import { Boxes, Link2, RefreshCw, Search } from 'lucide-react';
+import { Boxes, Link2, RefreshCw, Search, Database } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/cn';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
+import { WorkQueue } from '@/components/layout/work-queue';
+import { EvidencePanel } from '@/components/layout/evidence-panel';
+import { EmptyState } from '@/components/layout/empty-state';
 
 type ApiData<T> = { data: T };
 type ArchivedFilter = 'active' | 'archived' | 'all';
@@ -47,56 +50,6 @@ function labelize(value: string): string {
     .join(' ');
 }
 
-function statusTone(status: string | null | undefined): string {
-  if (status === 'READY' || status === 'CONNECTED' || status === 'RUNNING' || status === 'HEALTHY') {
-    return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-700';
-  }
-  if (status === 'DEGRADED' || status === 'WARNED' || status === 'EMPTY') {
-    return 'border-amber-400/25 bg-amber-400/10 text-amber-700';
-  }
-  if (status === 'FAILED' || status === 'UNREACHABLE' || status === 'BLOCKED') {
-    return 'border-rose-400/30 bg-rose-500/10 text-rose-700';
-  }
-  return 'border-slate-300 bg-slate-100 text-slate-700';
-}
-
-function MetadataList({ metadata }: { metadata: Record<string, unknown> }) {
-  const entries = Object.entries(metadata).slice(0, 12);
-  if (entries.length === 0) {
-    return <p className="text-sm text-slate-500">No safe metadata summary stored for this resource.</p>;
-  }
-
-  return (
-    <dl className="grid gap-2 text-sm">
-      {entries.map(([key, value]) => (
-        <div key={key} className="grid grid-cols-[9rem_1fr] gap-3 rounded border border-slate-200 bg-slate-50 px-3 py-2">
-          <dt className="truncate font-medium text-slate-600">{key}</dt>
-          <dd className="min-w-0 truncate text-slate-900">{String(value)}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-function ResourceRow({ resource, selected, onSelect }: { resource: ResourceNodeSummary; selected: boolean; onSelect: (id: string) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(resource.id)}
-      className={cn(
-        'grid w-full min-w-[56rem] grid-cols-[10rem_12rem_13rem_1fr_10rem] gap-3 border-b border-slate-200 px-4 py-3 text-left text-sm transition hover:bg-blue-50',
-        selected && 'bg-blue-50 ring-1 ring-inset ring-blue-200',
-      )}
-    >
-      <span className="truncate font-semibold text-slate-950">{resource.displayName}</span>
-      <span className="truncate text-slate-600">{labelize(resource.provider)}</span>
-      <span className="truncate text-slate-600">{labelize(resource.kind)}</span>
-      <span className="truncate font-mono text-xs text-slate-500">{resource.urn}</span>
-      <span className="whitespace-nowrap text-slate-600">{formatDate(resource.lastSeenAt)}</span>
-    </button>
-  );
-}
-
 export function ResourcesClient() {
   const [providerFilter, setProviderFilter] = useState<ResourceProvider | 'ALL'>('ALL');
   const [kindFilter, setKindFilter] = useState<ResourceKind | 'ALL'>('ALL');
@@ -104,15 +57,18 @@ export function ResourcesClient() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [archivedFilter, setArchivedFilter] = useState<ArchivedFilter>('active');
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
+  
   const [readiness, setReadiness] = useState<ResourceGraphReadinessResponse | null>(null);
   const [resources, setResources] = useState<ResourceGraphListResponse | null>(null);
   const [selectedResource, setSelectedResource] = useState<ResourceNodeDetail | null>(null);
   const [neighbors, setNeighbors] = useState<ResourceGraphNeighborResponse | null>(null);
+  
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingSelection, setIsLoadingSelection] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => setDebouncedSearch(searchText.trim()), 250);
@@ -141,6 +97,7 @@ export function ResourcesClient() {
       ]);
       setReadiness(readinessResponse.data);
       setResources(resourcesResponse.data);
+      setLastUpdated(new Date());
     } catch (loadError) {
       setError(getErrorMessage(loadError));
     } finally {
@@ -196,177 +153,199 @@ export function ResourcesClient() {
     };
   }, [selectedResourceId]);
 
-  const providerCounts = readiness?.providerCounts ?? null;
-  const providerCountRows = useMemo(
-    () => (providerCounts ? PROVIDER_OPTIONS.map((provider) => [provider, providerCounts[provider] ?? 0] as const) : []),
-    [providerCounts],
-  );
-
   return (
-    <div className="space-y-6 animate-fade-in">
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-blue-700">
-              <Boxes className="h-3.5 w-3.5" />
-              Tenant-scoped read model
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900 lg:text-3xl">Resource Graph</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-              Resource Graph is built from resources AutoOps has safely discovered. It does not grant provider access and does not execute actions.
-            </p>
+    <div className="flex flex-col min-h-full bg-slate-50">
+      <WorkspaceHeader
+        title="Resources Workspace"
+        purpose="Tenant-scoped read model of infrastructure discovered by integrations."
+        icon={<Boxes className="h-5 w-5" />}
+        breadcrumbs={[{ label: 'Command', href: '/dashboard' }, { label: 'Resources' }]}
+        statusSummary={
+          <div className="flex items-center gap-3">
+             <span className="text-xs text-slate-500">Updated {lastUpdated ? lastUpdated.toLocaleTimeString() : 'Never'}</span>
+             <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void loadResources()}
+                disabled={isLoading || isRefreshing}
+                className="bg-white"
+              >
+                <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
+                Refresh
+              </Button>
           </div>
-          <Button
-            type="button"
-            onClick={() => void loadResources()}
-            disabled={isLoading || isRefreshing}
-            className="rounded-full bg-white text-slate-950 hover:bg-slate-200"
-          >
-            <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-            Refresh
-          </Button>
-        </div>
-      </section>
+        }
+      />
 
-      {error ? <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</div> : null}
-
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {[
-          ['Status', readiness?.status ?? 'UNKNOWN'],
-          ['Resources', readiness?.totalResources ?? 0],
-          ['Edges', readiness?.totalEdges ?? 0],
-          ['Stale', readiness?.staleCount ?? 0],
-          ['Archived', readiness?.archivedCount ?? 0],
-        ].map(([label, value]) => (
-          <div key={label} className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-            <p className="mt-2 text-xl font-semibold text-slate-950">{isLoading ? '...' : value}</p>
+      <div className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
+        {error && (
+          <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            {error}
           </div>
-        ))}
-      </section>
+        )}
 
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Provider discovery counts</h2>
-            <p className="mt-1 text-sm text-slate-600">Blocked organizations do not receive shared provider graph data.</p>
-          </div>
-          <span className={`w-fit rounded-full border px-3 py-1.5 text-xs font-medium ${statusTone(readiness?.status)}`}>
-            Last seen {formatDate(readiness?.lastSeenAt)}
-          </span>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-          {providerCountRows.map(([provider, count]) => (
-            <div key={provider} className="rounded-md border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">{labelize(provider)}</p>
-              <p className="mt-1 text-lg font-semibold text-slate-950">{count}</p>
+        {/* Stats Row */}
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+           {[
+            ['Status', readiness?.status ?? 'UNKNOWN'],
+            ['Resources', readiness?.totalResources ?? 0],
+            ['Edges', readiness?.totalEdges ?? 0],
+            ['Stale', readiness?.staleCount ?? 0],
+            ['Archived', readiness?.archivedCount ?? 0],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm text-center">
+              <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
+              <p className="mt-2 text-2xl font-semibold text-slate-900">{isLoading ? '...' : value}</p>
             </div>
           ))}
         </div>
-      </section>
 
-      <section className="rounded-md border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 p-5">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-            <div>
-              <h2 className="text-base font-semibold text-slate-900">Resources</h2>
-              <p className="mt-1 text-sm text-slate-600">Search and inspect tenant-owned resource nodes. No actions are available from this view.</p>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[10rem_12rem_10rem_18rem]">
-              <select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value as ResourceProvider | 'ALL')} className="h-10 rounded border border-slate-300 bg-white px-3 text-sm">
-                <option value="ALL">All providers</option>
-                {PROVIDER_OPTIONS.map((provider) => <option key={provider} value={provider}>{labelize(provider)}</option>)}
-              </select>
-              <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value as ResourceKind | 'ALL')} className="h-10 rounded border border-slate-300 bg-white px-3 text-sm">
-                <option value="ALL">All kinds</option>
-                {KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{labelize(kind)}</option>)}
-              </select>
-              <select value={archivedFilter} onChange={(event) => setArchivedFilter(event.target.value as ArchivedFilter)} className="h-10 rounded border border-slate-300 bg-white px-3 text-sm">
-                <option value="active">Active</option>
-                <option value="archived">Archived</option>
-                <option value="all">All</option>
-              </select>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                <Input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search name or URN" className="h-10 rounded border-slate-300 pl-9" />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 flex flex-col gap-6">
+            
+            {/* Filters */}
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="relative flex-1 max-w-sm">
+                <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Input
+                  placeholder="Search name or URN..."
+                  className="pl-9 bg-white border-slate-200 focus:border-blue-500 h-9"
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                 <select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value as ResourceProvider | 'ALL')} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-blue-500">
+                  <option value="ALL">All providers</option>
+                  {PROVIDER_OPTIONS.map((provider) => <option key={provider} value={provider}>{labelize(provider)}</option>)}
+                </select>
+                <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value as ResourceKind | 'ALL')} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-blue-500">
+                  <option value="ALL">All kinds</option>
+                  {KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{labelize(kind)}</option>)}
+                </select>
+                <select value={archivedFilter} onChange={(event) => setArchivedFilter(event.target.value as ArchivedFilter)} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-blue-500">
+                  <option value="active">Active</option>
+                  <option value="archived">Archived</option>
+                  <option value="all">All</option>
+                </select>
               </div>
             </div>
-          </div>
-        </div>
 
-        <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_26rem]">
-          <div className="overflow-x-auto">
-            <div className="grid min-w-[56rem] grid-cols-[10rem_12rem_13rem_1fr_10rem] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <span>Name</span>
-              <span>Provider</span>
-              <span>Kind</span>
-              <span>URN</span>
-              <span>Last seen</span>
-            </div>
-            {isLoading ? (
-              <div className="p-8 text-center text-sm text-slate-600">Loading resources...</div>
-            ) : resourceItems.length === 0 ? (
-              <div className="p-8 text-center text-sm text-slate-600">
-                No Resource Graph nodes found for this organization and filter set. Provider inventory may be blocked by org policy or not yet discovered.
-              </div>
-            ) : (
-              resourceItems.map((resource) => (
-                <ResourceRow key={resource.id} resource={resource} selected={resource.id === selectedResourceId} onSelect={setSelectedResourceId} />
-              ))
-            )}
-          </div>
-
-          <aside className="border-t border-slate-200 bg-slate-50 p-5 xl:border-l xl:border-t-0">
-            {!selectedResourceId ? (
-              <div className="rounded-md border border-dashed border-slate-300 bg-white p-5 text-sm text-slate-600">
-                Select a resource to inspect safe metadata and graph neighbors.
-              </div>
-            ) : isLoadingSelection ? (
-              <div className="rounded-md border border-slate-200 bg-white p-5 text-sm text-slate-600">Loading resource detail...</div>
-            ) : selectionError ? (
-              <div className="rounded-md border border-rose-200 bg-rose-50 p-5 text-sm text-rose-800">{selectionError}</div>
-            ) : selectedResource ? (
-              <div className="space-y-5">
-                <div className="rounded-md border border-slate-200 bg-white p-4">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Selected resource</p>
-                  <h3 className="mt-2 text-lg font-semibold text-slate-950">{selectedResource.displayName}</h3>
-                  <p className="mt-1 break-all font-mono text-xs text-slate-500">{selectedResource.urn}</p>
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                    <span className="rounded border border-slate-200 bg-slate-50 px-3 py-2">Incoming {selectedResource.incomingEdgeCount}</span>
-                    <span className="rounded border border-slate-200 bg-slate-50 px-3 py-2">Outgoing {selectedResource.outgoingEdgeCount}</span>
+            <WorkQueue
+              title="Resource Inventory"
+              description="Tenant-owned resources discovered by integrations."
+              isEmpty={resourceItems.length === 0}
+              emptyState={
+                <EmptyState 
+                  title="No resources found" 
+                  description="No resources match the current filter criteria." 
+                  icon={<Database className="text-slate-400" />} 
+                  variant="compact" 
+                />
+              }
+            >
+              {resourceItems.map((resource) => (
+                <button
+                  key={resource.id}
+                  onClick={() => setSelectedResourceId(resource.id)}
+                  className={cn(
+                    "flex w-full items-center justify-between p-4 text-left transition border-b border-slate-100 last:border-0",
+                    selectedResourceId === resource.id ? "bg-blue-50/50" : "hover:bg-slate-50/50"
+                  )}
+                >
+                  <div className="flex-1 min-w-0 pr-4">
+                     <div className="flex items-center gap-2 mb-1.5">
+                       <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded uppercase tracking-wider">
+                         {labelize(resource.provider)}
+                       </span>
+                       <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded uppercase tracking-wider">
+                         {labelize(resource.kind)}
+                       </span>
+                     </div>
+                     <h4 className="text-sm font-semibold text-slate-900 truncate">{resource.displayName}</h4>
+                     <p className="mt-1 text-xs text-slate-500 truncate font-mono">{resource.urn}</p>
                   </div>
-                </div>
-                <div className="rounded-md border border-slate-200 bg-white p-4">
-                  <h4 className="text-sm font-semibold text-slate-900">Safe metadata</h4>
-                  <div className="mt-3"><MetadataList metadata={selectedResource.metadataSummary} /></div>
-                </div>
-                <div className="rounded-md border border-slate-200 bg-white p-4">
-                  <div className="flex items-center gap-2">
-                    <Link2 className="h-4 w-4 text-blue-600" />
-                    <h4 className="text-sm font-semibold text-slate-900">Neighbors</h4>
+                  <div className="shrink-0 text-right">
+                     <span className="text-xs text-slate-400">{formatDate(resource.lastSeenAt)}</span>
                   </div>
-                  <div className="mt-3 space-y-2">
-                    {neighbors && neighbors.incoming.length + neighbors.outgoing.length > 0 ? (
-                      [...neighbors.incoming, ...neighbors.outgoing].slice(0, 12).map((edge) => (
-                        <div key={edge.id} className="rounded border border-slate-200 bg-slate-50 p-3 text-sm">
-                          <p className="font-medium text-slate-900">{labelize(edge.type)}</p>
-                          <p className="mt-1 truncate text-xs text-slate-500">
-                            {edge.source?.displayName ?? edge.sourceNodeId} {'->'} {edge.target?.displayName ?? edge.targetNodeId}
-                          </p>
+                </button>
+              ))}
+            </WorkQueue>
+          </div>
+
+          <div className="flex flex-col gap-6">
+             {selectedResourceId ? (
+               <EvidencePanel title="Resource Inspector" icon={<Boxes className="h-4 w-4" />}>
+                  {isLoadingSelection ? (
+                    <div className="text-sm text-slate-500 text-center py-8">Loading...</div>
+                  ) : selectionError ? (
+                     <div className="text-sm text-rose-600 bg-rose-50 p-3 rounded">{selectionError}</div>
+                  ) : selectedResource ? (
+                    <div className="space-y-6">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-900 leading-tight">{selectedResource.displayName}</h3>
+                        <p className="mt-1 font-mono text-xs text-slate-500 break-all">{selectedResource.urn}</p>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="rounded border border-slate-100 bg-slate-50 p-3">
+                          <span className="block text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1">Incoming Links</span>
+                          <span className="font-medium text-slate-900">{selectedResource.incomingEdgeCount}</span>
                         </div>
-                      ))
-                    ) : (
-                      <p className="text-sm text-slate-500">No active neighbors recorded for this resource.</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </aside>
+                        <div className="rounded border border-slate-100 bg-slate-50 p-3">
+                          <span className="block text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1">Outgoing Links</span>
+                          <span className="font-medium text-slate-900">{selectedResource.outgoingEdgeCount}</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                         <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Safe Metadata</h4>
+                         <div className="rounded border border-slate-100 bg-slate-50 p-3 space-y-2 text-sm">
+                            {Object.entries(selectedResource.metadataSummary || {}).length > 0 ? (
+                              Object.entries(selectedResource.metadataSummary).map(([key, value]) => (
+                                <div key={key} className="flex flex-col">
+                                  <span className="text-xs font-medium text-slate-500">{key}</span>
+                                  <span className="text-slate-900 break-all">{String(value)}</span>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-xs text-slate-500">No safe metadata stored.</p>
+                            )}
+                         </div>
+                      </div>
+
+                      <div className="space-y-3">
+                         <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                           <Link2 className="h-3.5 w-3.5" /> Neighbors
+                         </h4>
+                         <div className="space-y-2">
+                            {neighbors && (neighbors.incoming.length > 0 || neighbors.outgoing.length > 0) ? (
+                              [...neighbors.incoming, ...neighbors.outgoing].slice(0, 12).map((edge) => (
+                                <div key={edge.id} className="rounded border border-slate-100 bg-slate-50 p-3 text-sm">
+                                  <p className="font-medium text-slate-900 text-xs uppercase tracking-wider">{labelize(edge.type)}</p>
+                                  <p className="mt-1 truncate text-xs text-slate-600">
+                                    {edge.source?.displayName ?? edge.sourceNodeId} → {edge.target?.displayName ?? edge.targetNodeId}
+                                  </p>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-xs text-slate-500">No active neighbors recorded.</p>
+                            )}
+                         </div>
+                      </div>
+                    </div>
+                  ) : null}
+               </EvidencePanel>
+             ) : (
+               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500 h-full flex flex-col items-center justify-center min-h-[300px]">
+                 <Boxes className="h-8 w-8 mb-4 text-slate-300" />
+                 <p className="text-sm">Select a resource to inspect safe metadata and graph neighbors.</p>
+               </div>
+             )}
+          </div>
         </div>
-      </section>
+      </div>
     </div>
   );
 }
-
-

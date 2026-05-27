@@ -16,19 +16,20 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
+  FolderDot
 } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
+import { WorkQueue } from '@/components/layout/work-queue';
+import { EmptyState } from '@/components/layout/empty-state';
+import { EvidencePanel } from '@/components/layout/evidence-panel';
+import { cn } from '@/lib/cn';
 
-type ProjectsResponse = {
-  data: Project[];
-};
-
-type ProjectResponse = {
-  data: Project;
-};
+type ProjectsResponse = { data: Project[] };
+type ProjectResponse = { data: Project };
 
 type ProjectFormState = {
   name: string;
@@ -72,63 +73,6 @@ function getErrorMessage(error: unknown): string {
   return 'Something went wrong while loading projects.';
 }
 
-function EmptyState({ onCreate }: { onCreate: () => void }) {
-  return (
-    <div className="rounded-lg border border-dashed border-border bg-background/30 p-8 text-center">
-      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-lg bg-primary/10 text-primary">
-        <Boxes className="h-5 w-5" />
-      </div>
-      <p className="mt-4 text-sm font-medium text-foreground">No projects found</p>
-      <p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">
-        Create the first real project record to connect service ownership, repository metadata,
-        and future environment/deployment workflows.
-      </p>
-      <Button className="mt-5" type="button" onClick={onCreate}>
-        <Plus className="h-4 w-4" />
-        New Project
-      </Button>
-    </div>
-  );
-}
-
-function ProjectCard({ project }: { project: Project }) {
-  return (
-    <article className="rounded-md border border-slate-200 bg-white px-4 py-3 shadow-sm transition hover:border-[#0972d3]/40 hover:bg-[#f2f8fd]">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-base font-semibold text-foreground">{project.name}</h3>
-            <span className="rounded-md border border-border bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-              {project.visibility}
-            </span>
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">/{project.slug}</p>
-          {project.description ? (
-            <p className="mt-3 max-w-3xl text-sm text-foreground/85">{project.description}</p>
-          ) : (
-            <p className="mt-3 text-sm text-muted-foreground">No description provided.</p>
-          )}
-        </div>
-
-        <Button asChild type="button" variant="outline" className="border-slate-200 bg-white hover:bg-slate-50">
-          <Link href={`/dashboard/projects/${project.id}`}>View Details</Link>
-        </Button>
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-[#5f6b7a]">
-        <span className="inline-flex items-center gap-1.5"><GitBranch className="h-3.5 w-3.5" />{project.repositoryUrl ? 'Repository connected' : 'Repository not connected'}</span>
-        <span className="inline-flex items-center gap-1.5"><Code2 className="h-3.5 w-3.5" />Branch {project.defaultBranch}</span>
-        <span className="inline-flex items-center gap-1.5"><CalendarClock className="h-3.5 w-3.5" />Created {formatDate(project.createdAt)}</span>
-      </div>
-      {project.repositoryUrl ? (
-        <a href={project.repositoryUrl} target="_blank" rel="noreferrer" className="mt-3 flex min-w-0 items-center gap-2 text-xs font-semibold text-[#0972d3] hover:underline">
-          <span className="truncate">{project.repositoryUrl}</span>
-          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-        </a>
-      ) : null}    </article>
-  );
-}
-
 export function ProjectsClient() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -140,19 +84,17 @@ export function ProjectsClient() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [slugEdited, setSlugEdited] = useState(false);
   const [form, setForm] = useState<ProjectFormState>(initialFormState);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const loadProjects = useCallback(async (mode: 'initial' | 'refresh' = 'refresh') => {
-    if (mode === 'initial') {
-      setIsLoading(true);
-    } else {
-      setIsRefreshing(true);
-    }
-
+    if (mode === 'initial') setIsLoading(true);
+    else setIsRefreshing(true);
     setLoadError(null);
 
     try {
       const response = await api.get<ProjectsResponse>('/v1/projects');
       setProjects(response.data);
+      setLastUpdated(new Date());
     } catch (error) {
       setLoadError(getErrorMessage(error));
     } finally {
@@ -214,213 +156,176 @@ export function ProjectsClient() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="pointer-events-none absolute inset-0 bg-grid opacity-40" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-primary">Project Inventory</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Projects</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-              Deployable services and repositories backed by the real Projects API. Environment
-              and deployment controls stay explicitly tied to real backend contracts.
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
+    <div className="flex flex-col min-h-full bg-slate-50">
+      <WorkspaceHeader
+        title="Projects Workspace"
+        purpose="Delivery projects, service ownership, and deployment tracking."
+        icon={<FolderDot className="h-5 w-5" />}
+        breadcrumbs={[{ label: 'Command', href: '/dashboard' }, { label: 'Projects' }]}
+        statusSummary={
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-slate-500">Updated {lastUpdated ? lastUpdated.toLocaleTimeString() : 'Never'}</span>
             <Button
               type="button"
               variant="outline"
+              size="sm"
               onClick={() => void loadProjects()}
               disabled={isLoading || isRefreshing}
-              className="border-slate-200 bg-white hover:bg-slate-50"
+              className="bg-white"
             >
-              <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+              <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
               Refresh
             </Button>
             <Button
               type="button"
-              onClick={() => setShowCreateForm((value) => !value)}
-              className="bg-gradient-to-r from-blue-600 to-violet-600 shadow-lg shadow-blue-600/20 hover:from-blue-500 hover:to-violet-500"
+              size="sm"
+              onClick={() => setShowCreateForm(!showCreateForm)}
+              className="bg-slate-900 text-white hover:bg-slate-800"
             >
-              <Plus className="h-4 w-4" />
+              <Plus className="h-4 w-4 mr-2" />
               New Project
             </Button>
           </div>
-        </div>
-      </section>
+        }
+      />
 
-      {successMessage ? (
-        <div className="flex items-center gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700">
-          <CheckCircle2 className="h-4 w-4" />
-          {successMessage}
-        </div>
-      ) : null}
-
-      <div className="grid overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm md:grid-cols-2">
-        <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r">
-          <p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Active projects</p>
-          <p className="mt-2 text-2xl font-bold text-[#16191f]">{isLoading ? '...' : String(projects.length)}</p>
-          <p className="mt-1 text-sm text-[#5f6b7a]">Real project records from the API.</p>
-        </div>
-        <div className="p-4">
-          <p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Connected repositories</p>
-          <p className="mt-2 text-2xl font-bold text-[#16191f]">{isLoading ? '...' : String(repositoryCount)}</p>
-          <p className="mt-1 text-sm text-[#5f6b7a]">Projects with repository metadata present.</p>
-        </div>
-      </div>
-      {showCreateForm ? (
-        <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">Create Project</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Creates a real project with POST /api/v1/projects using the shared project schema.
-              </p>
-            </div>
-            <ShieldCheck className="h-5 w-5 text-primary" />
+      <div className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
+        {loadError && (
+          <div className="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+            {loadError}
           </div>
-
-          <form className="mt-5 space-y-5" onSubmit={handleCreateProject}>
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="project-name">Name</Label>
-                <Input
-                  id="project-name"
-                  required
-                  minLength={2}
-                  maxLength={120}
-                  value={form.name}
-                  placeholder="Payments API"
-                  onChange={(event) => updateName(event.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="project-slug">Slug</Label>
-                <Input
-                  id="project-slug"
-                  required
-                  value={form.slug}
-                  placeholder="payments-api"
-                  onChange={(event) => updateSlug(event.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="repository-url">Repository URL</Label>
-                <Input
-                  id="repository-url"
-                  type="url"
-                  value={form.repositoryUrl}
-                  placeholder="https://github.com/org/service"
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, repositoryUrl: event.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="default-branch">Default Branch</Label>
-                <Input
-                  id="default-branch"
-                  maxLength={120}
-                  value={form.defaultBranch}
-                  placeholder="main"
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, defaultBranch: event.target.value }))
-                  }
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="project-description">Description</Label>
-              <textarea
-                id="project-description"
-                maxLength={2000}
-                value={form.description}
-                placeholder="Service purpose, ownership, or operational context"
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, description: event.target.value }))
-                }
-                className="min-h-24 w-full rounded-md border border-input bg-input px-3 py-2 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus-ring disabled:cursor-not-allowed disabled:opacity-50"
-              />
-            </div>
-
-            {createError ? (
-              <div className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                <AlertCircle className="h-4 w-4" />
-                {createError}
-              </div>
-            ) : null}
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="submit" disabled={isCreating}>
-                {isCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                {isCreating ? 'Creating...' : 'Create Project'}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => {
-                  setShowCreateForm(false);
-                  setCreateError(null);
-                }}
-              >
-                Cancel
-              </Button>
-            </div>
-          </form>
-        </section>
-      ) : null}
-
-      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Project List</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Real records returned by GET /api/v1/projects.
-            </p>
+        )}
+        {successMessage && (
+          <div className="flex items-center gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700">
+            <CheckCircle2 className="h-4 w-4" />
+            {successMessage}
           </div>
-          <Boxes className="h-5 w-5 text-primary" />
+        )}
+
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm text-center">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Active Projects</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900">{isLoading ? '...' : projects.length}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm text-center">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Connected Repos</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900">{isLoading ? '...' : repositoryCount}</p>
+          </div>
         </div>
 
-        <div className="mt-5">
-          {isLoading ? (
-            <div className="flex items-center justify-center gap-3 rounded-lg border border-border bg-background/30 p-8 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              Loading projects from the API...
-            </div>
-          ) : loadError ? (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-5">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
-                <div>
-                  <p className="text-sm font-medium text-destructive">
-                    {loadError.includes('Session expired') ? 'Session expired' : 'Unable to load projects'}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">{loadError}</p>
-                  <Button
-                    className="mt-4"
-                    type="button"
-                    variant="outline"
-                    onClick={() => void loadProjects()}
-                    disabled={isRefreshing}
-                  >
-                    <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-                    Try Again
-                  </Button>
+        {showCreateForm && (
+          <EvidencePanel title="Create Project" icon={<ShieldCheck className="h-4 w-4 text-blue-600" />}>
+             <form className="space-y-5" onSubmit={handleCreateProject}>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 text-sm">
+                <div className="space-y-2">
+                  <Label htmlFor="project-name">Name</Label>
+                  <Input id="project-name" required minLength={2} maxLength={120} value={form.name} placeholder="Payments API" onChange={(event) => updateName(event.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="project-slug">Slug</Label>
+                  <Input id="project-slug" required value={form.slug} placeholder="payments-api" onChange={(event) => updateSlug(event.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="repository-url">Repository URL</Label>
+                  <Input id="repository-url" type="url" value={form.repositoryUrl} placeholder="https://github.com/org/service" onChange={(event) => setForm((current) => ({ ...current, repositoryUrl: event.target.value }))} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="default-branch">Default Branch</Label>
+                  <Input id="default-branch" maxLength={120} value={form.defaultBranch} placeholder="main" onChange={(event) => setForm((current) => ({ ...current, defaultBranch: event.target.value }))} />
                 </div>
               </div>
+
+              <div className="space-y-2 text-sm">
+                <Label htmlFor="project-description">Description</Label>
+                <textarea
+                  id="project-description"
+                  maxLength={2000}
+                  value={form.description}
+                  placeholder="Service purpose, ownership, or operational context"
+                  onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+                  className="w-full min-h-24 rounded-md border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              {createError && (
+                <div className="flex items-center gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+                  <AlertCircle className="h-4 w-4" />
+                  {createError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+                 <Button type="button" variant="outline" onClick={() => { setShowCreateForm(false); setCreateError(null); }}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isCreating} className="bg-slate-900 text-white hover:bg-slate-800">
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+                  {isCreating ? 'Creating...' : 'Create Project'}
+                </Button>
+              </div>
+            </form>
+          </EvidencePanel>
+        )}
+
+        <WorkQueue
+          title="Project Inventory"
+          description="Deployable services and repositories backed by real API records."
+          isEmpty={projects.length === 0}
+          emptyState={
+            <EmptyState 
+              title="No projects found" 
+              description="Create the first project record to connect service ownership, repository metadata, and future environment workflows." 
+              icon={<Boxes className="text-slate-400" />} 
+              variant="compact" 
+            />
+          }
+        >
+          {projects.map((project) => (
+            <div key={project.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-5 border-b border-slate-100 last:border-0 hover:bg-slate-50/50 transition">
+              <div className="flex-1 min-w-0 pr-4">
+                 <div className="flex items-center gap-3 mb-1">
+                    <h3 className="text-base font-semibold text-slate-900 truncate">{project.name}</h3>
+                    <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500 uppercase tracking-wider border border-slate-200">
+                      {project.visibility}
+                    </span>
+                 </div>
+                 <p className="text-xs text-slate-500 mb-3 font-mono">/{project.slug}</p>
+                 <p className="text-sm text-slate-600 line-clamp-2 max-w-3xl mb-4">
+                   {project.description || 'No description provided.'}
+                 </p>
+                 
+                 <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                   <span className="flex items-center gap-1.5">
+                     <GitBranch className="h-3.5 w-3.5" />
+                     {project.repositoryUrl ? 'Repo connected' : 'No repo'}
+                   </span>
+                   <span className="flex items-center gap-1.5">
+                     <Code2 className="h-3.5 w-3.5" />
+                     Branch {project.defaultBranch}
+                   </span>
+                   <span className="flex items-center gap-1.5">
+                     <CalendarClock className="h-3.5 w-3.5" />
+                     Created {formatDate(project.createdAt)}
+                   </span>
+                 </div>
+
+                 {project.repositoryUrl && (
+                    <a href={project.repositoryUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800">
+                      <span className="truncate">{project.repositoryUrl}</span>
+                      <ExternalLink className="h-3 w-3 shrink-0" />
+                    </a>
+                  )}
+              </div>
+              <div className="mt-4 sm:mt-0 shrink-0">
+                <Button asChild variant="outline" size="sm" className="bg-white">
+                  <Link href={`/dashboard/projects/${project.id}`}>View Details</Link>
+                </Button>
+              </div>
             </div>
-          ) : projects.length === 0 ? (
-            <EmptyState onCreate={() => setShowCreateForm(true)} />
-          ) : (
-            <div className="space-y-3">
-              {projects.map((project) => (
-                <ProjectCard key={project.id} project={project} />
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
+          ))}
+        </WorkQueue>
+
+      </div>
     </div>
   );
 }

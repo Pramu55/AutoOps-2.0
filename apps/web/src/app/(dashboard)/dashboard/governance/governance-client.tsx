@@ -11,9 +11,14 @@ import type {
   OperationRiskLevel,
   OperationStatus,
 } from '@autoops/types';
-import { AlertTriangle, Download, ExternalLink, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Download, ExternalLink, RefreshCw, ShieldCheck, Scale, FileText } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
+import { EvidencePanel } from '@/components/layout/evidence-panel';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { cn } from '@/lib/cn';
+import { EmptyState } from '@/components/layout/empty-state';
 
 type GovernanceApiResponse = { data: GovernanceEvidenceResponse };
 type GovernanceExportApiResponse = { data: GovernanceExportResponse };
@@ -59,32 +64,6 @@ function actorLabel(actor: GovernanceEvidenceItem['requestedBy']): string {
   return actor.name ?? actor.email ?? actor.id;
 }
 
-function tone(value: string): string {
-  if (['SUCCEEDED', 'APPROVED', 'LOW', 'RESOLVED', 'NOT_REQUIRED'].includes(value)) {
-    return 'border-emerald-300 bg-emerald-50 text-emerald-700';
-  }
-  if (['FAILED', 'REJECTED', 'HIGH', 'OPEN', 'CANCELLED'].includes(value)) {
-    return 'border-rose-300 bg-rose-50 text-rose-700';
-  }
-  if (['PENDING', 'PENDING_APPROVAL', 'MEDIUM', 'RUNNING', 'QUEUED', 'ACKNOWLEDGED'].includes(value)) {
-    return 'border-amber-300 bg-amber-50 text-amber-800';
-  }
-  return 'border-slate-300 bg-slate-50 text-slate-700';
-}
-
-function Badge({ value }: { value: string }) {
-  return <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${tone(value)}`}>{value}</span>;
-}
-
-function SummaryCard({ label, value, helper }: { label: string; value: string | number; helper: string }) {
-  return (
-    <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-slate-950">{value}</p>
-      <p className="mt-1 text-xs text-slate-500">{helper}</p>
-    </section>
-  );
-}
 
 export function GovernanceClient() {
   const [data, setData] = useState<GovernanceEvidenceResponse | null>(null);
@@ -93,6 +72,7 @@ export function GovernanceClient() {
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  
   const [provider, setProvider] = useState<(typeof PROVIDERS)[number]>('ALL');
   const [status, setStatus] = useState<(typeof STATUSES)[number]>('ALL');
   const [risk, setRisk] = useState<(typeof RISKS)[number]>('ALL');
@@ -154,162 +134,226 @@ export function GovernanceClient() {
   const evidence = data?.evidence ?? [];
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-blue-700">
-              <ShieldCheck className="h-4 w-4" />
-              AutoOps &gt; Governance
-            </div>
-            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950 lg:text-3xl">Governance Center</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-              Review audit-style evidence for controlled operations without exposing raw provider metadata, secrets, or unsafe payloads.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" onClick={() => void exportEvidence()} disabled={isExporting} className="rounded-full border-slate-200 bg-slate-50">
-              <Download className="h-4 w-4" />
-              {isExporting ? 'Exporting...' : 'Export JSON'}
-            </Button>
-            <Button type="button" onClick={() => void loadGovernance()} disabled={isRefreshing} className="rounded-full bg-white text-slate-950 hover:bg-slate-200">
-              <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-              Refresh
-            </Button>
-          </div>
-        </div>
-      </section>
-
-      {error ? (
-        <section className="rounded-md border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800">{error}</section>
-      ) : null}
-      {exportError ? (
-        <section className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">{exportError}</section>
-      ) : null}
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
-        <SummaryCard label="Evidence rows" value={summary?.total ?? 0} helper="Filtered operation evidence" />
-        <SummaryCard label="Pending approvals" value={summary?.pendingApprovals ?? 0} helper="Awaiting decision" />
-        <SummaryCard label="Rejected" value={summary?.rejected ?? 0} helper="Denied before execution" />
-        <SummaryCard label="Failed" value={summary?.failed ?? 0} helper="Worker/provider failures" />
-        <SummaryCard label="Incident linked" value={summary?.incidentsLinked ?? 0} helper="Failure response evidence" />
-        <SummaryCard label="Median duration" value={formatDuration(summary?.medianExecutionDurationMs ?? null)} helper="Execution window" />
-      </div>
-
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search target, requester, incident, or operation ID"
-            className="min-h-10 flex-1 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-          />
-          {[
-            ['Provider', provider, setProvider, PROVIDERS],
-            ['Status', status, setStatus, STATUSES],
-            ['Risk', risk, setRisk, RISKS],
-            ['Approval', approvalStatus, setApprovalStatus, APPROVALS],
-          ].map(([label, value, setter, options]) => (
-            <label key={label as string} className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              {label as string}
-              <select
-                value={value as string}
-                onChange={(event) => (setter as (next: string) => void)(event.target.value)}
-                className="mt-1 block min-h-10 rounded-md border border-slate-300 bg-white px-3 text-sm font-normal normal-case tracking-normal text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+    <div className="flex flex-col min-h-full bg-slate-50">
+      <WorkspaceHeader
+        title="Governance Workspace"
+        purpose="Audit evidence, policy decisions, and tenant-scoped compliance."
+        icon={<Scale className="h-5 w-5" />}
+        breadcrumbs={[{ label: 'Command', href: '/dashboard' }, { label: 'Governance' }]}
+        statusSummary={
+          <div className="flex items-center gap-3">
+             <span className="text-xs text-slate-500">Updated {data?.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : 'Never'}</span>
+             <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void loadGovernance()}
+                disabled={isLoading || isRefreshing}
+                className="bg-white"
               >
-                {(options as string[]).map((option) => (
-                  <option key={option} value={option}>
-                    {option === 'ALL' ? 'All' : option}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-950">Governance evidence</h2>
-            <p className="mt-1 text-sm text-slate-600">
-              Tenant-scoped requester, policy, approval, worker, and incident evidence for controlled operations.
-            </p>
+                <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
+                Refresh
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void exportEvidence()}
+                disabled={isExporting}
+                className="bg-slate-900 text-white hover:bg-slate-800"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                {isExporting ? 'Exporting...' : 'Export JSON'}
+              </Button>
           </div>
-          <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700">
-            Generated {formatDate(data?.generatedAt ?? null)}
-          </span>
+        }
+      />
+
+      <div className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] mx-auto w-full space-y-6">
+        
+        {error && (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+            {error}
+          </div>
+        )}
+        
+        {exportError && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            {exportError}
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-6">
+           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm text-center">
+             <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Evidence Rows</p>
+             <p className="text-xl font-semibold text-slate-900">{summary?.total ?? 0}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm text-center">
+             <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Pending Approvals</p>
+             <p className="text-xl font-semibold text-blue-600">{summary?.pendingApprovals ?? 0}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm text-center">
+             <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Rejected</p>
+             <p className="text-xl font-semibold text-rose-600">{summary?.rejected ?? 0}</p>
+          </div>
+           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm text-center">
+             <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Failed</p>
+             <p className="text-xl font-semibold text-amber-600">{summary?.failed ?? 0}</p>
+          </div>
+           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm text-center">
+             <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Incident Linked</p>
+             <p className="text-xl font-semibold text-purple-600">{summary?.incidentsLinked ?? 0}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm text-center">
+             <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Median Duration</p>
+             <p className="text-xl font-semibold text-slate-900">{formatDuration(summary?.medianExecutionDurationMs ?? null)}</p>
+          </div>
         </div>
 
-        <div className="mt-5 overflow-x-auto">
-          {isLoading ? (
-            <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-600">
-              Loading governance evidence...
-            </div>
-          ) : evidence.length === 0 ? (
-            <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-600">
-              No governance evidence matches the current filters.
-            </div>
-          ) : (
-            <table className="min-w-[1120px] w-full border-separate border-spacing-0 text-left text-sm">
-              <thead>
-                <tr className="text-xs uppercase tracking-wide text-slate-500">
-                  {['Time', 'Provider', 'Operation', 'Target', 'Requested by', 'Risk', 'Approval', 'Status', 'Incident', 'Details'].map((header) => (
-                    <th key={header} className="border-b border-slate-200 bg-slate-50 px-3 py-3 font-semibold">
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {evidence.map((item) => (
-                  <tr key={item.operationId} className="align-top hover:bg-blue-50/40">
-                    <td className="border-b border-slate-100 px-3 py-4 text-slate-700">{formatDate(item.requestedAt)}</td>
-                    <td className="border-b border-slate-100 px-3 py-4 text-slate-700">{item.provider}</td>
-                    <td className="border-b border-slate-100 px-3 py-4">
-                      <p className="font-medium text-slate-950">{item.title}</p>
-                      <p className="mt-1 font-mono text-xs text-slate-500">{item.operationId.slice(0, 8)}</p>
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-4 text-slate-700">{item.targetDisplayName ?? '-'}</td>
-                    <td className="border-b border-slate-100 px-3 py-4 text-slate-700">{actorLabel(item.requestedBy)}</td>
-                    <td className="border-b border-slate-100 px-3 py-4"><Badge value={item.policy.riskLevel} /></td>
-                    <td className="border-b border-slate-100 px-3 py-4">
-                      <Badge value={item.policy.approvalStatus} />
-                      {item.policy.policyReason ? <p className="mt-2 max-w-72 text-xs text-slate-500">{item.policy.policyReason}</p> : null}
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-4"><Badge value={item.status} /></td>
-                    <td className="border-b border-slate-100 px-3 py-4">
-                      {item.incident ? (
-                        <Link className="inline-flex items-center gap-1 text-blue-700 hover:underline" href={`/dashboard/incidents/${item.incident.id}`}>
-                          {item.incident.status}
-                          <ExternalLink className="h-3 w-3" />
-                        </Link>
-                      ) : (
-                        <span className="text-slate-500">-</span>
-                      )}
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-4">
-                      <Link className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100" href={`/dashboard/operations/${item.operationId}`}>
-                        View
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </section>
+        <EvidencePanel
+           title="Audit Log Filters"
+           icon={<FileText className="h-4 w-4 text-slate-600" />}
+        >
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center p-2 text-sm">
+             <div className="flex-1">
+               <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search target, requester, incident, or operation ID..."
+                className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder:text-slate-400 text-sm"
+              />
+             </div>
+             <div className="flex flex-wrap gap-3">
+               <select
+                  value={provider}
+                  onChange={(event) => setProvider(event.target.value as any)}
+                  className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="ALL">All Providers</option>
+                  {PROVIDERS.filter(p => p !== 'ALL').map(p => <option key={p} value={p}>{p}</option>)}
+               </select>
+               <select
+                  value={status}
+                  onChange={(event) => setStatus(event.target.value as any)}
+                  className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="ALL">All Statuses</option>
+                  {STATUSES.filter(p => p !== 'ALL').map(p => <option key={p} value={p}>{p.replace('_', ' ')}</option>)}
+               </select>
+                <select
+                  value={risk}
+                  onChange={(event) => setRisk(event.target.value as any)}
+                  className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="ALL">All Risks</option>
+                  {RISKS.filter(p => p !== 'ALL').map(p => <option key={p} value={p}>{p}</option>)}
+               </select>
+                <select
+                  value={approvalStatus}
+                  onChange={(event) => setApprovalStatus(event.target.value as any)}
+                  className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="ALL">All Approvals</option>
+                  {APPROVALS.filter(p => p !== 'ALL').map(p => <option key={p} value={p}>{p.replace('_', ' ')}</option>)}
+               </select>
+             </div>
+          </div>
+        </EvidencePanel>
 
-      <section className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-        <div className="flex gap-3">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>
-            Governance exports are audit-style evidence for review. They intentionally exclude raw operation input, raw provider result objects,
-            stack traces, environment values, tokens, kubeconfig, and secret-like metadata.
-          </p>
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-slate-900">Governance Evidence Log</h3>
+                <p className="text-xs text-slate-500 mt-1">Tenant-scoped requester, policy, approval, worker, and incident evidence.</p>
+              </div>
+            </div>
+            
+            <div className="overflow-x-auto min-h-[400px]">
+              {isLoading ? (
+                 <div className="p-12 text-center flex flex-col items-center">
+                    <RefreshCw className="h-6 w-6 animate-spin text-slate-300 mb-3" />
+                    <p className="text-sm text-slate-500">Loading evidence log...</p>
+                 </div>
+              ) : evidence.length === 0 ? (
+                 <div className="p-12 text-center">
+                    <EmptyState
+                       title="No evidence found"
+                       description="No governance evidence matches the current filters."
+                       icon={<ShieldCheck className="text-slate-300" />}
+                    />
+                 </div>
+              ) : (
+                <table className="w-full text-left text-sm whitespace-nowrap">
+                   <thead>
+                      <tr className="bg-slate-50 border-b border-slate-100 text-xs uppercase tracking-wider text-slate-500">
+                        <th className="px-5 py-3 font-medium">Time</th>
+                        <th className="px-5 py-3 font-medium">Operation</th>
+                        <th className="px-5 py-3 font-medium">Requester</th>
+                        <th className="px-5 py-3 font-medium">Risk / Policy</th>
+                        <th className="px-5 py-3 font-medium">Status</th>
+                        <th className="px-5 py-3 font-medium">Incident</th>
+                        <th className="px-5 py-3 font-medium text-right">Details</th>
+                      </tr>
+                   </thead>
+                   <tbody className="divide-y divide-slate-100">
+                      {evidence.map((item) => (
+                         <tr key={item.operationId} className="hover:bg-slate-50/50 transition-colors">
+                           <td className="px-5 py-4 text-slate-600 text-xs">
+                             {formatDate(item.requestedAt)}
+                           </td>
+                           <td className="px-5 py-4">
+                              <p className="font-semibold text-slate-900 max-w-[200px] truncate" title={item.title}>{item.title}</p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-[10px] font-medium uppercase text-slate-500 border border-slate-200 bg-slate-100 px-1.5 py-0.5 rounded">{item.provider}</span>
+                                <span className="font-mono text-[10px] text-slate-400">{item.operationId.split('-')[0]}</span>
+                              </div>
+                           </td>
+                           <td className="px-5 py-4">
+                              <p className="text-slate-700 font-medium max-w-[150px] truncate" title={actorLabel(item.requestedBy)}>{actorLabel(item.requestedBy)}</p>
+                           </td>
+                           <td className="px-5 py-4">
+                             <div className="flex items-center gap-2 mb-1.5">
+                                <StatusBadge status={item.policy.riskLevel} />
+                                <StatusBadge status={item.policy.approvalStatus} />
+                             </div>
+                             {item.policy.policyReason && (
+                                <p className="text-[10px] text-slate-500 max-w-[200px] truncate" title={item.policy.policyReason}>{item.policy.policyReason}</p>
+                             )}
+                           </td>
+                           <td className="px-5 py-4">
+                              <StatusBadge status={item.status} />
+                           </td>
+                           <td className="px-5 py-4">
+                              {item.incident ? (
+                                <Link className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded" href={`/dashboard/incidents/${item.incident.id}`}>
+                                  {item.incident.status}
+                                  <ExternalLink className="h-3 w-3" />
+                                </Link>
+                              ) : (
+                                <span className="text-slate-300">-</span>
+                              )}
+                           </td>
+                           <td className="px-5 py-4 text-right">
+                              <Button asChild variant="ghost" size="sm" className="h-8">
+                                <Link href={`/dashboard/operations/${item.operationId}`}>Review</Link>
+                              </Button>
+                           </td>
+                         </tr>
+                      ))}
+                   </tbody>
+                </table>
+              )}
+            </div>
         </div>
-      </section>
+
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 flex gap-3 items-start">
+           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+           <p className="leading-relaxed">
+             Governance exports are audit-style evidence for review. They intentionally exclude raw operation input, raw provider result objects,
+             stack traces, environment values, tokens, kubeconfig, and secret-like metadata to preserve tenant isolation and security.
+           </p>
+        </div>
+
+      </div>
     </div>
   );
 }

@@ -4,25 +4,30 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Activity,
-  Bell,
+  AlertTriangle,
+  Boxes,
   ChevronDown,
-  Gauge,
   GitMerge,
   Layers,
-  LayoutDashboard,
+  Network,
+  Server,
   Settings,
+  ShieldCheck,
   Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useWorkspaceStore } from '@/stores/workspace';
 
 const NAV_ITEMS = [
-  { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
+  { href: '/dashboard', label: 'Command', icon: Server },
+  { href: '/dashboard/operations', label: 'Operations', icon: Activity },
+  { href: '/dashboard/incidents', label: 'Incidents', icon: AlertTriangle },
+  { href: '/dashboard/signals', label: 'Signals', icon: Activity },
+  { href: '/dashboard/resources', label: 'Resources', icon: Boxes },
+  { href: '/dashboard/integrations', label: 'Integrations', icon: Network },
   { href: '/dashboard/projects', label: 'Projects', icon: Layers },
   { href: '/dashboard/deployments', label: 'Deployments', icon: GitMerge },
-  { href: '/dashboard/operations', label: 'Operations', icon: Gauge },
-  { href: '/dashboard/observability', label: 'Observability', icon: Activity },
-  { href: '/dashboard/alerts', label: 'Alerts', icon: Bell },
+  { href: '/dashboard/governance', label: 'Governance', icon: ShieldCheck },
 ] as const;
 
 const BOTTOM_ITEMS = [

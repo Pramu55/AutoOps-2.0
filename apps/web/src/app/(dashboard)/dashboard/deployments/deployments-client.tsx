@@ -20,22 +20,17 @@ import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
+import { WorkQueue } from '@/components/layout/work-queue';
+import { EvidencePanel } from '@/components/layout/evidence-panel';
+import { EmptyState } from '@/components/layout/empty-state';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { cn } from '@/lib/cn';
 
-type DeploymentsResponse = {
-  data: Deployment[];
-};
-
-type DeploymentResponse = {
-  data: Deployment;
-};
-
-type ProjectsResponse = {
-  data: Project[];
-};
-
-type EnvironmentsResponse = {
-  data: Environment[];
-};
+type DeploymentsResponse = { data: Deployment[] };
+type DeploymentResponse = { data: Deployment };
+type ProjectsResponse = { data: Project[] };
+type EnvironmentsResponse = { data: Environment[] };
 
 const terminalStatuses = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'ROLLED_BACK']);
 const gitShaPattern = /^[a-f0-9]{7,40}$/i;
@@ -70,46 +65,37 @@ function shortSha(value: string | null): string {
   return value ? value.slice(0, 12) : 'Not provided';
 }
 
-function statusClass(status: string): string {
-  if (status === 'SUCCEEDED') return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700';
-  if (status === 'FAILED') return 'border-destructive/40 bg-destructive/10 text-destructive';
-  if (status === 'RUNNING' || status === 'DEPLOYING' || status === 'BUILDING') {
-    return 'border-primary/25 bg-primary/10 text-primary';
-  }
-  if (status === 'QUEUED') return 'border-amber-500/25 bg-amber-500/10 text-amber-700';
-  return 'border-border bg-muted text-muted-foreground';
-}
-
 export function DeploymentsClient() {
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [environments, setEnvironments] = useState<Environment[]>([]);
+  
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isLoadingEnvironments, setIsLoadingEnvironments] = useState(false);
   const [isTriggering, setIsTriggering] = useState(false);
   const [showTriggerForm, setShowTriggerForm] = useState(false);
+  
   const [loadError, setLoadError] = useState<string | null>(null);
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [triggerSuccess, setTriggerSuccess] = useState<Deployment | null>(null);
+  
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState('');
   const [commitSha, setCommitSha] = useState('');
   const [branch, setBranch] = useState('');
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const loadDeployments = useCallback(async (mode: 'initial' | 'refresh' = 'refresh') => {
-    if (mode === 'initial') {
-      setIsLoading(true);
-    } else {
-      setIsRefreshing(true);
-    }
-
+    if (mode === 'initial') setIsLoading(true);
+    else setIsRefreshing(true);
     setLoadError(null);
 
     try {
       const response = await api.get<DeploymentsResponse>('/v1/deployments');
       setDeployments(response.data);
+      setLastUpdated(new Date());
     } catch (error) {
       setLoadError(getErrorMessage(error));
     } finally {
@@ -125,7 +111,6 @@ export function DeploymentsClient() {
   const loadProjects = useCallback(async () => {
     setIsLoadingProjects(true);
     setTriggerError(null);
-
     try {
       const response = await api.get<ProjectsResponse>('/v1/projects');
       setProjects(response.data);
@@ -148,10 +133,8 @@ export function DeploymentsClient() {
       setSelectedEnvironmentId('');
       return;
     }
-
     setIsLoadingEnvironments(true);
     setTriggerError(null);
-
     try {
       const response = await api.get<EnvironmentsResponse>(`/v1/projects/${projectId}/environments`);
       setEnvironments(response.data);
@@ -173,7 +156,6 @@ export function DeploymentsClient() {
     const active = deployments.filter((deployment) => !terminalStatuses.has(deployment.status)).length;
     const succeeded = deployments.filter((deployment) => deployment.status === 'SUCCEEDED').length;
     const failed = deployments.filter((deployment) => deployment.status === 'FAILED').length;
-
     return { active, succeeded, failed, total: deployments.length };
   }, [deployments]);
 
@@ -232,288 +214,253 @@ export function DeploymentsClient() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="pointer-events-none absolute inset-0 bg-grid opacity-50" />
-        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-primary">Release Operations</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Deployments</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-              Real deployment records from the AutoOps API, including queue production,
-              worker lifecycle state, simulation execution metadata, and terminal outcomes.
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void loadDeployments()}
-              disabled={isLoading || isRefreshing}
-              className="border-slate-200 bg-white hover:bg-slate-50"
-            >
-              <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-              Refresh
-            </Button>
-            <Button
-              type="button"
-              onClick={() => setShowTriggerForm((value) => !value)}
-              className="bg-gradient-to-r from-blue-600 to-violet-600 shadow-lg shadow-blue-600/20 hover:from-blue-500 hover:to-violet-500"
-            >
-              <Plus className="h-4 w-4" />
-              New Deployment
-            </Button>
-          </div>
-        </div>
-      </section>
-
-      <div className="grid overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm md:grid-cols-4">
-        <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r"><p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Total records</p><p className="mt-2 text-2xl font-bold text-[#16191f]">{stats.total}</p></div>
-        <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r"><p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Active</p><p className="mt-2 text-2xl font-bold text-[#16191f]">{stats.active}</p></div>
-        <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r"><p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Succeeded</p><p className="mt-2 text-2xl font-bold text-[#037f0c]">{stats.succeeded}</p></div>
-        <div className="p-4"><p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Failed</p><p className="mt-2 text-2xl font-bold text-[#b42318]">{stats.failed}</p></div>
-      </div>
-      {showTriggerForm ? (
-        <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">Trigger Deployment</h2>
-              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                Creates a real deployment record and queues the worker simulation executor. No real
-                infrastructure execution is active.
-              </p>
-            </div>
-            <Rocket className="h-5 w-5 text-primary" />
-          </div>
-
-          <div className="mt-5 rounded-xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-sm text-blue-700">
-            Deployments currently run through the safe simulation executor. No real Docker,
-            Terraform, Kubernetes, or cloud execution is active.
-          </div>
-
-          <form className="mt-5 space-y-5" onSubmit={handleTriggerDeployment}>
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="deployment-project">Project</Label>
-                <select
-                  id="deployment-project"
-                  required
-                  value={selectedProjectId}
-                  disabled={isLoadingProjects || isTriggering}
-                  onChange={(event) => {
-                    setSelectedProjectId(event.target.value);
-                    setTriggerSuccess(null);
-                  }}
-                  className="flex h-9 w-full rounded-md border border-input bg-input px-3 py-1 text-sm text-foreground shadow-sm transition-colors focus-ring"
-                >
-                  <option value="" disabled>
-                    {isLoadingProjects ? 'Loading projects...' : 'Select project'}
-                  </option>
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-                {selectedProject ? (
-                  <p className="text-xs text-muted-foreground">/{selectedProject.slug}</p>
-                ) : null}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="deployment-environment">Environment</Label>
-                <select
-                  id="deployment-environment"
-                  required
-                  value={selectedEnvironmentId}
-                  disabled={!selectedProjectId || isLoadingEnvironments || isTriggering || environments.length === 0}
-                  onChange={(event) => {
-                    setSelectedEnvironmentId(event.target.value);
-                    setTriggerSuccess(null);
-                  }}
-                  className="flex h-9 w-full rounded-md border border-input bg-input px-3 py-1 text-sm text-foreground shadow-sm transition-colors focus-ring"
-                >
-                  <option value="" disabled>
-                    {isLoadingEnvironments ? 'Loading environments...' : 'Select environment'}
-                  </option>
-                  {environments.map((environment) => (
-                    <option key={environment.id} value={environment.id}>
-                      {environment.name} ({environment.kind})
-                    </option>
-                  ))}
-                </select>
-                {selectedProjectId && !isLoadingEnvironments && environments.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    Create an environment before triggering a deployment.
-                  </p>
-                ) : selectedEnvironment ? (
-                  <p className="text-xs text-muted-foreground">/{selectedEnvironment.slug}</p>
-                ) : null}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="deployment-commit">Commit SHA</Label>
-                <Input
-                  id="deployment-commit"
-                  required
-                  value={commitSha}
-                  placeholder="7777777777777777777777777777777777777777"
-                  pattern="[A-Fa-f0-9]{7,40}"
-                  disabled={isTriggering}
-                  onChange={(event) => {
-                    setCommitSha(event.target.value);
-                    setTriggerSuccess(null);
-                  }}
-                />
-                <p className="text-xs text-muted-foreground">Must be 7 to 40 hexadecimal characters.</p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="deployment-branch">Branch</Label>
-                <Input
-                  id="deployment-branch"
-                  value={branch}
-                  maxLength={255}
-                  placeholder={selectedProject?.defaultBranch ?? 'main'}
-                  disabled={isTriggering}
-                  onChange={(event) => setBranch(event.target.value)}
-                />
-              </div>
-            </div>
-
-            {triggerSuccess ? (
-              <div className="flex flex-col gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 sm:flex-row sm:items-center sm:justify-between">
-                <span>Deployment created and queued for simulation.</span>
-                <Button asChild type="button" variant="outline" size="sm">
-                  <Link href={`/dashboard/deployments/${triggerSuccess.id}`}>View Details</Link>
-                </Button>
-              </div>
-            ) : null}
-
-            {triggerError ? (
-              <div className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                <AlertCircle className="h-4 w-4" />
-                {triggerError}
-              </div>
-            ) : null}
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="submit" disabled={!canSubmit}>
-                {isTriggering ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-                {isTriggering ? 'Triggering...' : 'Trigger Deployment'}
+    <div className="flex flex-col min-h-full bg-slate-50">
+      <WorkspaceHeader
+        title="Deployments Workspace"
+        purpose="Orchestrate release operations mapped to your configured projects."
+        icon={<Rocket className="h-5 w-5" />}
+        breadcrumbs={[{ label: 'Command', href: '/dashboard' }, { label: 'Deployments' }]}
+        statusSummary={
+          <div className="flex items-center gap-3">
+             <span className="text-xs text-slate-500">Updated {lastUpdated ? lastUpdated.toLocaleTimeString() : 'Never'}</span>
+             <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void loadDeployments()}
+                disabled={isLoading || isRefreshing}
+                className="bg-white"
+              >
+                <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
+                Refresh
               </Button>
               <Button
                 type="button"
-                variant="ghost"
-                disabled={isTriggering}
-                onClick={() => {
-                  setShowTriggerForm(false);
-                  setTriggerError(null);
-                }}
+                size="sm"
+                onClick={() => setShowTriggerForm(!showTriggerForm)}
+                className="bg-slate-900 text-white hover:bg-slate-800"
               >
-                Close
+                <Plus className="h-4 w-4 mr-2" />
+                New Deployment
               </Button>
-            </div>
-          </form>
-        </section>
-      ) : null}
-
-      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Deployment Records</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Real data from GET /api/v1/deployments.</p>
           </div>
-          <History className="h-5 w-5 text-muted-foreground" />
+        }
+      />
+
+      <div className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
+        
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm text-center">
+             <p className="text-xs uppercase tracking-wide text-slate-500">Total Records</p>
+             <p className="mt-2 text-2xl font-semibold text-slate-900">{stats.total}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm text-center">
+             <p className="text-xs uppercase tracking-wide text-slate-500">Active</p>
+             <p className="mt-2 text-2xl font-semibold text-blue-600">{stats.active}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm text-center">
+             <p className="text-xs uppercase tracking-wide text-slate-500">Succeeded</p>
+             <p className="mt-2 text-2xl font-semibold text-emerald-600">{stats.succeeded}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm text-center">
+             <p className="text-xs uppercase tracking-wide text-slate-500">Failed</p>
+             <p className="mt-2 text-2xl font-semibold text-rose-600">{stats.failed}</p>
+          </div>
         </div>
 
-        <div className="mt-5">
-          {isLoading ? (
-            <div className="flex items-center justify-center gap-3 rounded-lg border border-border bg-background/30 p-8 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              Loading deployments from the API...
+        {showTriggerForm && (
+          <EvidencePanel title="Trigger Deployment" icon={<Rocket className="h-4 w-4 text-blue-600" />}>
+             <div className="rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-blue-700 mb-5">
+              Deployments currently run through the safe simulation executor. No real Docker,
+              Terraform, Kubernetes, or cloud execution is active.
             </div>
-          ) : loadError ? (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-5">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
-                <div>
-                  <p className="text-sm font-medium text-destructive">Unable to load deployments</p>
-                  <p className="mt-1 text-sm text-muted-foreground">{loadError}</p>
+
+            <form className="space-y-5" onSubmit={handleTriggerDeployment}>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 text-sm">
+                <div className="space-y-2">
+                  <Label htmlFor="deployment-project">Project</Label>
+                  <select
+                    id="deployment-project"
+                    required
+                    value={selectedProjectId}
+                    disabled={isLoadingProjects || isTriggering}
+                    onChange={(event) => {
+                      setSelectedProjectId(event.target.value);
+                      setTriggerSuccess(null);
+                    }}
+                    className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="" disabled>{isLoadingProjects ? 'Loading projects...' : 'Select project'}</option>
+                    {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+                  </select>
+                  {selectedProject && <p className="text-xs text-slate-500 font-mono">/{selectedProject.slug}</p>}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="deployment-environment">Environment</Label>
+                  <select
+                    id="deployment-environment"
+                    required
+                    value={selectedEnvironmentId}
+                    disabled={!selectedProjectId || isLoadingEnvironments || isTriggering || environments.length === 0}
+                    onChange={(event) => {
+                      setSelectedEnvironmentId(event.target.value);
+                      setTriggerSuccess(null);
+                    }}
+                    className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="" disabled>{isLoadingEnvironments ? 'Loading environments...' : 'Select environment'}</option>
+                    {environments.map((env) => <option key={env.id} value={env.id}>{env.name} ({env.kind})</option>)}
+                  </select>
+                  {selectedProjectId && !isLoadingEnvironments && environments.length === 0 ? (
+                    <p className="text-xs text-slate-500">Create an environment before triggering a deployment.</p>
+                  ) : selectedEnvironment ? (
+                    <p className="text-xs text-slate-500 font-mono">/{selectedEnvironment.slug}</p>
+                  ) : null}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="deployment-commit">Commit SHA</Label>
+                  <Input
+                    id="deployment-commit"
+                    required
+                    value={commitSha}
+                    placeholder="7777777777777777777777777777777777777777"
+                    pattern="[A-Fa-f0-9]{7,40}"
+                    disabled={isTriggering}
+                    onChange={(event) => {
+                      setCommitSha(event.target.value);
+                      setTriggerSuccess(null);
+                    }}
+                    className="border-slate-200"
+                  />
+                  <p className="text-xs text-slate-500">Must be 7 to 40 hexadecimal characters.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="deployment-branch">Branch</Label>
+                  <Input
+                    id="deployment-branch"
+                    value={branch}
+                    maxLength={255}
+                    placeholder={selectedProject?.defaultBranch ?? 'main'}
+                    disabled={isTriggering}
+                    onChange={(event) => setBranch(event.target.value)}
+                    className="border-slate-200"
+                  />
                 </div>
               </div>
-            </div>
-          ) : deployments.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border bg-background/30 p-8 text-center">
-              <p className="text-sm font-medium text-foreground">No deployments yet</p>
-              <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
-                Deployment records will appear after a project environment deployment is triggered
-                through the existing API.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-hidden rounded-md border border-slate-200">
-              <div className="hidden grid-cols-[1.1fr_1fr_1fr_1fr_0.9fr_0.8fr] gap-4 border-b border-slate-200 bg-slate-100 px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground xl:grid">
-                <span>Status</span>
-                <span>Project / Environment</span>
-                <span>Source</span>
-                <span>Timing</span>
-                <span>Created</span>
-                <span>Action</span>
+
+              {triggerSuccess && (
+                <div className="flex flex-col gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 sm:flex-row sm:items-center sm:justify-between">
+                  <span>Deployment created and queued for simulation.</span>
+                  <Button asChild type="button" variant="outline" size="sm" className="bg-white">
+                    <Link href={`/dashboard/deployments/${triggerSuccess.id}`}>View Details</Link>
+                  </Button>
+                </div>
+              )}
+
+              {triggerError && (
+                <div className="flex items-center gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+                  <AlertCircle className="h-4 w-4" />
+                  {triggerError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+                <Button type="button" variant="outline" disabled={isTriggering} onClick={() => { setShowTriggerForm(false); setTriggerError(null); }}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={!canSubmit} className="bg-slate-900 text-white hover:bg-slate-800">
+                  {isTriggering ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Rocket className="h-4 w-4 mr-2" />}
+                  {isTriggering ? 'Triggering...' : 'Trigger Deployment'}
+                </Button>
               </div>
-              <div className="divide-y divide-border">
-                {deployments.map((deployment) => (
-                  <article
-                    key={deployment.id}
-                    className="grid grid-cols-1 gap-4 bg-background/25 p-4 transition hover:bg-slate-50 xl:grid-cols-[1.1fr_1fr_1fr_1fr_0.9fr_0.8fr] xl:items-center"
-                  >
-                    <div>
-                      <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-medium ${statusClass(deployment.status)}`}>
-                        {deployment.status}
-                      </span>
-                      <p className="mt-2 break-all text-xs text-muted-foreground">{deployment.id}</p>
-                    </div>
-                    <div className="min-w-0 text-sm">
-                      <p className="truncate text-foreground">Project {deployment.projectId}</p>
-                      <p className="mt-1 truncate text-muted-foreground">Environment {deployment.environmentId}</p>
-                    </div>
-                    <div className="space-y-2 text-sm">
-                      <p className="flex items-center gap-2 text-foreground">
-                        <GitCommit className="h-4 w-4 text-muted-foreground" />
-                        {shortSha(deployment.commitSha)}
-                      </p>
-                      <p className="flex items-center gap-2 text-muted-foreground">
-                        <GitBranch className="h-4 w-4" />
-                        {deployment.branch ?? 'No branch'}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{deployment.trigger}</p>
-                    </div>
-                    <div className="space-y-2 text-sm text-muted-foreground">
-                      <p className="flex items-center gap-2">
-                        <Clock3 className="h-4 w-4" />
-                        Started {formatDate(deployment.startedAt)}
-                      </p>
-                      <p className="flex items-center gap-2">
-                        <Timer className="h-4 w-4" />
-                        {formatDuration(deployment.durationMs)}
-                      </p>
-                    </div>
-                    <p className="text-sm text-muted-foreground">{formatDate(deployment.createdAt)}</p>
-                    <Button asChild type="button" variant="outline" size="sm">
-                      <Link href={`/dashboard/deployments/${deployment.id}`}>View Details</Link>
-                    </Button>
-                    {deployment.errorMessage ? (
-                      <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive xl:col-span-6">
-                        {deployment.errorMessage}
-                      </div>
-                    ) : null}
-                  </article>
-                ))}
+            </form>
+          </EvidencePanel>
+        )}
+
+        {loadError && (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 p-5">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="mt-0.5 h-4 w-4 text-rose-600" />
+              <div>
+                <p className="text-sm font-medium text-rose-900">Unable to load deployments</p>
+                <p className="mt-1 text-sm text-rose-700">{loadError}</p>
               </div>
             </div>
-          )}
-        </div>
-      </section>
+          </div>
+        )}
+
+        <WorkQueue
+          title="Deployment History"
+          description="Real deployment records from the AutoOps API."
+          isEmpty={deployments.length === 0}
+          emptyState={
+            <EmptyState 
+              title="No deployments yet" 
+              description="Deployment records will appear after a project environment deployment is triggered." 
+              icon={<History className="text-slate-400" />} 
+              variant="compact" 
+            />
+          }
+        >
+          {deployments.map((deployment) => (
+            <div key={deployment.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 border-b border-slate-100 last:border-0 hover:bg-slate-50/50 transition">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 flex-1 items-center mr-4">
+                
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                     <StatusBadge status={deployment.status} />
+                     <span className="text-xs text-slate-500 font-mono">{deployment.id.split('-')[0]}</span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">Project {deployment.projectId}</p>
+                    <p className="text-xs text-slate-500">Env {deployment.environmentId}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 text-xs text-slate-600">
+                   <p className="flex items-center gap-2">
+                    <GitCommit className="h-3.5 w-3.5 text-slate-400" />
+                    <span className="font-mono">{shortSha(deployment.commitSha)}</span>
+                  </p>
+                  <p className="flex items-center gap-2 text-slate-500">
+                    <GitBranch className="h-3.5 w-3.5 text-slate-400" />
+                    {deployment.branch ?? 'No branch'}
+                  </p>
+                  <p className="text-slate-400 uppercase tracking-wider text-[10px]">{deployment.trigger}</p>
+                </div>
+
+                <div className="space-y-1.5 text-xs text-slate-500">
+                  <p className="flex items-center gap-2">
+                    <Clock3 className="h-3.5 w-3.5 text-slate-400" />
+                    {formatDate(deployment.startedAt)}
+                  </p>
+                  <p className="flex items-center gap-2">
+                    <Timer className="h-3.5 w-3.5 text-slate-400" />
+                    {formatDuration(deployment.durationMs)}
+                  </p>
+                </div>
+
+              </div>
+
+              <div className="mt-4 sm:mt-0 shrink-0 flex flex-col items-end gap-2">
+                <Button asChild variant="outline" size="sm" className="bg-white">
+                  <Link href={`/dashboard/deployments/${deployment.id}`}>View Details</Link>
+                </Button>
+              </div>
+
+              {deployment.errorMessage && (
+                 <div className="w-full mt-3 rounded border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                   {deployment.errorMessage}
+                 </div>
+              )}
+            </div>
+          ))}
+        </WorkQueue>
+
+      </div>
     </div>
   );
 }

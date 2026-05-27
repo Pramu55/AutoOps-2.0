@@ -214,91 +214,74 @@ const COMMANDS: CommandItem[] = [
 
 const NAV_GROUPS: NavGroup[] = [
   {
-    label: 'Command Center',
+    label: 'Command',
     items: [
-      { href: '/dashboard', label: 'Overview', icon: Server },
-      { href: '/dashboard/operations', label: 'Operations Hub', icon: Activity },
+      { href: '/dashboard', label: 'Command', icon: Server },
+      { href: '/dashboard/operations', label: 'Operations', icon: Activity },
       { href: '/dashboard/incidents', label: 'Incidents', icon: AlertTriangle },
     ],
   },
   {
-    label: 'Build & Deploy',
+    label: 'Observations',
     items: [
-      { href: '/dashboard/projects', label: 'Projects', icon: Layers },
-      { href: '/dashboard/deployments', label: 'Deployments', icon: GitMerge },
-      { href: '/dashboard/resources', label: 'Resource Graph', icon: Boxes },
+      { href: '/dashboard/signals', label: 'Signals', icon: Activity },
+      { href: '/dashboard/resources', label: 'Resources', icon: Boxes },
     ],
   },
   {
     label: 'Integrations',
     items: [
-      { href: '/dashboard/integrations/jenkins', label: 'Jenkins', icon: Hammer },
-      { href: '/dashboard/integrations/docker', label: 'Docker', icon: Container },
-      { href: '/dashboard/integrations/kubernetes', label: 'Kubernetes', icon: Boxes },
-      { href: '/dashboard/integrations/infrastructure', label: 'Infrastructure', icon: Wrench },
-      { href: '/dashboard/integrations/github-actions', label: 'GitHub Actions', icon: Github },
-      { href: '/dashboard/integrations/cloud', label: 'Cloud Readiness', icon: Cloud },
-      { href: '/dashboard/integrations/aws', label: 'AWS Deployments', icon: Cloud },
+      { href: '/dashboard/integrations', label: 'Integrations Hub', icon: Network },
+    ],
+  },
+  {
+    label: 'Delivery',
+    items: [
+      { href: '/dashboard/projects', label: 'Projects', icon: Layers },
+      { href: '/dashboard/deployments', label: 'Deployments', icon: GitMerge },
     ],
   },
   {
     label: 'Governance',
     items: [
-      { href: '/dashboard/governance', label: 'Governance Center', icon: ShieldCheck },
-      { href: '/dashboard/operations#approvals', label: 'Pending Approvals', icon: ShieldCheck },
-      { href: '/dashboard/operations#activity', label: 'Operation Activity', icon: Activity },
-    ],
-  },
-  {
-    label: 'Observability',
-    items: [
-      { href: '/dashboard/operations#runtime-health', label: 'Runtime Health', icon: Network },
-      { href: '/dashboard/operations#queue-health', label: 'Queues', icon: Database },
-      { href: '/dashboard/integrations/observability', label: 'Prometheus/Grafana', icon: Gauge },
-      { href: '/dashboard/integrations/devops-tools', label: 'DevOps Tools', icon: Wrench },
+      { href: '/dashboard/governance', label: 'Governance', icon: ShieldCheck },
     ],
   },
 ];
 
 const ADMIN_NAV_GROUPS: NavGroup[] = [
   {
-    label: 'Admin Center',
+    label: 'Admin Command',
     items: [
-      { href: '/dashboard', label: 'Control Center', icon: ShieldCheck },
-      { href: '/dashboard/operations#approvals', label: 'Approval Queue', icon: ShieldCheck },
+      { href: '/dashboard', label: 'Command Workspace', icon: ShieldCheck },
+      { href: '/dashboard/operations', label: 'Operations', icon: Activity },
       { href: '/dashboard/incidents', label: 'Incident Command', icon: AlertTriangle },
+    ],
+  },
+  {
+    label: 'Observations',
+    items: [
+      { href: '/dashboard/signals', label: 'Signals', icon: Activity },
+      { href: '/dashboard/resources', label: 'Resources', icon: Boxes },
+    ],
+  },
+  {
+    label: 'Integrations',
+    items: [
+      { href: '/dashboard/integrations', label: 'Integrations Hub', icon: Network },
+    ],
+  },
+  {
+    label: 'Delivery',
+    items: [
+      { href: '/dashboard/projects', label: 'Project Access', icon: Layers },
+      { href: '/dashboard/deployments', label: 'Deployment Records', icon: GitMerge },
     ],
   },
   {
     label: 'Governance',
     items: [
       { href: '/dashboard/governance', label: 'Governance Center', icon: ShieldCheck },
-      { href: '/dashboard/operations#activity', label: 'Operation Audit', icon: Activity },
-      { href: '/dashboard/projects', label: 'Project Access', icon: Layers },
-      { href: '/dashboard/deployments', label: 'Deployment Records', icon: GitMerge },
-      { href: '/dashboard/resources', label: 'Resource Graph', icon: Boxes },
-    ],
-  },
-  {
-    label: 'Runtime Oversight',
-    items: [
-      { href: '/dashboard/operations#runtime-health', label: 'Runtime Health', icon: Network },
-      { href: '/dashboard/operations#queue-health', label: 'Queue Health', icon: Database },
-      { href: '/dashboard/operations', label: 'Operations Hub', icon: Activity },
-    ],
-  },
-  {
-    label: 'Connector Oversight',
-    items: [
-      { href: '/dashboard/integrations/jenkins', label: 'Jenkins', icon: Hammer },
-      { href: '/dashboard/integrations/docker', label: 'Docker', icon: Container },
-      { href: '/dashboard/integrations/kubernetes', label: 'Kubernetes', icon: Boxes },
-      { href: '/dashboard/integrations/infrastructure', label: 'Infrastructure', icon: Wrench },
-      { href: '/dashboard/integrations/github-actions', label: 'GitHub Actions', icon: Github },
-      { href: '/dashboard/integrations/cloud', label: 'Cloud Readiness', icon: Cloud },
-      { href: '/dashboard/integrations/aws', label: 'AWS Deployments', icon: Cloud },
-      { href: '/dashboard/integrations/observability', label: 'Observability', icon: Gauge },
-      { href: '/dashboard/integrations/devops-tools', label: 'DevOps Tools', icon: Wrench },
     ],
   },
 ];
