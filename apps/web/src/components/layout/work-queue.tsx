@@ -1,0 +1,67 @@
+import React from 'react';
+import Link from 'next/link';
+import { cn } from '@/lib/cn';
+import { ChevronRight } from 'lucide-react';
+
+interface WorkQueueProps {
+  title: string;
+  description?: string;
+  count?: number;
+  viewAllLink?: string;
+  emptyState: React.ReactNode;
+  children: React.ReactNode;
+  isEmpty: boolean;
+  className?: string;
+}
+
+export function WorkQueue({
+  title,
+  description,
+  count,
+  viewAllLink,
+  emptyState,
+  children,
+  isEmpty,
+  className,
+}: WorkQueueProps) {
+  return (
+    <section className={cn("rounded-lg border border-slate-200 bg-white shadow-sm flex flex-col", className)}>
+      <div className="flex flex-col gap-2 border-b border-slate-100 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex items-center gap-3">
+            <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+            {count !== undefined && (
+              <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+                {count}
+              </span>
+            )}
+          </div>
+          {description && (
+            <p className="mt-1 text-sm text-slate-500">{description}</p>
+          )}
+        </div>
+        {viewAllLink && (
+          <Link
+            href={viewAllLink}
+            className="group inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
+          >
+            View all
+            <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+          </Link>
+        )}
+      </div>
+
+      <div className="p-0 flex-1 flex flex-col">
+        {isEmpty ? (
+          <div className="p-5">
+            {emptyState}
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-100 flex-1 flex flex-col">
+            {children}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
