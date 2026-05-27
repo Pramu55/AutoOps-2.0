@@ -32,3 +32,7 @@ To maintain consistency, the following components govern the platform's layout a
 - **Integrations**: The management hub for connecting and monitoring external providers (AWS, Kubernetes, Jenkins, etc.). Grouped by category.
 - **Delivery**: Project-centric workflows managing the relationship between code repositories and deployment lifecycles.
 - **Governance**: The audit and compliance layer, surfacing policy decisions and operation evidence.
+
+## Service Platform Experience Phase 2
+
+Phase 2 introduces the Integrations Hub, providing a read-only, unified view of all control plane connectors and cloud readiness checks. It respects provider boundaries, does not execute actions, does not fake provider data, and never exposes credentials or secrets.

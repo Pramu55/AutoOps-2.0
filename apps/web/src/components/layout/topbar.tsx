@@ -67,6 +67,14 @@ const COMMANDS: CommandItem[] = [
     keywords: ['home', 'dashboard', 'overview'],
   },
   {
+    group: 'Pages',
+    label: 'Integrations Hub',
+    description: 'Control plane connector status',
+    href: '/dashboard/integrations',
+    icon: Network,
+    keywords: ['integrations', 'connectors', 'status', 'hub'],
+  },
+  {
     group: 'Operations',
     label: 'Operations Hub',
     description: 'Runtime health, approvals, incidents, failures, and activity',
@@ -232,6 +240,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Integrations',
     items: [
+      { href: '/dashboard/integrations', label: 'Integrations Hub', icon: Network },
       { href: '/dashboard/integrations/jenkins', label: 'Jenkins', icon: Hammer },
       { href: '/dashboard/integrations/docker', label: 'Docker', icon: Container },
       { href: '/dashboard/integrations/kubernetes', label: 'Kubernetes', icon: Boxes },
@@ -290,6 +299,7 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
   {
     label: 'Connector Oversight',
     items: [
+      { href: '/dashboard/integrations', label: 'Integrations Hub', icon: Network },
       { href: '/dashboard/integrations/jenkins', label: 'Jenkins', icon: Hammer },
       { href: '/dashboard/integrations/docker', label: 'Docker', icon: Container },
       { href: '/dashboard/integrations/kubernetes', label: 'Kubernetes', icon: Boxes },

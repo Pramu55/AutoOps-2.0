@@ -10,6 +10,7 @@ import {
   GitMerge,
   Layers,
   LayoutDashboard,
+  Network,
   Settings,
   Zap,
 } from 'lucide-react';
@@ -21,6 +22,7 @@ const NAV_ITEMS = [
   { href: '/dashboard/projects', label: 'Projects', icon: Layers },
   { href: '/dashboard/deployments', label: 'Deployments', icon: GitMerge },
   { href: '/dashboard/operations', label: 'Operations', icon: Gauge },
+  { href: '/dashboard/integrations', label: 'Integrations', icon: Network },
   { href: '/dashboard/observability', label: 'Observability', icon: Activity },
   { href: '/dashboard/alerts', label: 'Alerts', icon: Bell },
 ] as const;
