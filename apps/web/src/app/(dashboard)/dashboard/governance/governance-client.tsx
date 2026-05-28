@@ -16,7 +16,6 @@ import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { WorkspaceHeader } from '@/components/layout/workspace-header';
 import { EvidencePanel } from '@/components/layout/evidence-panel';
-import { StatusBadge } from '@/components/ui/status-badge';
 
 type GovernanceApiResponse = { data: GovernanceEvidenceResponse };
 type GovernanceExportApiResponse = { data: GovernanceExportResponse };
@@ -62,7 +61,45 @@ function actorLabel(actor: GovernanceEvidenceItem['requestedBy']): string {
   return actor.name ?? actor.email ?? actor.id;
 }
 
+function GovernanceBadge({ type, value }: { type: 'approval' | 'operation' | 'risk', value: string }) {
+  const normValue = (value || 'UNKNOWN').toUpperCase();
 
+  let toneClass = 'border-slate-300 bg-slate-50 text-slate-700';
+
+  if (type === 'approval') {
+    if (['PENDING', 'PENDING_APPROVAL', 'REQUIRED'].includes(normValue)) {
+      toneClass = 'border-amber-300 bg-amber-50 text-amber-800';
+    } else if (normValue === 'APPROVED') {
+      toneClass = 'border-emerald-300 bg-emerald-50 text-emerald-700';
+    } else if (normValue === 'REJECTED') {
+      toneClass = 'border-rose-300 bg-rose-50 text-rose-700';
+    } else if (normValue === 'NOT_REQUIRED') {
+      toneClass = 'border-slate-300 bg-slate-50 text-slate-700';
+    }
+  } else if (type === 'operation') {
+    if (['RUNNING', 'QUEUED', 'PENDING_APPROVAL'].includes(normValue)) {
+      toneClass = 'border-amber-300 bg-amber-50 text-amber-800';
+    } else if (['SUCCEEDED', 'COMPLETED'].includes(normValue)) {
+      toneClass = 'border-emerald-300 bg-emerald-50 text-emerald-700';
+    } else if (['FAILED', 'REJECTED', 'CANCELLED', 'CANCELED'].includes(normValue)) {
+      toneClass = 'border-rose-300 bg-rose-50 text-rose-700';
+    }
+  } else if (type === 'risk') {
+    if (normValue === 'LOW') {
+      toneClass = 'border-emerald-300 bg-emerald-50 text-emerald-700';
+    } else if (normValue === 'MEDIUM') {
+      toneClass = 'border-amber-300 bg-amber-50 text-amber-800';
+    } else if (normValue === 'HIGH') {
+      toneClass = 'border-rose-300 bg-rose-50 text-rose-700';
+    }
+  }
+
+  return (
+    <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${toneClass}`}>
+      {value}
+    </span>
+  );
+}
 
 function SummaryCard({ label, value, helper }: { label: string; value: string | number; helper: string }) {
   return (
@@ -254,12 +291,12 @@ export function GovernanceClient() {
                     </td>
                     <td className="border-b border-slate-100 px-3 py-4 text-slate-700">{item.targetDisplayName ?? '-'}</td>
                     <td className="border-b border-slate-100 px-3 py-4 text-slate-700">{actorLabel(item.requestedBy)}</td>
-                    <td className="border-b border-slate-100 px-3 py-4"><StatusBadge status={item.policy.riskLevel} /></td>
+                    <td className="border-b border-slate-100 px-3 py-4"><GovernanceBadge type="risk" value={item.policy.riskLevel} /></td>
                     <td className="border-b border-slate-100 px-3 py-4">
-                      <StatusBadge status={item.policy.approvalStatus} />
+                      <GovernanceBadge type="approval" value={item.policy.approvalStatus} />
                       {item.policy.policyReason ? <p className="mt-2 max-w-72 text-xs text-slate-500">{item.policy.policyReason}</p> : null}
                     </td>
-                    <td className="border-b border-slate-100 px-3 py-4"><StatusBadge status={item.status} /></td>
+                    <td className="border-b border-slate-100 px-3 py-4"><GovernanceBadge type="operation" value={item.status} /></td>
                     <td className="border-b border-slate-100 px-3 py-4">
                       {item.incident ? (
                         <Link className="inline-flex items-center gap-1 text-blue-700 hover:underline" href={`/dashboard/incidents/${item.incident.id}`}>
