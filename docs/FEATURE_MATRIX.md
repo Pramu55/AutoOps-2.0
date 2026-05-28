@@ -70,3 +70,4 @@
 | Resource Graph | Provider registration hooks | Complete | Yes for allowlisted orgs | Provider inventory policy preserved | Jenkins, Docker, Kubernetes registration side effects are non-blocking |
 | Dashboard | Command Workspace Phase 3 | Complete | Yes | Read-only aggregator | Integrates Needs Attention, Active Incidents, and Signals |
 | Incidents | Incident Workspace Phase 4 | Complete | Yes | UI/UX refactor | Upgrades incident triage queue and detail views using enterprise layout components |
+| Observability | Observations Workspace Phase 5 | Complete | Yes | UI/UX refactor | Upgrades signals and resources views into enterprise evidence workspaces |
