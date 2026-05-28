@@ -68,3 +68,4 @@
 | Resource Graph | Database-backed Resource Graph | Complete | Yes | Tenant-scoped read model | ResourceNode/ResourceEdge with safe metadata and no action controls |
 | Resource Graph | Resource Graph API and UI | Complete | Yes | Authenticated, organization-scoped, read-only | `/dashboard/resources` and `/api/v1/resources/*` |
 | Resource Graph | Provider registration hooks | Complete | Yes for allowlisted orgs | Provider inventory policy preserved | Jenkins, Docker, Kubernetes registration side effects are non-blocking |
+| Dashboard | Command Workspace Phase 3 | Complete | Yes | Read-only aggregator | Integrates Needs Attention, Active Incidents, and Signals |
