@@ -21,6 +21,8 @@ import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
+import { WorkQueue } from '@/components/layout/work-queue';
 
 type ProjectsResponse = {
   data: Project[];
@@ -125,7 +127,8 @@ function ProjectCard({ project }: { project: Project }) {
           <span className="truncate">{project.repositoryUrl}</span>
           <ExternalLink className="h-3.5 w-3.5 shrink-0" />
         </a>
-      ) : null}    </article>
+      ) : null}
+    </article>
   );
 }
 
@@ -214,40 +217,35 @@ export function ProjectsClient() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="pointer-events-none absolute inset-0 bg-grid opacity-40" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-primary">Project Inventory</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Projects</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-              Deployable services and repositories backed by the real Projects API. Environment
-              and deployment controls stay explicitly tied to real backend contracts.
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void loadProjects()}
-              disabled={isLoading || isRefreshing}
-              className="border-slate-200 bg-white hover:bg-slate-50"
-            >
-              <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-              Refresh
-            </Button>
-            <Button
-              type="button"
-              onClick={() => setShowCreateForm((value) => !value)}
-              className="bg-gradient-to-r from-blue-600 to-violet-600 shadow-lg shadow-blue-600/20 hover:from-blue-500 hover:to-violet-500"
-            >
-              <Plus className="h-4 w-4" />
-              New Project
-            </Button>
-          </div>
-        </div>
-      </section>
+    <div className="animate-fade-in flex flex-col min-h-screen">
+      <WorkspaceHeader
+        title="Projects Workspace"
+        purpose="Service and delivery inventory managed by AutoOps."
+        icon={<Boxes className="h-6 w-6" />}
+        primaryAction={
+          <Button
+            type="button"
+            onClick={() => setShowCreateForm((value) => !value)}
+            className="bg-gradient-to-r from-blue-600 to-violet-600 shadow-lg shadow-blue-600/20 hover:from-blue-500 hover:to-violet-500"
+          >
+            <Plus className="h-4 w-4" />
+            New Project
+          </Button>
+        }
+        secondaryAction={
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void loadProjects()}
+            disabled={isLoading || isRefreshing}
+            className="border-slate-200 bg-white hover:bg-slate-50"
+          >
+            <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+            Refresh
+          </Button>
+        }
+      />
+      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 space-y-6">
 
       {successMessage ? (
         <div className="flex items-center gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700">
@@ -371,25 +369,19 @@ export function ProjectsClient() {
         </section>
       ) : null}
 
-      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Project List</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Real records returned by GET /api/v1/projects.
-            </p>
-          </div>
-          <Boxes className="h-5 w-5 text-primary" />
-        </div>
-
-        <div className="mt-5">
-          {isLoading ? (
-            <div className="flex items-center justify-center gap-3 rounded-lg border border-border bg-background/30 p-8 text-sm text-muted-foreground">
+      <WorkQueue
+        title="Project Inventory"
+        description="Real project records returned by GET /api/v1/projects."
+        count={projects.length}
+        isEmpty={projects.length === 0 || isLoading || !!loadError}
+        emptyState={
+          isLoading ? (
+            <div className="flex items-center justify-center gap-3 p-8 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
               Loading projects from the API...
             </div>
           ) : loadError ? (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-5">
+            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-5 mx-5 my-5">
               <div className="flex items-start gap-3">
                 <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
                 <div>
@@ -410,17 +402,18 @@ export function ProjectsClient() {
                 </div>
               </div>
             </div>
-          ) : projects.length === 0 ? (
-            <EmptyState onCreate={() => setShowCreateForm(true)} />
           ) : (
-            <div className="space-y-3">
-              {projects.map((project) => (
-                <ProjectCard key={project.id} project={project} />
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
+            <EmptyState onCreate={() => setShowCreateForm(true)} />
+          )
+        }
+      >
+        {projects.map((project) => (
+          <div key={project.id} className="p-4 sm:p-5 hover:bg-slate-50 transition">
+            <ProjectCard project={project} />
+          </div>
+        ))}
+      </WorkQueue>
+      </div>
     </div>
   );
 }

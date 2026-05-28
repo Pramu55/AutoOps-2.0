@@ -16,19 +16,16 @@ import {
   Archive,
   ArrowLeft,
   CheckCircle2,
-  Cloud,
   ExternalLink,
-  GitBranch,
-  GitMerge,
   Loader2,
-  LockKeyhole,
   RefreshCw,
   Save,
-  ServerCog,
-  ShieldCheck,
   X,
 } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
+import { RecordSummary } from '@/components/layout/record-summary';
+import { EvidencePanel } from '@/components/layout/evidence-panel';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -119,31 +116,6 @@ function toEnvironmentFormState(environment: Environment): EnvironmentFormState 
     description: environment.description ?? '',
     url: environment.url ?? '',
   };
-}
-
-function StatusCard({
-  title,
-  status,
-  description,
-  icon,
-}: {
-  title: string;
-  status: string;
-  description: string;
-  icon: React.ReactNode;
-}) {
-  return (
-    <section className="glass rounded-xl p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-semibold text-foreground">{title}</p>
-          <p className="mt-2 text-sm font-medium text-primary">{status}</p>
-          <p className="mt-2 text-sm text-muted-foreground">{description}</p>
-        </div>
-        <div className="rounded-lg bg-primary/10 p-2 text-primary">{icon}</div>
-      </div>
-    </section>
-  );
 }
 
 export function ProjectDetailClient({ projectId }: { projectId: string }) {
@@ -353,96 +325,50 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <Button asChild type="button" variant="ghost" className="-ml-3 mb-3">
-            <Link href="/dashboard/projects">
-              <ArrowLeft className="h-4 w-4" />
-              Projects
-            </Link>
+    <div className="animate-fade-in flex flex-col min-h-screen">
+      <WorkspaceHeader
+        title={project.name}
+        purpose={`/${project.slug}`}
+        backLink={{ href: "/dashboard/projects", label: "Projects" }}
+        breadcrumbs={[{ label: 'Projects', href: '/dashboard/projects' }, { label: project.slug }]}
+        primaryAction={
+          <Button type="button" variant="destructive" onClick={handleArchive} disabled={isArchiving}>
+            {isArchiving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
+            {isArchiving ? 'Archiving...' : 'Archive Project'}
           </Button>
-          <p className="text-xs font-medium uppercase tracking-wide text-primary">Project Details</p>
-          <h1 className="mt-2 text-2xl font-semibold text-foreground">{project.name}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">/{project.slug}</p>
-        </div>
-        <Button type="button" variant="destructive" onClick={handleArchive} disabled={isArchiving}>
-          {isArchiving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
-          {isArchiving ? 'Archiving...' : 'Archive Project'}
-        </Button>
-      </div>
+        }
+        secondaryAction={
+          <Button type="button" variant="outline" onClick={() => void loadProject()} disabled={isLoading} className="bg-white">
+            <RefreshCw className={isLoading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+            Refresh
+          </Button>
+        }
+      />
 
-      <section className="glass rounded-xl p-5 shadow-sm">
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
-          <div className="rounded-lg border border-border/70 bg-background/35 p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Visibility</p>
-            <p className="mt-2 text-sm font-medium text-foreground">{project.visibility}</p>
-          </div>
-          <div className="rounded-lg border border-border/70 bg-background/35 p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Default Branch</p>
-            <p className="mt-2 text-sm font-medium text-foreground">{project.defaultBranch}</p>
-          </div>
-          <div className="rounded-lg border border-border/70 bg-background/35 p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Created</p>
-            <p className="mt-2 text-sm font-medium text-foreground">{formatDate(project.createdAt)}</p>
-          </div>
-          <div className="rounded-lg border border-border/70 bg-background/35 p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Repository</p>
-            {project.repositoryUrl ? (
-              <a
-                href={project.repositoryUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-2 flex min-w-0 items-center gap-2 text-sm text-primary hover:underline"
-              >
+      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+        <RecordSummary
+          title={project.name}
+          status={project.visibility}
+          source={`/${project.slug}`}
+          timestamps={[
+            { label: 'Created', value: formatDate(project.createdAt) },
+            { label: 'Default Branch', value: project.defaultBranch },
+          ]}
+          relatedEntity={{
+            label: 'Repository',
+            value: project.repositoryUrl ? (
+              <a href={project.repositoryUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-blue-600 hover:underline">
                 <span className="truncate">{project.repositoryUrl}</span>
                 <ExternalLink className="h-3.5 w-3.5 shrink-0" />
               </a>
-            ) : (
-              <p className="mt-2 text-sm text-muted-foreground">Not connected</p>
-            )}
-          </div>
-        </div>
-      </section>
+            ) : <span className="text-slate-500">Not connected</span>
+          }}
+        />
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
-        <StatusCard
-          title="Repository Readiness"
-          status={project.repositoryUrl ? 'Repository connected' : 'Repository pending'}
-          description="Source metadata is ready for future build pipeline wiring."
-          icon={<GitBranch className="h-5 w-5" />}
-        />
-        <StatusCard
-          title="Environment Integration"
-          status={`${environments.length} configured`}
-          description="Real deploy targets are managed here before deployment pipeline wiring."
-          icon={<Cloud className="h-5 w-5" />}
-        />
-        <StatusCard
-          title="Deployment Readiness"
-          status="Pending Deployment Pipeline"
-          description="No deployment trigger or lifecycle execution is connected here."
-          icon={<GitMerge className="h-5 w-5" />}
-        />
-        <StatusCard
-          title="Security and Ownership"
-          status="Project scoped"
-          description="Governance fields are limited to the current Projects API contract."
-          icon={<ShieldCheck className="h-5 w-5" />}
-        />
-      </div>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="lg:col-span-2 space-y-6">
 
-      <section className="glass rounded-xl p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Environments</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Real project deploy targets from GET /api/v1/projects/:projectId/environments.
-            </p>
-          </div>
-          <Cloud className="h-5 w-5 text-primary" />
-        </div>
-
+            <EvidencePanel title="Environments" description="Real project deploy targets from GET /api/v1/projects/:projectId/environments.">
         <form className="mt-5 space-y-5 rounded-lg border border-border bg-background/35 p-4" onSubmit={handleSaveEnvironment}>
           <div className="flex items-center justify-between gap-4">
             <h3 className="text-sm font-semibold text-foreground">
@@ -636,116 +562,89 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             </div>
           )}
         </div>
-      </section>
-
-      <section className="glass rounded-xl p-5 shadow-sm">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Editable Project Settings</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Updates only fields supported by PATCH /api/v1/projects/:projectId.
-            </p>
-          </div>
-          <LockKeyhole className="h-5 w-5 text-primary" />
-        </div>
-
-        <form className="mt-5 space-y-5" onSubmit={handleSave}>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="project-name">Name</Label>
-              <Input
-                id="project-name"
-                required
-                minLength={2}
-                maxLength={120}
-                value={form.name}
-                onChange={(event) => setForm((current) => current && { ...current, name: event.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="default-branch">Default Branch</Label>
-              <Input
-                id="default-branch"
-                maxLength={120}
-                value={form.defaultBranch}
-                onChange={(event) =>
-                  setForm((current) => current && { ...current, defaultBranch: event.target.value })
-                }
-              />
-            </div>
+      </EvidencePanel>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="repository-url">Repository URL</Label>
-            <Input
-              id="repository-url"
-              type="url"
-              value={form.repositoryUrl}
-              placeholder="https://github.com/org/service"
-              onChange={(event) =>
-                setForm((current) => current && { ...current, repositoryUrl: event.target.value })
-              }
-            />
-          </div>
+          <div className="space-y-6">
+            <EvidencePanel title="Project Settings" description="PATCH">
+              <form className="space-y-5" onSubmit={handleSave}>
+                <div className="space-y-2">
+                  <Label htmlFor="project-name">Name</Label>
+                  <Input
+                    id="project-name"
+                    required
+                    minLength={2}
+                    maxLength={120}
+                    value={form.name}
+                    onChange={(event) => setForm((current) => current && { ...current, name: event.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="default-branch">Default Branch</Label>
+                  <Input
+                    id="default-branch"
+                    maxLength={120}
+                    value={form.defaultBranch}
+                    onChange={(event) =>
+                      setForm((current) => current && { ...current, defaultBranch: event.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="repository-url">Repository URL</Label>
+                  <Input
+                    id="repository-url"
+                    type="url"
+                    value={form.repositoryUrl}
+                    placeholder="https://github.com/org/service"
+                    onChange={(event) =>
+                      setForm((current) => current && { ...current, repositoryUrl: event.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="project-description">Description</Label>
+                  <textarea
+                    id="project-description"
+                    maxLength={2000}
+                    value={form.description}
+                    onChange={(event) =>
+                      setForm((current) => current && { ...current, description: event.target.value })
+                    }
+                    className="min-h-24 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="project-description">Description</Label>
-            <textarea
-              id="project-description"
-              maxLength={2000}
-              value={form.description}
-              onChange={(event) =>
-                setForm((current) => current && { ...current, description: event.target.value })
-              }
-              className="min-h-24 w-full rounded-md border border-input bg-input px-3 py-2 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus-ring disabled:cursor-not-allowed disabled:opacity-50"
-            />
-          </div>
+                {successMessage ? (
+                  <div className="flex items-center gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700">
+                    <CheckCircle2 className="h-4 w-4" />
+                    {successMessage}
+                  </div>
+                ) : null}
 
-          {successMessage ? (
-            <div className="flex items-center gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700">
-              <CheckCircle2 className="h-4 w-4" />
-              {successMessage}
-            </div>
-          ) : null}
+                {saveError ? (
+                  <div className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    {saveError}
+                  </div>
+                ) : null}
 
-          {saveError ? (
-            <div className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              <AlertCircle className="h-4 w-4" />
-              {saveError}
-            </div>
-          ) : null}
-
-          <Button type="submit" disabled={isSaving}>
-            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            {isSaving ? 'Saving...' : 'Save Changes'}
-          </Button>
-        </form>
-      </section>
-
-      <section className="glass rounded-xl p-5 shadow-sm">
-        <div className="flex items-center gap-3">
-          <ServerCog className="h-5 w-5 text-primary" />
-          <h2 className="text-sm font-semibold text-foreground">Future Execution Surfaces</h2>
-        </div>
-        <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div className="rounded-lg border border-dashed border-border bg-background/30 p-4 text-sm text-muted-foreground">
-            Terraform/IaC state and plan review are not implemented yet.
-          </div>
-          <div className="rounded-lg border border-dashed border-border bg-background/30 p-4 text-sm text-muted-foreground">
-            Kubernetes executor configuration is not implemented yet.
-          </div>
-          <div className="rounded-lg border border-dashed border-border bg-background/30 p-4 text-sm text-muted-foreground">
-            Deployment pipeline controls are not implemented yet.
+                <Button type="submit" disabled={isSaving} className="w-full">
+                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  {isSaving ? 'Saving...' : 'Save Changes'}
+                </Button>
+              </form>
+            </EvidencePanel>
           </div>
         </div>
-      </section>
 
-      {archiveError ? (
-        <div className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          <AlertCircle className="h-4 w-4" />
-          {archiveError}
-        </div>
-      ) : null}
+        {archiveError ? (
+          <div className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <AlertCircle className="h-4 w-4" />
+            {archiveError}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
