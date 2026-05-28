@@ -43,4 +43,12 @@ Phase 3 transforms the main dashboard into an enterprise Command Workspace. It a
 
 ## Service Platform Experience Phase 4
 
-Phase 4 refactors the Incident Workspace and Incident Detail into an enterprise service-operations record experience. It establishes a dedicated triage queue (Needs Attention) for active incidents, and upgrades the detailed incident record with structured evidence panels, context links, and timeline views without modifying existing backend logic or security constraints.
+### Phase 4: Incident Workspace
+- Replaces standard table with a Needs Attention triage queue.
+- Implements `RecordSummary`, `ContextPanel`, and `EvidencePanel` for incident triage and resolution.
+
+### Phase 5: Observations Workspace
+- Applies enterprise layout to `/dashboard/signals` and `/dashboard/resources`.
+- Wraps normalized signals and topology resources into `WorkQueue` and `EvidencePanel`.
+- Signals are correctly framed as observations, distinct from incidents.
+- Resource Graph is explicitly positioned as topology and identity context, not as a permission source.

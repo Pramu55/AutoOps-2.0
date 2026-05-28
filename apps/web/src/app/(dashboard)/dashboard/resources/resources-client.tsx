@@ -11,11 +11,20 @@ import type {
   ResourceProvider,
 } from '@autoops/types';
 import { ResourceKind as ResourceKinds, ResourceProvider as ResourceProviders } from '@autoops/types';
-import { Boxes, Link2, RefreshCw, Search } from 'lucide-react';
+import { Boxes, RefreshCw, Search } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/cn';
+
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
+import { WorkQueue } from '@/components/layout/work-queue';
+import { EvidencePanel } from '@/components/layout/evidence-panel';
+import { ContextPanel } from '@/components/layout/context-panel';
+import { EmptyState } from '@/components/layout/empty-state';
+
+import Link from 'next/link';
+
 
 type ApiData<T> = { data: T };
 type ArchivedFilter = 'active' | 'archived' | 'all';
@@ -204,33 +213,34 @@ export function ResourcesClient() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-blue-700">
-              <Boxes className="h-3.5 w-3.5" />
-              Tenant-scoped read model
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900 lg:text-3xl">Resource Graph</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-              Resource Graph is built from resources AutoOps has safely discovered. It does not grant provider access and does not execute actions.
-            </p>
+      <WorkspaceHeader
+        title="Resources Workspace"
+        purpose="Resource map of connected infrastructure and AutoOps entities."
+        secondaryAction={
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" asChild><Link href="/dashboard/signals">Signals</Link></Button>
+            <Button variant="ghost" size="sm" asChild><Link href="/dashboard/incidents">Incidents</Link></Button>
+            <Button variant="ghost" size="sm" asChild><Link href="/dashboard/integrations">Integrations</Link></Button>
+            <Button variant="ghost" size="sm" asChild><Link href="/dashboard">Command Workspace</Link></Button>
           </div>
+        }
+        primaryAction={
           <Button
             type="button"
             onClick={() => void loadResources()}
             disabled={isLoading || isRefreshing}
-            className="rounded-full bg-white text-slate-950 hover:bg-slate-200"
+            className="rounded-full border border-slate-200 bg-white text-slate-900 shadow-sm hover:bg-slate-50"
           >
-            <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+            <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-        </div>
-      </section>
+        }
+      />
 
       {error ? <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</div> : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="flex flex-col gap-4">
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {[
           ['Status', readiness?.status ?? 'UNKNOWN'],
           ['Resources', readiness?.totalResources ?? 0],
@@ -244,52 +254,52 @@ export function ResourcesClient() {
           </div>
         ))}
       </section>
-
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Provider discovery counts</h2>
-            <p className="mt-1 text-sm text-slate-600">Blocked organizations do not receive shared provider graph data.</p>
-          </div>
-          <span className={`w-fit rounded-full border px-3 py-1.5 text-xs font-medium ${statusTone(readiness?.status)}`}>
-            Last seen {formatDate(readiness?.lastSeenAt)}
-          </span>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-          {providerCountRows.map(([provider, count]) => (
-            <div key={provider} className="rounded-md border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">{labelize(provider)}</p>
-              <p className="mt-1 text-lg font-semibold text-slate-950">{count}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-md border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 p-5">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <h2 className="text-base font-semibold text-slate-900">Resources</h2>
-              <p className="mt-1 text-sm text-slate-600">Search and inspect tenant-owned resource nodes. No actions are available from this view.</p>
+              <h2 className="text-base font-semibold text-slate-900">Provider discovery counts</h2>
+              <p className="mt-1 text-sm text-slate-600">Blocked organizations do not receive shared provider graph data.</p>
             </div>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[10rem_12rem_10rem_18rem]">
-              <select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value as ResourceProvider | 'ALL')} className="h-10 rounded border border-slate-300 bg-white px-3 text-sm">
-                <option value="ALL">All providers</option>
-                {PROVIDER_OPTIONS.map((provider) => <option key={provider} value={provider}>{labelize(provider)}</option>)}
-              </select>
-              <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value as ResourceKind | 'ALL')} className="h-10 rounded border border-slate-300 bg-white px-3 text-sm">
-                <option value="ALL">All kinds</option>
-                {KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{labelize(kind)}</option>)}
-              </select>
-              <select value={archivedFilter} onChange={(event) => setArchivedFilter(event.target.value as ArchivedFilter)} className="h-10 rounded border border-slate-300 bg-white px-3 text-sm">
-                <option value="active">Active</option>
-                <option value="archived">Archived</option>
-                <option value="all">All</option>
-              </select>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                <Input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search name or URN" className="h-10 rounded border-slate-300 pl-9" />
+            <span className={`w-fit rounded-full border px-3 py-1.5 text-xs font-medium ${statusTone(readiness?.status)}`}>
+              Last seen {formatDate(readiness?.lastSeenAt)}
+            </span>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            {providerCountRows.map(([provider, count]) => (
+              <div key={provider} className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs uppercase tracking-wide text-slate-500">{labelize(provider)}</p>
+                <p className="mt-1 text-lg font-semibold text-slate-950">{count}</p>
               </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <WorkQueue
+        title="Resources"
+        description="Search and inspect tenant-owned resource nodes. No actions are available from this view."
+        isEmpty={false}
+        emptyState={null}
+        className="w-full"
+      >
+        <div className="border-b border-slate-100 p-4">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[10rem_12rem_10rem_18rem]">
+            <select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value as ResourceProvider | 'ALL')} className="h-10 rounded border border-slate-300 bg-white px-3 text-sm">
+              <option value="ALL">All providers</option>
+              {PROVIDER_OPTIONS.map((provider) => <option key={provider} value={provider}>{labelize(provider)}</option>)}
+            </select>
+            <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value as ResourceKind | 'ALL')} className="h-10 rounded border border-slate-300 bg-white px-3 text-sm">
+              <option value="ALL">All kinds</option>
+              {KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{labelize(kind)}</option>)}
+            </select>
+            <select value={archivedFilter} onChange={(event) => setArchivedFilter(event.target.value as ArchivedFilter)} className="h-10 rounded border border-slate-300 bg-white px-3 text-sm">
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+              <option value="all">All</option>
+            </select>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              <Input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search name or URN" className="h-10 rounded border-slate-300 pl-9" />
             </div>
           </div>
         </div>
@@ -306,9 +316,12 @@ export function ResourcesClient() {
             {isLoading ? (
               <div className="p-8 text-center text-sm text-slate-600">Loading resources...</div>
             ) : resourceItems.length === 0 ? (
-              <div className="p-8 text-center text-sm text-slate-600">
-                No Resource Graph nodes found for this organization and filter set. Provider inventory may be blocked by org policy or not yet discovered.
-              </div>
+              <EmptyState
+                icon={<Boxes />}
+                title="No resources found"
+                description="No Resource Graph nodes found for this organization and filter set. Provider inventory may be blocked by org policy or not yet discovered."
+                action={<Button variant="outline" asChild><Link href="/dashboard/integrations">View Integrations</Link></Button>}
+              />
             ) : (
               resourceItems.map((resource) => (
                 <ResourceRow key={resource.id} resource={resource} selected={resource.id === selectedResourceId} onSelect={setSelectedResourceId} />
@@ -327,44 +340,44 @@ export function ResourcesClient() {
               <div className="rounded-md border border-rose-200 bg-rose-50 p-5 text-sm text-rose-800">{selectionError}</div>
             ) : selectedResource ? (
               <div className="space-y-5">
-                <div className="rounded-md border border-slate-200 bg-white p-4">
+                <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
                   <p className="text-xs uppercase tracking-wide text-slate-500">Selected resource</p>
                   <h3 className="mt-2 text-lg font-semibold text-slate-950">{selectedResource.displayName}</h3>
                   <p className="mt-1 break-all font-mono text-xs text-slate-500">{selectedResource.urn}</p>
                   <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                    <span className="rounded border border-slate-200 bg-slate-50 px-3 py-2">Incoming {selectedResource.incomingEdgeCount}</span>
-                    <span className="rounded border border-slate-200 bg-slate-50 px-3 py-2">Outgoing {selectedResource.outgoingEdgeCount}</span>
+                    <span className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-center text-slate-700 font-medium">Incoming {selectedResource.incomingEdgeCount}</span>
+                    <span className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-center text-slate-700 font-medium">Outgoing {selectedResource.outgoingEdgeCount}</span>
                   </div>
                 </div>
-                <div className="rounded-md border border-slate-200 bg-white p-4">
-                  <h4 className="text-sm font-semibold text-slate-900">Safe metadata</h4>
-                  <div className="mt-3"><MetadataList metadata={selectedResource.metadataSummary} /></div>
-                </div>
-                <div className="rounded-md border border-slate-200 bg-white p-4">
-                  <div className="flex items-center gap-2">
-                    <Link2 className="h-4 w-4 text-blue-600" />
-                    <h4 className="text-sm font-semibold text-slate-900">Neighbors</h4>
+
+                <EvidencePanel title="Safe Metadata" className="border-slate-200 shadow-sm">
+                  <div className="p-4">
+                    <MetadataList metadata={selectedResource.metadataSummary} />
                   </div>
-                  <div className="mt-3 space-y-2">
-                    {neighbors && neighbors.incoming.length + neighbors.outgoing.length > 0 ? (
-                      [...neighbors.incoming, ...neighbors.outgoing].slice(0, 12).map((edge) => (
+                </EvidencePanel>
+
+                <ContextPanel title="Neighbors" actions={[
+                  neighbors && neighbors.incoming.length + neighbors.outgoing.length > 0 ? (
+                    <div key="neighbors" className="space-y-2 w-full">
+                      {[...neighbors.incoming, ...neighbors.outgoing].slice(0, 12).map((edge) => (
                         <div key={edge.id} className="rounded border border-slate-200 bg-slate-50 p-3 text-sm">
                           <p className="font-medium text-slate-900">{labelize(edge.type)}</p>
                           <p className="mt-1 truncate text-xs text-slate-500">
                             {edge.source?.displayName ?? edge.sourceNodeId} {'->'} {edge.target?.displayName ?? edge.targetNodeId}
                           </p>
                         </div>
-                      ))
-                    ) : (
-                      <p className="text-sm text-slate-500">No active neighbors recorded for this resource.</p>
-                    )}
-                  </div>
-                </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p key="empty" className="text-sm text-slate-500 p-2">No active neighbors recorded for this resource.</p>
+                  )
+                ]} />
               </div>
             ) : null}
           </aside>
         </div>
-      </section>
+
+      </WorkQueue>
     </div>
   );
 }
