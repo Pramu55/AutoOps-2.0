@@ -19,7 +19,6 @@ import type {
 import {
   Activity,
   AlertTriangle,
-  ArrowLeft,
   Boxes,
   CheckCircle2,
   Container,
@@ -37,6 +36,7 @@ import {
 } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/cn';
 
@@ -378,31 +378,17 @@ export function KubernetesClient() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <Button
-        asChild
-        variant="outline"
-        size="sm"
-        className="rounded-full border-slate-200 bg-slate-50 text-slate-700 hover:bg-blue-50"
-      >
-        <Link href="/dashboard/operations">
-          <ArrowLeft className="h-4 w-4" />
-          Back to Ops Hub
-        </Link>
-      </Button>
-
-      <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <span className={`inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold ${statusTone(currentStatus)}`}>
-              {currentStatus}
-            </span>
-            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900 lg:text-3xl">
-              Kubernetes Control Connector
-            </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-              Cluster visibility, metrics, and confirmation-protected workload operations.
-            </p>
-          </div>
+      <WorkspaceHeader
+        title="Kubernetes Provider Record"
+        purpose="Governed workload scaling, rollout control, and namespace state discovery."
+        backLink={{ href: '/dashboard/integrations', label: 'Back to Integrations' }}
+        breadcrumbs={[{ label: 'AutoOps' }, { label: 'Integrations', href: '/dashboard/integrations' }, { label: 'Kubernetes' }]}
+        statusSummary={
+          <span className={`inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold ${statusTone(currentStatus)}`}>
+            {currentStatus}
+          </span>
+        }
+        primaryAction={
           <div className="flex flex-wrap items-center gap-3">
             <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700">
               Checked {formatTime(status?.checkedAt ?? summary?.checkedAt)}
@@ -411,14 +397,14 @@ export function KubernetesClient() {
               type="button"
               onClick={() => void loadKubernetes()}
               disabled={isLoading || isRefreshing}
-              className="rounded-full bg-white text-slate-950 hover:bg-slate-200"
+              className="rounded-full bg-white text-slate-950 hover:bg-slate-200 shadow-sm border border-slate-200"
             >
               <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
               Refresh
             </Button>
           </div>
-        </div>
-      </section>
+        }
+      />
 
       {error ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">

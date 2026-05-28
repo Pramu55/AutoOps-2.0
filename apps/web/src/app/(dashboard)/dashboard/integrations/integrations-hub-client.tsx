@@ -215,27 +215,57 @@ export function IntegrationsHubClient() {
         }
       />
 
-      <div className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
+      <div className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full space-y-10">
         {isLoading ? (
           <div className="rounded-md border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
             Loading integrations...
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {PROVIDERS.map((provider) => (
-              <ProviderStateCard
-                key={provider.id}
-                name={provider.name}
-                category={provider.category}
-                status={statuses[provider.id] || 'NOT_CONFIGURED'}
-                safetyMode={provider.safetyMode}
-                purpose={provider.purpose}
-                setupGuidance={provider.setupGuidance}
-                href={provider.href}
-                icon={provider.icon}
-              />
-            ))}
-          </div>
+          [
+            {
+              name: 'Runtime & Orchestration',
+              ids: ['docker', 'kubernetes'],
+            },
+            {
+              name: 'CI/CD & Infrastructure',
+              ids: ['jenkins', 'infrastructure'],
+            },
+            {
+              name: 'Cloud & Core Platforms',
+              ids: ['aws', 'cloud'],
+            },
+            {
+              name: 'Telemetry & Local Tooling',
+              ids: ['observability', 'github-actions', 'devops-tools'],
+            },
+          ].map((group) => {
+            const groupProviders = PROVIDERS.filter((p) => group.ids.includes(p.id));
+            if (groupProviders.length === 0) return null;
+            return (
+              <section key={group.name} className="space-y-4">
+                <div className="border-b border-slate-100 pb-2">
+                  <h2 className="text-base font-semibold text-slate-800 tracking-tight">
+                    {group.name}
+                  </h2>
+                </div>
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+                  {groupProviders.map((provider) => (
+                    <ProviderStateCard
+                      key={provider.id}
+                      name={provider.name}
+                      category={provider.category}
+                      status={statuses[provider.id] || 'NOT_CONFIGURED'}
+                      safetyMode={provider.safetyMode}
+                      purpose={provider.purpose}
+                      setupGuidance={provider.setupGuidance}
+                      href={provider.href}
+                      icon={provider.icon}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
+          })
         )}
       </div>
     </div>

@@ -10,9 +10,10 @@ import type {
   TerraformOperationResponse,
   TerraformWorkspaceSummary,
 } from '@autoops/types';
-import { AlertTriangle, ArrowLeft, FileCode2, PlayCircle, RefreshCw, ShieldCheck, Wrench, X } from 'lucide-react';
+import { AlertTriangle, FileCode2, PlayCircle, RefreshCw, ShieldCheck, Wrench, X } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
 import { Input } from '@/components/ui/input';
 
 type StatusApiResponse = { data: InfrastructureProviderStatus };
@@ -151,33 +152,24 @@ export function InfrastructureClient() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <Button asChild variant="outline" size="sm" className="rounded-full border-slate-200 bg-slate-50 text-slate-700 hover:bg-blue-50">
-        <Link href="/dashboard/operations">
-          <ArrowLeft className="h-4 w-4" />
-          Back to Ops Hub
-        </Link>
-      </Button>
-
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <div className="flex flex-wrap gap-2">
-              <StatusBadge value={status?.terraform.status ?? 'UNKNOWN'} />
-              <StatusBadge value={status?.ansible.status ?? 'UNKNOWN'} />
-            </div>
-            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950 lg:text-3xl">
-              Infrastructure Automation Center
-            </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-              Govern Terraform/OpenTofu and Ansible workflows through allowlisted files, exact confirmation tokens, approval gates, and worker-backed execution.
-            </p>
+      <WorkspaceHeader
+        title="Infrastructure Automation Record"
+        purpose="Govern Terraform/OpenTofu and Ansible workflows through allowlisted files, exact confirmation tokens, approval gates, and worker-backed execution."
+        backLink={{ href: '/dashboard/integrations', label: 'Back to Integrations' }}
+        breadcrumbs={[{ label: 'AutoOps' }, { label: 'Integrations', href: '/dashboard/integrations' }, { label: 'Infrastructure' }]}
+        statusSummary={
+          <div className="flex flex-wrap gap-2">
+            <StatusBadge value={status?.terraform.status ?? 'UNKNOWN'} />
+            <StatusBadge value={status?.ansible.status ?? 'UNKNOWN'} />
           </div>
-          <Button type="button" onClick={() => void loadInfrastructure()} disabled={isLoading || isRefreshing} className="rounded-full bg-white text-slate-950 hover:bg-slate-200">
+        }
+        primaryAction={
+          <Button type="button" onClick={() => void loadInfrastructure()} disabled={isLoading || isRefreshing} className="rounded-full bg-white text-slate-950 hover:bg-slate-200 shadow-sm border border-slate-200">
             <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
             Refresh
           </Button>
-        </div>
-      </section>
+        }
+      />
 
       {error ? <section className="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</section> : null}
       {message ? <section className="rounded-md border border-cyan-200 bg-cyan-50 p-4 text-sm text-blue-800">{message}</section> : null}

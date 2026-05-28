@@ -1,11 +1,11 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { ObservabilityIntegrationStatusResponse } from '@autoops/types';
-import { Activity, ArrowLeft, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
 
 type Response = { data: ObservabilityIntegrationStatusResponse };
 
@@ -36,20 +36,17 @@ export function ObservabilityIntegrationClient() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <Button asChild variant="outline" size="sm" className="rounded-full border-slate-200 bg-slate-50 text-slate-700">
-        <Link href="/dashboard/operations"><ArrowLeft className="h-4 w-4" /> Back to Ops Hub</Link>
-      </Button>
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="flex items-center gap-2 text-2xl font-semibold text-slate-950"><Activity className="h-6 w-6" /> Observability Integrations</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Readiness checks for Prometheus and Grafana using real local endpoints. No fake metrics are generated.</p>
-          </div>
-          <Button type="button" onClick={() => void load()} disabled={loading} className="rounded-full bg-white text-slate-950 hover:bg-slate-200">
+      <WorkspaceHeader
+        title="Observability Telemetry Record"
+        purpose="Verify Prometheus metrics configuration and Grafana dashboard integration settings."
+        backLink={{ href: '/dashboard/integrations', label: 'Back to Integrations' }}
+        breadcrumbs={[{ label: 'AutoOps' }, { label: 'Integrations', href: '/dashboard/integrations' }, { label: 'Observability' }]}
+        primaryAction={
+          <Button type="button" onClick={() => void load()} disabled={loading} className="rounded-full bg-white text-slate-950 hover:bg-slate-200 shadow-sm border border-slate-200">
             <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} /> Refresh
           </Button>
-        </div>
-      </section>
+        }
+      />
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
           <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${tone(data?.prometheus.status)}`}>{data?.prometheus.status ?? 'UNKNOWN'}</span>
