@@ -14,6 +14,34 @@ The project is designed as a serious portfolio and company-pilot-ready direction
 
 Real DevOps work is not only clicking buttons. Teams need safe execution, clear ownership, approval separation, observable worker runtime, incident response, and release gates. AutoOps demonstrates those platform engineering concerns in a complete TypeScript monorepo.
 
+## Quick Install
+
+To quickly set up and run AutoOps locally using Docker Compose, open Windows PowerShell and run the following commands:
+
+```powershell
+git clone https://github.com/Pramu55/AutoOps-2.0.git
+cd AutoOps-2.0
+copy .env.example .env
+docker compose -f docker-compose.yml -f docker-compose.k8s.yml up -d --build
+```
+
+### Local URLs
+
+Once the services are started, you can access the following local endpoints:
+
+- **Web Dashboard**: [http://localhost:3000](http://localhost:3000)
+- **API Health Check**: [http://localhost:4000/health](http://localhost:4000/health)
+- **Grafana Dashboard**: [http://localhost:3001](http://localhost:3001)
+- **Prometheus Dashboard**: [http://localhost:9090](http://localhost:9090)
+
+### Important Setup Notes
+
+- **Provider Credentials**: Real cloud or infrastructure provider credentials (e.g., AWS, Kubernetes, Jenkins tokens) are completely optional and are not bundled with the local setup.
+- **Unconfigured Providers**: Any modules or providers that are not configured with environment credentials will safely display `NOT_CONFIGURED` status badges and screens in the UI rather than showing mock/fake data.
+- **Security Warning**: Do not commit the local `.env` file or any credentials to the git repository.
+
+For more detailed instructions, see the [Installation Guide](./docs/INSTALL.md) and [Docker Compose Deployment Guide](./docs/DOCKER_INSTALL.md).
+
 ## Key Capabilities
 
 - Authenticated web console and Express API.
@@ -277,6 +305,12 @@ AutoOps is a company-evaluator-ready portfolio project with real local integrati
 ## Roadmap
 
 Planned future work includes broader test coverage, notification integrations, cloud deployment guides, GitHub integration, AWS controls, richer audit exports, and optional AI assistant workflows. See [Limitations and Roadmap](./docs/LIMITATIONS_AND_ROADMAP.md).
+
+## Hosted Browser Demo Plan
+
+- Hosted demo is planned as a safe demo/read-only mode.
+- No real Docker socket, Kubernetes credentials, Jenkins token, AWS credentials, or destructive provider actions will be exposed publicly.
+- The browser demo will come after install docs are stable.
 
 ## Author Links
 

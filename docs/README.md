@@ -1,10 +1,12 @@
-# AutoOps Documentation
+﻿# AutoOps Documentation
 
 This is the documentation home for AutoOps, a local-first, production-style DevOps Control Plane for governed Jenkins, Docker, Kubernetes, Terraform/OpenTofu, and Ansible operations.
 
 ## Start Here
 
 - **[Documentation Index](./DOCUMENTATION_INDEX.md)** for a categorized view of all guides.
+- **[Install Guide](./INSTALL.md)** for public local setup from GitHub.
+- **[Docker Compose Install Guide](./DOCKER_INSTALL.md)** for services, ports, provider config, and safe demo notes.
 - **[Evaluator Quickstart](./EVALUATOR_QUICKSTART.md)** for a 10-minute review path.
 - **[AutoOps Demo Script](./AUTOOPS_DEMO_SCRIPT.md)** for a live 10-15 minute live demo.
 - **[Interview Talking Points](./INTERVIEW_TALKING_POINTS.md)** for platform engineering Q&A and resume guides.

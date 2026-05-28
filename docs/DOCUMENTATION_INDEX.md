@@ -1,10 +1,12 @@
-# AutoOps Documentation Index
+﻿# AutoOps Documentation Index
 
 This index categorizes all engineering, deployment, and pilot readiness documentation for AutoOps 2.0.
 
 ---
 
 ## 1. Getting Started
+- **[Install Guide](./INSTALL.md)**: Public local install path with env setup, Docker Compose startup, verification, stop, and troubleshooting.
+- **[Docker Compose Install Guide](./DOCKER_INSTALL.md)**: Service map, port map, compose-file explanation, provider credential boundaries, and hosted demo safety plan.
 - **[Evaluator Quickstart](./EVALUATOR_QUICKSTART.md)**: Fast path for setting up, inspecting, and assessing AutoOps locally.
 - **[Demo Guide](./DEMO_GUIDE.md)**: 5-minute and 10-minute walkthrough guides.
 - **[AutoOps Demo Script](./AUTOOPS_DEMO_SCRIPT.md)**: Realistic 10-15 minute live demo script detailing all refined workspaces and action confirmations.
