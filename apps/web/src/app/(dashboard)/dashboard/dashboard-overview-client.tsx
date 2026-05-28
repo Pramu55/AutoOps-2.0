@@ -83,7 +83,8 @@ export function DashboardOverviewClient() {
         pendingOpsRes,
         recentOpsRes,
         signalsRes,
-        incidentsRes
+        openIncidentsRes,
+        ackIncidentsRes
       ] = await Promise.all([
         api.get<{ data: Project[] }>('/v1/projects'),
         api.get<{ data: Deployment[] }>('/v1/deployments'),
@@ -91,7 +92,8 @@ export function DashboardOverviewClient() {
         api.get<{ data: OperationActivityResponse }>('/v1/ops/activity?status=PENDING_APPROVAL&limit=5'),
         api.get<{ data: OperationActivityResponse }>('/v1/ops/activity?limit=5'),
         api.get<{ data: SignalReadinessResponse }>('/v1/signals/readiness'),
-        api.get<IncidentListResponse>('/v1/incidents?limit=20').catch(() => ({ data: [] as IncidentSummary[] })),
+        api.get<IncidentListResponse>('/v1/incidents?status=OPEN&limit=5').catch(() => ({ data: [] as IncidentSummary[] })),
+        api.get<IncidentListResponse>('/v1/incidents?status=ACKNOWLEDGED&limit=5').catch(() => ({ data: [] as IncidentSummary[] })),
       ]);
 
       setProjects(projectsRes.data);
@@ -101,10 +103,21 @@ export function DashboardOverviewClient() {
       setRecentOperations(recentOpsRes.data.items || []);
       setSignalReadiness(signalsRes.data);
 
-      const activeIncidents = (incidentsRes.data || [])
-        .filter((i) => i.status === 'OPEN' || i.status === 'ACKNOWLEDGED')
-        .slice(0, 5);
-      setIncidents(activeIncidents);
+      const openIncidents = (openIncidentsRes.data || []) as IncidentSummary[];
+      const ackIncidents = (ackIncidentsRes.data || []) as IncidentSummary[];
+
+      const allActiveIncidents: IncidentSummary[] = [
+        ...openIncidents,
+        ...ackIncidents,
+      ];
+
+      allActiveIncidents.sort((a, b) => {
+        const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        return timeB - timeA;
+      });
+
+      setIncidents(allActiveIncidents.slice(0, 5));
 
       const environmentResults = await Promise.allSettled(
         projectsRes.data.map((project) => api.get<{ data: Environment[] }>(`/v1/projects/${project.id}/environments`)),
