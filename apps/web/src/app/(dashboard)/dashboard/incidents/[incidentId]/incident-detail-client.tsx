@@ -8,10 +8,13 @@ import type {
   IncidentTimelineEventSummary,
   IncidentTimelineResponse,
 } from '@autoops/types';
+import { RecordSummary } from '@/components/layout/record-summary';
+import { Breadcrumbs } from '@/components/layout/breadcrumbs';
+import { ContextPanel } from '@/components/layout/context-panel';
+import { EvidencePanel } from '@/components/layout/evidence-panel';
 import {
   ArrowLeft,
   ExternalLink,
-  RefreshCw,
   X,
   Shield,
   Clock,
@@ -23,6 +26,7 @@ import {
   TrendingUp,
   Activity,
   Send,
+  Zap,
 } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -40,13 +44,7 @@ function getErrorMessage(error: unknown): string {
   return 'Unable to load incident.';
 }
 
-function statusTone(status: string): string {
-  if (status === 'RESOLVED') return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-700';
-  if (status === 'ACKNOWLEDGED') return 'border-amber-400/25 bg-amber-400/10 text-amber-700';
-  if (status === 'OPEN') return 'border-rose-400/30 bg-rose-500/10 text-rose-700';
-  if (status === 'ARCHIVED') return 'border-slate-500/25 bg-slate-500/10 text-slate-700';
-  return 'border-slate-500/25 bg-slate-500/10 text-slate-700';
-}
+
 
 function severityTone(severity: string): string {
   if (severity === 'CRITICAL' || severity === 'ERROR') {
@@ -218,47 +216,47 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex items-center gap-4 mb-2">
         <Button asChild variant="outline" size="sm" className="rounded-full border-slate-200 bg-slate-50">
-          <Link href="/dashboard/incidents"><ArrowLeft className="h-4 w-4" />Back to Registry</Link>
+          <Link href="/dashboard/incidents"><ArrowLeft className="h-4 w-4 mr-1.5" />Back</Link>
         </Button>
+        <Breadcrumbs items={[{ label: 'Command Workspace', href: '/dashboard' }, { label: 'Incidents', href: '/dashboard/incidents' }, { label: 'Incident Record' }]} />
       </div>
 
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${severityTone(incident.severity)}`}>{incident.severity}</span>
-              <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${statusTone(incident.status)}`}>{incident.status}</span>
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-500 uppercase tracking-tighter">{incident.source.replace('_', ' ')}</span>
-            </div>
-            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900 lg:text-3xl">{incident.title}</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">{incident.summary}</p>
-          </div>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={() => void loadIncident()} disabled={isLoading} className="rounded-full bg-white text-slate-950 hover:bg-slate-200">
-              <RefreshCw className={isLoading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-            </Button>
-          </div>
-        </div>
-      </section>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-        {[
-          ['Correlation Key', incident.correlationKey],
-          ['Signal Count', incident.signalCount],
-          ['Opened', formatDate(incident.openedAt)],
-          ['Last Observed', formatDate(incident.lastObservedAt)],
-        ].map(([label, value]) => (
-          <section key={label} className="rounded-md border border-slate-200 bg-white p-4">
-            <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-            <p className="mt-2 truncate text-sm font-semibold text-slate-900">{value}</p>
-          </section>
-        ))}
-      </div>
+      <RecordSummary
+        title={incident.title}
+        status={incident.status}
+        severity={incident.severity}
+        source={incident.source.replace('_', ' ')}
+        timestamps={[
+          { label: 'Opened', value: formatDate(incident.openedAt) },
+          { label: 'Last Observed', value: formatDate(incident.lastObservedAt) },
+          { label: 'Signal Count', value: String(incident.signalCount) },
+          { label: 'Correlation Key', value: incident.correlationKey }
+        ]}
+      />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.8fr_1.2fr]">
         <div className="space-y-4">
+          <ContextPanel
+            title="Next Best Actions"
+            description="Recommended operational steps based on current status."
+            actions={
+              incident.status === 'OPEN' ? [
+                'Acknowledge this incident to begin triage.',
+                'Review linked signals and timeline evidence.'
+              ] : incident.status === 'ACKNOWLEDGED' ? [
+                'Add operator notes summarizing your investigation.',
+                'Resolve the incident when mitigated.'
+              ] : incident.status === 'RESOLVED' ? [
+                'Archive the incident when review is complete.'
+              ] : [
+                'This incident record is closed.',
+                'Review timeline and evidence for historical context.'
+              ]
+            }
+          />
+
           <section className="rounded-lg border border-slate-200 bg-white p-5">
             <h2 className="text-base font-semibold text-slate-900">Lifecycle</h2>
             <div className="mt-5 space-y-3 text-xs">
@@ -295,29 +293,29 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
             </div>
           </section>
 
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
-            <h2 className="text-base font-semibold text-slate-900">Contextual links</h2>
-            <div className="mt-5 grid gap-2">
-              {incident.primaryResourceNodeId && (
-                <Link href={`/dashboard/resources?search=${incident.primaryResourceNodeId}`} className="flex items-center justify-between rounded-md border border-slate-100 p-3 text-sm text-slate-700 hover:bg-slate-50">
-                  <span>Primary Resource</span>
-                  <ExternalLink className="h-4 w-4 text-slate-400" />
-                </Link>
-              )}
-              {incident.operationId && (
-                <Link href={`/dashboard/operations/${incident.operationId}`} className="flex items-center justify-between rounded-md border border-slate-100 p-3 text-sm text-slate-700 hover:bg-slate-50">
-                  <span>Linked Operation</span>
-                  <ExternalLink className="h-4 w-4 text-slate-400" />
-                </Link>
-              )}
-              {incident.deploymentId && (
-                <Link href={`/dashboard/deployments/${incident.deploymentId}`} className="flex items-center justify-between rounded-md border border-slate-100 p-3 text-sm text-slate-700 hover:bg-slate-50">
-                  <span>Linked Deployment</span>
-                  <ExternalLink className="h-4 w-4 text-slate-400" />
-                </Link>
-              )}
-            </div>
-          </section>
+          {(incident.primaryResourceNodeId || incident.operationId || incident.deploymentId) && (
+            <ContextPanel
+              title="Context Links"
+              description="Related platforms and entities"
+              actions={[
+                incident.primaryResourceNodeId && (
+                  <Link href={`/dashboard/resources?search=${incident.primaryResourceNodeId}`} className="flex items-center gap-2 hover:underline">
+                    View Primary Resource <ExternalLink className="h-3 w-3" />
+                  </Link>
+                ),
+                incident.operationId && (
+                  <Link href={`/dashboard/operations/${incident.operationId}`} className="flex items-center gap-2 hover:underline">
+                    View Linked Operation <ExternalLink className="h-3 w-3" />
+                  </Link>
+                ),
+                incident.deploymentId && (
+                  <Link href={`/dashboard/deployments/${incident.deploymentId}`} className="flex items-center gap-2 hover:underline">
+                    View Linked Deployment <ExternalLink className="h-3 w-3" />
+                  </Link>
+                )
+              ].filter(Boolean)}
+            />
+          )}
 
           {/* Note Composer */}
           {incident.status !== 'ARCHIVED' && (
@@ -387,39 +385,41 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
             )}
           </section>
 
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
-            <h2 className="text-base font-semibold text-slate-900">Signal Evidence ({incident.evidence.length})</h2>
-            <p className="mt-1 text-sm text-slate-600">Correlated observations that support this incident.</p>
-            <div className="mt-5 overflow-hidden rounded-md border border-slate-200">
+          <EvidencePanel
+            title={`Signal Evidence (${incident.evidence.length})`}
+            description="Correlated observations that support this incident."
+            icon={<Zap className="h-4 w-4 text-blue-600" />}
+          >
+            <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
                 <thead className="bg-slate-50 font-medium text-slate-500 uppercase tracking-wider">
                   <tr>
-                    <th className="px-4 py-3">Role</th>
-                    <th className="px-4 py-3">Severity</th>
-                    <th className="px-4 py-3">Signal</th>
-                    <th className="px-4 py-3">Observed</th>
+                    <th className="px-5 py-3">Role</th>
+                    <th className="px-5 py-3">Severity</th>
+                    <th className="px-5 py-3">Signal</th>
+                    <th className="px-5 py-3">Observed</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {incident.evidence.map((sig) => (
-                    <tr key={sig.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3">
+                    <tr key={sig.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-5 py-4">
                         <span className={`font-semibold ${sig.role === 'TRIGGER' ? 'text-blue-700' : 'text-slate-500'}`}>{sig.role}</span>
                       </td>
-                      <td className="px-4 py-3">
-                        <span className={`font-semibold ${severityTone(sig.severity)}`}>{sig.severity}</span>
+                      <td className="px-5 py-4">
+                        <span className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap ${severityTone(sig.severity)}`}>{sig.severity}</span>
                       </td>
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-slate-900">{sig.title}</p>
-                        <p className="text-slate-500">{sig.type}</p>
+                      <td className="px-5 py-4">
+                        <p className="font-semibold text-slate-900 line-clamp-1">{sig.title}</p>
+                        <p className="mt-0.5 text-[11px] text-slate-500">{sig.type}</p>
                       </td>
-                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{formatDate(sig.observedAt)}</td>
+                      <td className="px-5 py-4 text-slate-500 whitespace-nowrap">{formatDate(sig.observedAt)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </section>
+          </EvidencePanel>
         </div>
       </div>
 
