@@ -40,3 +40,7 @@ Phase 2 introduces the Integrations Hub, providing a read-only, unified view of 
 ## Service Platform Experience Phase 3
 
 Phase 3 transforms the main dashboard into an enterprise Command Workspace. It aggregates active incidents, pending approvals, critical signals, and provider health into a unified "Needs Attention" queue and logical snapshot panels. It adheres to strict React safety patterns and derives all next-best actions safely from real API state.
+
+## Service Platform Experience Phase 4
+
+Phase 4 refactors the Incident Workspace and Incident Detail into an enterprise service-operations record experience. It establishes a dedicated triage queue (Needs Attention) for active incidents, and upgrades the detailed incident record with structured evidence panels, context links, and timeline views without modifying existing backend logic or security constraints.
