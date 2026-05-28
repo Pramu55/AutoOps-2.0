@@ -6,15 +6,14 @@ import type { Deployment, DeploymentEvent } from '@autoops/types';
 import {
   AlertCircle,
   ArrowLeft,
-  CheckCircle2,
-  Clock3,
-  GitBranch,
   GitCommit,
   Loader2,
   RefreshCw,
-  Timer,
 } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
+import { RecordSummary } from '@/components/layout/record-summary';
+import { EvidencePanel } from '@/components/layout/evidence-panel';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
 import { Button } from '@/components/ui/button';
 
 type DeploymentResponse = {
@@ -56,16 +55,6 @@ function shortSha(value: string | null): string {
   return value ? value.slice(0, 12) : 'Not provided';
 }
 
-function statusClass(status: string): string {
-  if (status === 'SUCCEEDED') return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700';
-  if (status === 'FAILED') return 'border-destructive/40 bg-destructive/10 text-destructive';
-  if (status === 'RUNNING' || status === 'DEPLOYING' || status === 'BUILDING') {
-    return 'border-primary/25 bg-primary/10 text-primary';
-  }
-  if (status === 'QUEUED') return 'border-amber-500/25 bg-amber-500/10 text-amber-700';
-  return 'border-border bg-muted text-muted-foreground';
-}
-
 function eventLevelClass(level: string): string {
   if (level === 'ERROR' || level === 'FATAL') return 'border-destructive/40 bg-destructive/10 text-destructive';
   if (level === 'WARN') return 'border-amber-500/25 bg-amber-500/10 text-amber-700';
@@ -81,29 +70,31 @@ function MetadataBlock({ metadata }: { metadata: Record<string, unknown> }) {
     return <p className="text-sm text-muted-foreground">No metadata recorded.</p>;
   }
 
-  return (
-    <pre className="max-h-52 overflow-auto rounded-lg border border-border bg-background/45 p-3 text-xs text-muted-foreground">
-      {JSON.stringify(metadata, null, 2)}
-    </pre>
-  );
-}
+  const entries = Object.entries(metadata).slice(0, 10);
 
-function SummaryTile({
-  label,
-  value,
-  icon,
-}: {
-  label: string;
-  value: string;
-  icon: React.ReactNode;
-}) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-100 p-4 shadow-sm">
-      <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
-        {icon}
-        {label}
-      </div>
-      <p className="mt-3 break-words text-sm font-medium text-foreground">{value}</p>
+    <div className="overflow-hidden rounded-md border border-border bg-background/35">
+      <table className="w-full text-left text-xs text-muted-foreground">
+        <tbody className="divide-y divide-border">
+          {entries.map(([key, value]) => {
+            let displayValue = '';
+            if (value === null || value === undefined) displayValue = 'null';
+            else if (typeof value === 'object') displayValue = '{...}';
+            else displayValue = String(value);
+
+            if (displayValue.length > 100) {
+              displayValue = displayValue.slice(0, 100) + '...';
+            }
+
+            return (
+              <tr key={key}>
+                <td className="w-1/3 p-2 font-medium bg-muted/50 border-r border-border truncate">{key}</td>
+                <td className="p-2 break-all">{displayValue}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -187,117 +178,98 @@ export function DeploymentDetailClient({ deploymentId }: { deploymentId: string 
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="pointer-events-none absolute inset-0 bg-grid opacity-40" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <Button asChild type="button" variant="ghost" className="-ml-3 mb-3">
-            <Link href="/dashboard/deployments">
-              <ArrowLeft className="h-4 w-4" />
-              Deployments
-            </Link>
-            </Button>
-            <p className="text-xs font-medium uppercase tracking-wide text-primary">Deployment Details</p>
-            <div className="mt-2 flex flex-wrap items-center gap-3">
-              <h1 className="break-all text-2xl font-semibold text-foreground">{deployment.id}</h1>
-              <span className={`rounded-md border px-2 py-1 text-xs font-medium ${statusClass(deployment.status)}`}>
-                {deployment.status}
-              </span>
-            </div>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Project {deployment.projectId} / Environment {deployment.environmentId}
-            </p>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void loadDeployment()}
-            disabled={isRefreshing}
-            className="border-slate-200 bg-white hover:bg-slate-50"
-          >
+    <div className="animate-fade-in flex flex-col min-h-screen">
+      <WorkspaceHeader
+        title={deployment.id}
+        purpose={`Project ${deployment.projectId}`}
+        backLink={{ href: "/dashboard/deployments", label: "Deployments" }}
+        breadcrumbs={[{ label: 'Deployments', href: '/dashboard/deployments' }, { label: deployment.id }]}
+        primaryAction={
+          <Button type="button" variant="outline" onClick={() => void loadDeployment()} disabled={isRefreshing} className="bg-white">
             <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
             Refresh
           </Button>
-        </div>
-      </section>
+        }
+      />
 
-      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <SummaryTile label="Trigger" value={deployment.trigger} icon={<CheckCircle2 className="h-4 w-4" />} />
-          <SummaryTile label="Commit" value={shortSha(deployment.commitSha)} icon={<GitCommit className="h-4 w-4" />} />
-          <SummaryTile label="Branch" value={deployment.branch ?? 'Not provided'} icon={<GitBranch className="h-4 w-4" />} />
-          <SummaryTile label="Duration" value={formatDuration(deployment.durationMs)} icon={<Timer className="h-4 w-4" />} />
-          <SummaryTile label="Created" value={formatDate(deployment.createdAt)} icon={<Clock3 className="h-4 w-4" />} />
-          <SummaryTile label="Started" value={formatDate(deployment.startedAt)} icon={<Clock3 className="h-4 w-4" />} />
-          <SummaryTile label="Completed" value={formatDate(deployment.completedAt)} icon={<Clock3 className="h-4 w-4" />} />
-          <SummaryTile label="Image Tag" value={deployment.imageTag ?? 'Not produced'} icon={<CheckCircle2 className="h-4 w-4" />} />
-        </div>
+      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+        <RecordSummary
+          title={deployment.id}
+          status={deployment.status}
+          source={`Project ${deployment.projectId}`}
+          timestamps={[
+            { label: 'Started', value: formatDate(deployment.startedAt) },
+            { label: 'Duration', value: formatDuration(deployment.durationMs) },
+            { label: 'Trigger', value: deployment.trigger },
+            { label: 'Branch', value: deployment.branch ?? 'Not provided' },
+          ]}
+          relatedEntity={{
+            label: 'Commit',
+            value: (
+              <span className="flex items-center gap-2">
+                <GitCommit className="h-4 w-4" /> {shortSha(deployment.commitSha)}
+              </span>
+            )
+          }}
+        />
 
         {deployment.errorMessage ? (
-          <div className="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
             {deployment.errorMessage}
           </div>
         ) : null}
-      </section>
 
-      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-semibold text-foreground">Deployment Metadata</h2>
-        <div className="mt-4">
-          <MetadataBlock metadata={deployment.metadata} />
-        </div>
-      </section>
-
-      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Event Timeline</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Real lifecycle and simulation events from GET /api/v1/deployments/:deploymentId/events.
-            </p>
-          </div>
-          <span className="rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-            {events.length} events
-          </span>
-        </div>
-
-        <div className="relative mt-5 space-y-3">
-          {events.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border bg-background/30 p-8 text-center">
-              <p className="text-sm font-medium text-foreground">No events recorded</p>
-              <p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">
-                Deployment events will appear as the API and worker write lifecycle records.
-              </p>
-            </div>
-          ) : (
-            events.map((event, index) => (
-              <article key={event.id} className="relative rounded-md border border-slate-200 bg-background/35 p-4 pl-12 transition hover:border-primary/30 hover:bg-slate-50">
-                <div className="absolute left-5 top-5 flex h-5 w-5 items-center justify-center rounded-full border border-primary/30 bg-primary/15">
-                  <span className="h-2 w-2 rounded-full bg-primary" />
-                </div>
-                {index < events.length - 1 ? (
-                  <span className="absolute bottom-[-0.85rem] left-[1.82rem] top-10 w-px bg-border" />
-                ) : null}
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-md border px-2 py-1 text-xs font-medium ${eventLevelClass(event.level)}`}>
-                        {event.level}
-                      </span>
-                      <h3 className="text-sm font-semibold text-foreground">{event.type}</h3>
-                    </div>
-                    <p className="mt-2 text-sm text-muted-foreground">{event.message}</p>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="lg:col-span-2 space-y-6">
+            <EvidencePanel title="Event Timeline" description="Real lifecycle and simulation events from GET /api/v1/deployments/:deploymentId/events.">
+              <div className="p-5 relative space-y-3">
+                {events.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-border bg-background/30 p-8 text-center">
+                    <p className="text-sm font-medium text-foreground">No events recorded</p>
+                    <p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">
+                      Deployment events will appear as the API and worker write lifecycle records.
+                    </p>
                   </div>
-                  <p className="shrink-0 text-sm text-muted-foreground">{formatDate(event.occurredAt)}</p>
-                </div>
-                <div className="mt-4">
-                  <MetadataBlock metadata={event.metadata} />
-                </div>
-              </article>
-            ))
-          )}
+                ) : (
+                  events.map((event, index) => (
+                    <article key={event.id} className="relative rounded-md border border-slate-200 bg-background/35 p-4 pl-12 transition hover:border-primary/30 hover:bg-slate-50">
+                      <div className="absolute left-5 top-5 flex h-5 w-5 items-center justify-center rounded-full border border-primary/30 bg-primary/15">
+                        <span className="h-2 w-2 rounded-full bg-primary" />
+                      </div>
+                      {index < events.length - 1 ? (
+                        <span className="absolute bottom-[-0.85rem] left-[1.82rem] top-10 w-px bg-border" />
+                      ) : null}
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`rounded-md border px-2 py-1 text-xs font-medium ${eventLevelClass(event.level)}`}>
+                              {event.level}
+                            </span>
+                            <h3 className="text-sm font-semibold text-foreground">{event.type}</h3>
+                          </div>
+                          <p className="mt-2 text-sm text-muted-foreground">{event.message}</p>
+                        </div>
+                        <p className="shrink-0 text-sm text-muted-foreground">{formatDate(event.occurredAt)}</p>
+                      </div>
+                      <div className="mt-4">
+                        <MetadataBlock metadata={event.metadata} />
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </EvidencePanel>
+          </div>
+
+          <div className="space-y-6">
+            <EvidencePanel title="Deployment Metadata">
+              <div className="p-5">
+                <MetadataBlock metadata={deployment.metadata} />
+              </div>
+            </EvidencePanel>
+          </div>
         </div>
-      </section>
+      </div>
     </div>
   );
 }

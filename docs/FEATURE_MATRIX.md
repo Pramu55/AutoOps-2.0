@@ -71,3 +71,4 @@
 | Dashboard | Command Workspace Phase 3 | Complete | Yes | Read-only aggregator | Integrates Needs Attention, Active Incidents, and Signals |
 | Incidents | Incident Workspace Phase 4 | Complete | Yes | UI/UX refactor | Upgrades incident triage queue and detail views using enterprise layout components |
 | Observability | Observations Workspace Phase 5 | Complete | Yes | UI/UX refactor | Upgrades signals and resources views into enterprise evidence workspaces |
+| Delivery | Delivery Workspace Phase 6 | Complete | Yes | UI/UX refactor | Upgrades projects and deployments views into enterprise workspaces |

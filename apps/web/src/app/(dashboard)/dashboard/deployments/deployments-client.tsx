@@ -9,7 +9,6 @@ import {
   Clock3,
   GitBranch,
   GitCommit,
-  History,
   Loader2,
   Plus,
   RefreshCw,
@@ -17,6 +16,8 @@ import {
   Timer,
 } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
+import { WorkQueue } from '@/components/layout/work-queue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -232,43 +233,41 @@ export function DeploymentsClient() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="pointer-events-none absolute inset-0 bg-grid opacity-50" />
-        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-primary">Release Operations</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Deployments</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-              Real deployment records from the AutoOps API, including queue production,
-              worker lifecycle state, simulation execution metadata, and terminal outcomes.
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void loadDeployments()}
-              disabled={isLoading || isRefreshing}
-              className="border-slate-200 bg-white hover:bg-slate-50"
-            >
-              <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-              Refresh
-            </Button>
-            <Button
-              type="button"
-              onClick={() => setShowTriggerForm((value) => !value)}
-              className="bg-gradient-to-r from-blue-600 to-violet-600 shadow-lg shadow-blue-600/20 hover:from-blue-500 hover:to-violet-500"
-            >
-              <Plus className="h-4 w-4" />
-              New Deployment
-            </Button>
-          </div>
-        </div>
-      </section>
+    <div className="animate-fade-in flex flex-col min-h-screen">
+
+<WorkspaceHeader
+  title="Deployments Workspace"
+  purpose="Controlled delivery activity across environments."
+  icon={<Rocket className="h-6 w-6" />}
+  primaryAction={
+    <Button
+      type="button"
+      onClick={() => setShowTriggerForm((value) => !value)}
+      className="bg-gradient-to-r from-blue-600 to-violet-600 shadow-lg shadow-blue-600/20 hover:from-blue-500 hover:to-violet-500"
+    >
+      <Plus className="h-4 w-4" />
+      New Deployment
+    </Button>
+  }
+  secondaryAction={
+    <Button
+      type="button"
+      variant="outline"
+      onClick={() => void loadDeployments()}
+      disabled={isLoading || isRefreshing}
+      className="border-slate-200 bg-white hover:bg-slate-50"
+    >
+      <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+      Refresh
+    </Button>
+  }
+/>
+<div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+
 
       <div className="grid overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm md:grid-cols-4">
         <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r"><p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Total records</p><p className="mt-2 text-2xl font-bold text-[#16191f]">{stats.total}</p></div>
+    </div>
         <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r"><p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Active</p><p className="mt-2 text-2xl font-bold text-[#16191f]">{stats.active}</p></div>
         <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r"><p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Succeeded</p><p className="mt-2 text-2xl font-bold text-[#037f0c]">{stats.succeeded}</p></div>
         <div className="p-4"><p className="text-xs font-bold uppercase tracking-wide text-[#5f6b7a]">Failed</p><p className="mt-2 text-2xl font-bold text-[#b42318]">{stats.failed}</p></div>
@@ -418,23 +417,84 @@ export function DeploymentsClient() {
         </section>
       ) : null}
 
-      <section className="relative overflow-hidden rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Deployment Records</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Real data from GET /api/v1/deployments.</p>
-          </div>
-          <History className="h-5 w-5 text-muted-foreground" />
-        </div>
 
-        <div className="mt-5">
-          {isLoading ? (
-            <div className="flex items-center justify-center gap-3 rounded-lg border border-border bg-background/30 p-8 text-sm text-muted-foreground">
+      <WorkQueue
+        title="Active Delivery Queue"
+        description="Deployments requiring attention or currently in progress."
+        isEmpty={deployments.filter(d => ['FAILED', 'RUNNING', 'QUEUED'].includes(d.status)).length === 0}
+        emptyState={
+          <div className="rounded-lg border border-dashed border-border bg-background/30 p-8 text-center">
+            <p className="text-sm font-medium text-foreground">No active deployments</p>
+            <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
+              Review recent successful deliveries or trigger a new deployment.
+            </p>
+          </div>
+        }
+      >
+        <div className="divide-y divide-border">
+          {deployments.filter(d => ['FAILED', 'RUNNING', 'QUEUED'].includes(d.status)).map((deployment) => (
+            <article
+              key={deployment.id}
+              className="grid grid-cols-1 gap-4 bg-background/25 p-4 transition hover:bg-slate-50 xl:grid-cols-[1.1fr_1fr_1fr_1fr_0.9fr_0.8fr] xl:items-center"
+            >
+              <div>
+                <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-medium ${statusClass(deployment.status)}`}>
+                  {deployment.status}
+                </span>
+                <p className="mt-2 break-all text-xs text-muted-foreground">{deployment.id}</p>
+              </div>
+              <div className="min-w-0 text-sm">
+                <p className="truncate text-foreground">Project {deployment.projectId}</p>
+                <p className="mt-1 truncate text-muted-foreground">Environment {deployment.environmentId}</p>
+              </div>
+              <div className="space-y-2 text-sm">
+                <p className="flex items-center gap-2 text-foreground">
+                  <GitCommit className="h-4 w-4 text-muted-foreground" />
+                  {shortSha(deployment.commitSha)}
+                </p>
+                <p className="flex items-center gap-2 text-muted-foreground">
+                  <GitBranch className="h-4 w-4" />
+                  {deployment.branch ?? 'No branch'}
+                </p>
+                <p className="text-xs text-muted-foreground">{deployment.trigger}</p>
+              </div>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p className="flex items-center gap-2">
+                  <Clock3 className="h-4 w-4" />
+                  Started {formatDate(deployment.startedAt)}
+                </p>
+                <p className="flex items-center gap-2">
+                  <Timer className="h-4 w-4" />
+                  {formatDuration(deployment.durationMs)}
+                </p>
+              </div>
+              <p className="text-sm text-muted-foreground">{formatDate(deployment.createdAt)}</p>
+              <Button asChild type="button" variant="outline" size="sm">
+                <Link href={`/dashboard/deployments/${deployment.id}`}>View Details</Link>
+              </Button>
+              {deployment.errorMessage ? (
+                <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive xl:col-span-6">
+                  {deployment.errorMessage}
+                </div>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      </WorkQueue>
+
+      <WorkQueue
+        title="Delivery History"
+        description="Full record of deployment activity across all projects and environments."
+        count={deployments.length}
+        isEmpty={deployments.length === 0 || isLoading || !!loadError}
+        emptyState={
+          isLoading ? (
+            <div className="flex items-center justify-center gap-3 p-8 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              Loading deployments from the API...
+              Loading deployments...
             </div>
           ) : loadError ? (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-5">
+            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-5 mx-5 my-5">
               <div className="flex items-start gap-3">
                 <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
                 <div>
@@ -443,77 +503,67 @@ export function DeploymentsClient() {
                 </div>
               </div>
             </div>
-          ) : deployments.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border bg-background/30 p-8 text-center">
+          ) : (
+            <div className="rounded-lg border border-dashed border-border bg-background/30 p-8 text-center m-5">
               <p className="text-sm font-medium text-foreground">No deployments yet</p>
               <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
-                Deployment records will appear after a project environment deployment is triggered
-                through the existing API.
+                Deployment records will appear after a project environment deployment is triggered.
               </p>
             </div>
-          ) : (
-            <div className="overflow-hidden rounded-md border border-slate-200">
-              <div className="hidden grid-cols-[1.1fr_1fr_1fr_1fr_0.9fr_0.8fr] gap-4 border-b border-slate-200 bg-slate-100 px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground xl:grid">
-                <span>Status</span>
-                <span>Project / Environment</span>
-                <span>Source</span>
-                <span>Timing</span>
-                <span>Created</span>
-                <span>Action</span>
+          )
+        }
+      >
+        <div className="divide-y divide-border">
+          {deployments.map((deployment) => (
+            <article
+              key={deployment.id}
+              className="grid grid-cols-1 gap-4 bg-background/25 p-4 transition hover:bg-slate-50 xl:grid-cols-[1.1fr_1fr_1fr_1fr_0.9fr_0.8fr] xl:items-center"
+            >
+              <div>
+                <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-medium ${statusClass(deployment.status)}`}>
+                  {deployment.status}
+                </span>
+                <p className="mt-2 break-all text-xs text-muted-foreground">{deployment.id}</p>
               </div>
-              <div className="divide-y divide-border">
-                {deployments.map((deployment) => (
-                  <article
-                    key={deployment.id}
-                    className="grid grid-cols-1 gap-4 bg-background/25 p-4 transition hover:bg-slate-50 xl:grid-cols-[1.1fr_1fr_1fr_1fr_0.9fr_0.8fr] xl:items-center"
-                  >
-                    <div>
-                      <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-medium ${statusClass(deployment.status)}`}>
-                        {deployment.status}
-                      </span>
-                      <p className="mt-2 break-all text-xs text-muted-foreground">{deployment.id}</p>
-                    </div>
-                    <div className="min-w-0 text-sm">
-                      <p className="truncate text-foreground">Project {deployment.projectId}</p>
-                      <p className="mt-1 truncate text-muted-foreground">Environment {deployment.environmentId}</p>
-                    </div>
-                    <div className="space-y-2 text-sm">
-                      <p className="flex items-center gap-2 text-foreground">
-                        <GitCommit className="h-4 w-4 text-muted-foreground" />
-                        {shortSha(deployment.commitSha)}
-                      </p>
-                      <p className="flex items-center gap-2 text-muted-foreground">
-                        <GitBranch className="h-4 w-4" />
-                        {deployment.branch ?? 'No branch'}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{deployment.trigger}</p>
-                    </div>
-                    <div className="space-y-2 text-sm text-muted-foreground">
-                      <p className="flex items-center gap-2">
-                        <Clock3 className="h-4 w-4" />
-                        Started {formatDate(deployment.startedAt)}
-                      </p>
-                      <p className="flex items-center gap-2">
-                        <Timer className="h-4 w-4" />
-                        {formatDuration(deployment.durationMs)}
-                      </p>
-                    </div>
-                    <p className="text-sm text-muted-foreground">{formatDate(deployment.createdAt)}</p>
-                    <Button asChild type="button" variant="outline" size="sm">
-                      <Link href={`/dashboard/deployments/${deployment.id}`}>View Details</Link>
-                    </Button>
-                    {deployment.errorMessage ? (
-                      <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive xl:col-span-6">
-                        {deployment.errorMessage}
-                      </div>
-                    ) : null}
-                  </article>
-                ))}
+              <div className="min-w-0 text-sm">
+                <p className="truncate text-foreground">Project {deployment.projectId}</p>
+                <p className="mt-1 truncate text-muted-foreground">Environment {deployment.environmentId}</p>
               </div>
-            </div>
-          )}
+              <div className="space-y-2 text-sm">
+                <p className="flex items-center gap-2 text-foreground">
+                  <GitCommit className="h-4 w-4 text-muted-foreground" />
+                  {shortSha(deployment.commitSha)}
+                </p>
+                <p className="flex items-center gap-2 text-muted-foreground">
+                  <GitBranch className="h-4 w-4" />
+                  {deployment.branch ?? 'No branch'}
+                </p>
+                <p className="text-xs text-muted-foreground">{deployment.trigger}</p>
+              </div>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p className="flex items-center gap-2">
+                  <Clock3 className="h-4 w-4" />
+                  Started {formatDate(deployment.startedAt)}
+                </p>
+                <p className="flex items-center gap-2">
+                  <Timer className="h-4 w-4" />
+                  {formatDuration(deployment.durationMs)}
+                </p>
+              </div>
+              <p className="text-sm text-muted-foreground">{formatDate(deployment.createdAt)}</p>
+              <Button asChild type="button" variant="outline" size="sm">
+                <Link href={`/dashboard/deployments/${deployment.id}`}>View Details</Link>
+              </Button>
+              {deployment.errorMessage ? (
+                <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive xl:col-span-6">
+                  {deployment.errorMessage}
+                </div>
+              ) : null}
+            </article>
+          ))}
         </div>
-      </section>
+      </WorkQueue>
+
     </div>
   );
 }

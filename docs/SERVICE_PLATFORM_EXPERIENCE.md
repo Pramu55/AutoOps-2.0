@@ -52,3 +52,9 @@ Phase 3 transforms the main dashboard into an enterprise Command Workspace. It a
 - Wraps normalized signals and topology resources into `WorkQueue` and `EvidencePanel`.
 - Signals are correctly framed as observations, distinct from incidents.
 - Resource Graph is explicitly positioned as topology and identity context, not as a permission source.
+
+### Phase 6: Delivery Workspace
+- Refactors /dashboard/projects and /dashboard/deployments to standard enterprise workspaces.
+- Uses WorkspaceHeader and WorkQueue for project and deployment list views.
+- Replaces raw JSON metadata blocks with safe structured EvidencePanels.
+- Preserves critical deployment safety controls (tenant isolation, RBAC, correct commit inputs).
