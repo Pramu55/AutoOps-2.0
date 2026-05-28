@@ -1,11 +1,11 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { DevOpsToolsStatusResponse } from '@autoops/types';
-import { ArrowLeft, RefreshCw, Wrench } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
 
 type Response = { data: DevOpsToolsStatusResponse };
 
@@ -34,20 +34,28 @@ export function DevOpsToolsClient() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <Button asChild variant="outline" size="sm" className="rounded-full border-slate-200 bg-slate-50 text-slate-700">
-        <Link href="/dashboard/operations"><ArrowLeft className="h-4 w-4" /> Back to Ops Hub</Link>
-      </Button>
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="flex items-center gap-2 text-2xl font-semibold text-slate-950"><Wrench className="h-6 w-6" /> DevOps Tools Readiness</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Runtime detection for CLI tools used by local DevOps workflows. Validation is read-only and does not apply cluster or cloud changes.</p>
-          </div>
-          <Button type="button" onClick={() => void load()} disabled={loading} className="rounded-full bg-white text-slate-950 hover:bg-slate-200">
-            <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} /> Refresh
+      <WorkspaceHeader
+        title="DevOps Tools Provider Record"
+        purpose="CLI binaries availability check for Helm, Kustomize, kubectl, Terraform, and Ansible."
+        backLink={{ href: '/dashboard/integrations', label: 'Back to Integrations' }}
+        breadcrumbs={[{ label: 'AutoOps' }, { label: 'Integrations', href: '/dashboard/integrations' }, { label: 'DevOps Tools' }]}
+        statusSummary={
+          <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${tone(data?.status ?? 'UNKNOWN')}`}>
+            {data?.status ?? 'UNKNOWN'}
+          </span>
+        }
+        primaryAction={
+          <Button
+            type="button"
+            onClick={() => void load()}
+            disabled={loading}
+            className="rounded-full bg-white text-slate-955 hover:bg-slate-200 shadow-sm border border-slate-200"
+          >
+            <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+            Refresh
           </Button>
-        </div>
-      </section>
+        }
+      />
       {data?.status === 'BLOCKED_BY_ORG_POLICY' ? (
         <section className="rounded-md border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
           <h2 className="text-base font-semibold text-slate-900">Provider access is disabled for this organization</h2>

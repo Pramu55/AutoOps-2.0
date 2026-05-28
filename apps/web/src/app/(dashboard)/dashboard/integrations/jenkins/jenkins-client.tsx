@@ -14,7 +14,6 @@ import type {
 } from '@autoops/types';
 import {
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -28,6 +27,7 @@ import {
 } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
 import { Input } from '@/components/ui/input';
 
 type StatusResponse = { data: JenkinsStatusResponse };
@@ -263,40 +263,28 @@ export function JenkinsClient() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <Button
-        asChild
-        variant="outline"
-        size="sm"
-        className="rounded-full border-slate-200 bg-slate-50 text-slate-700 hover:bg-blue-50"
-      >
-        <Link href="/dashboard/operations">
-          <ArrowLeft className="h-4 w-4" />
-          Back to Ops Hub
-        </Link>
-      </Button>
-
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <span className={`inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold ${statusTone(currentStatus)}`}>
-              {currentStatus}
-            </span>
-            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900 lg:text-3xl">Jenkins Control Connector</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-              Real Jenkins status, jobs, builds, queue visibility, and controlled build triggers through the Jenkins Remote Access API.
-            </p>
-          </div>
+      <WorkspaceHeader
+        title="Jenkins Provider Record"
+        purpose="Controlled Jenkins job execution and build pipeline visibility."
+        backLink={{ href: '/dashboard/integrations', label: 'Back to Integrations' }}
+        breadcrumbs={[{ label: 'AutoOps' }, { label: 'Integrations', href: '/dashboard/integrations' }, { label: 'Jenkins' }]}
+        statusSummary={
+          <span className={`inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold ${statusTone(currentStatus)}`}>
+            {currentStatus}
+          </span>
+        }
+        primaryAction={
           <Button
             type="button"
             onClick={() => void loadJenkins()}
             disabled={isLoading || isRefreshing}
-            className="rounded-full bg-white text-slate-950 hover:bg-slate-200"
+            className="rounded-full bg-white text-slate-950 hover:bg-slate-200 shadow-sm border border-slate-200"
           >
             <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
             Refresh
           </Button>
-        </div>
-      </section>
+        }
+      />
 
       {error ? (
         <div className={`rounded-md border px-4 py-3 text-sm ${inventoryBlocked ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-rose-200 bg-rose-50 text-rose-800'}`}>

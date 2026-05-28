@@ -58,3 +58,8 @@ Phase 3 transforms the main dashboard into an enterprise Command Workspace. It a
 - Uses WorkspaceHeader and WorkQueue for project and deployment list views.
 - Replaces raw JSON metadata blocks with safe structured EvidencePanels.
 - Preserves critical deployment safety controls (tenant isolation, RBAC, correct commit inputs).
+
+### Phase 9: Integration & Admin Platform Polish
+- Upgrades `/dashboard/integrations` and individual provider pages with `WorkspaceHeader` layouts and consistent category groupings and breadcrumbs.
+- Standardizes Settings workspace placeholder with clean, honest, organization-wide copy.
+- Enforces strict React safety, type safety, and secret/credential safety guidelines.

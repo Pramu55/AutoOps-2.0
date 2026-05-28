@@ -1,3 +1,4 @@
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
 import type { Metadata } from 'next';
 import {
   Building2,
@@ -45,13 +46,13 @@ function SettingsSection({
 export default function SettingsPage() {
   return (
     <div className="space-y-6 animate-fade-in">
-      <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-primary">Governance</p>
-        <h1 className="mt-2 text-2xl font-semibold text-foreground">Settings</h1>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Organization governance shell for identity, policy, secrets, execution limits,
-          auditability, infrastructure, and provider integrations. These are roadmap surfaces only.
-        </p>
+      <WorkspaceHeader
+        title="Settings Workspace"
+        purpose="Organization governance shell for identity, policy, secrets, execution limits, and provider integrations. These are roadmap surfaces only."
+        breadcrumbs={[{ label: 'AutoOps' }, { label: 'Settings' }]}
+      />
+      <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+        Organization and admin settings will appear here as controls become available.
       </div>
 
       <SettingsSection

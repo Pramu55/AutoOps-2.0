@@ -25,9 +25,10 @@ import type {
   AwsReleaseReadinessResponse,
 } from '@autoops/types';
 import { AwsReleaseStatus } from '@autoops/types';
-import { ArrowLeft, Cloud, RefreshCw, CheckCircle2, XCircle, AlertCircle, Play, ShieldAlert, FileText, Activity, TrendingUp, RotateCcw, Clock, ArrowRight, History, UserCheck } from 'lucide-react';
+import { RefreshCw, CheckCircle2, XCircle, AlertCircle, Play, ShieldAlert, FileText, Activity, TrendingUp, RotateCcw, Clock, ArrowRight, History, UserCheck } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
 
 function apiErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.message;
@@ -261,20 +262,28 @@ export function AwsDeploymentClient() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <Button asChild variant="outline" size="sm" className="rounded-full border-slate-200 bg-slate-50 text-slate-700">
-        <Link href="/dashboard/operations"><ArrowLeft className="h-4 w-4" /> Back to Ops Hub</Link>
-      </Button>
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="flex items-center gap-2 text-2xl font-semibold text-slate-950"><Cloud className="h-6 w-6" /> AWS Diagnostics</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">AWS Day 1 Deployment Foundation Readiness Checklist</p>
-          </div>
-          <Button type="button" onClick={() => void load()} disabled={loading} className="rounded-full bg-white text-slate-950 hover:bg-slate-200">
+      <WorkspaceHeader
+        title="AWS Provider Record"
+        purpose="AWS Day 1 Deployment Foundation Readiness Checklist and ECS Fargate release gate state."
+        backLink={{ href: '/dashboard/integrations', label: 'Back to Integrations' }}
+        breadcrumbs={[{ label: 'AutoOps' }, { label: 'Integrations', href: '/dashboard/integrations' }, { label: 'AWS' }]}
+        statusSummary={
+          status && (
+            <span className={`inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold ${
+              status.status === 'CONNECTED' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+              status.status === 'AUTH_FAILED' || status.status === 'BLOCKED_BY_ORG_POLICY' || status.status === 'ERROR' ? 'bg-rose-50 border-rose-200 text-rose-700' :
+              'bg-amber-50 border-amber-200 text-amber-700'
+            }`}>
+              {status.status}
+            </span>
+          )
+        }
+        primaryAction={
+          <Button type="button" onClick={() => void load()} disabled={loading} className="rounded-full bg-white text-slate-950 hover:bg-slate-200 shadow-sm border border-slate-200">
             <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} /> Refresh
           </Button>
-        </div>
-      </section>
+        }
+      />
 
       {identity && (
         <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
