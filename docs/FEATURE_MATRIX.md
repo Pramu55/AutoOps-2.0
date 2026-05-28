@@ -72,4 +72,7 @@
 | Incidents | Incident Workspace Phase 4 | Complete | Yes | UI/UX refactor | Upgrades incident triage queue and detail views using enterprise layout components |
 | Observability | Observations Workspace Phase 5 | Complete | Yes | UI/UX refactor | Upgrades signals and resources views into enterprise evidence workspaces |
 | Delivery | Delivery Workspace Phase 6 | Complete | Yes | UI/UX refactor | Upgrades projects and deployments views into enterprise workspaces |
+| Governance | Governance Workspace Phase 7 | Complete | Yes | UI/UX refactor | Upgrades governance evidence views into enterprise audit workspaces with safe export. |
+| Operations | Operations Workspace Polish Phase 8 | Complete | Yes | UI/UX refactor | Upgrades operations queue controls and detail recovery triggers. |
 | Integration & Admin | Integration & Admin Platform Polish Phase 9 | Complete | Yes | UI/UX refactor | Standardizes layouts, WorkspaceHeaders, and breadcrumbs across all provider pages and settings placeholder. |
+| Demo Freeze | Company-Ready Demo Freeze Phase 10 | Complete | N/A | Documentation freeze | Packages the final portfolio guides, demo script, freeze reports, and talk points. |

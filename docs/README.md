@@ -4,7 +4,11 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 
 ## Start Here
 
-- [Evaluator Quickstart](./EVALUATOR_QUICKSTART.md) for a 10-minute review path.
+- **[Documentation Index](./DOCUMENTATION_INDEX.md)** for a categorized view of all guides.
+- **[Evaluator Quickstart](./EVALUATOR_QUICKSTART.md)** for a 10-minute review path.
+- **[AutoOps Demo Script](./AUTOOPS_DEMO_SCRIPT.md)** for a live 10-15 minute live demo.
+- **[Interview Talking Points](./INTERVIEW_TALKING_POINTS.md)** for platform engineering Q&A and resume guides.
+- **[Final Company-Ready Freeze Report](./FINAL_COMPANY_READY_FREEZE_REPORT.md)** for freeze quality checkpoints.
 - [Demo Guide](./DEMO_GUIDE.md) for a guided company demo.
 - [Architecture Overview](./ARCHITECTURE_OVERVIEW.md) for system design and diagrams.
 - [Feature Matrix](./FEATURE_MATRIX.md) for the current capability map.
@@ -103,6 +107,9 @@ This is the documentation home for AutoOps, a local-first, production-style DevO
 - [LinkedIn and Resume Content](./LINKEDIN_AND_RESUME_CONTENT.md)
 - [Portfolio Case Study](./PORTFOLIO_CASE_STUDY.md)
 - [Final Demo Script](./FINAL_DEMO_SCRIPT.md)
+- [AutoOps Demo Script](./AUTOOPS_DEMO_SCRIPT.md)
+- [Interview Talking Points](./INTERVIEW_TALKING_POINTS.md)
+- [Final Company-Ready Freeze Report](./FINAL_COMPANY_READY_FREEZE_REPORT.md)
 
 ## Roadmap
 

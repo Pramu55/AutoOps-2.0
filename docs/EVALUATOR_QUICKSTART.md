@@ -66,7 +66,7 @@ docker compose -f docker-compose.yml -f docker-compose.k8s.yml ps
 
 ## Suggested Demo Path
 
-Use the [Demo Guide](./DEMO_GUIDE.md#demo-flow-summary).
+Use the [Demo Guide](./DEMO_GUIDE.md#demo-flow-summary) or follow the comprehensive [AutoOps Demo Script](./AUTOOPS_DEMO_SCRIPT.md).
 
 ## How to Evaluate Architecture
 
