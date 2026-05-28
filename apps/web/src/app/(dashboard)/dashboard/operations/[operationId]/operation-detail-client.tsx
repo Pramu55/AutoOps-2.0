@@ -12,7 +12,6 @@ import type {
 import {
   Activity,
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
   ExternalLink,
   RefreshCw,
@@ -25,6 +24,9 @@ import {
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
+import { EvidencePanel } from '@/components/layout/evidence-panel';
+import { BackLink } from '@/components/layout/back-link';
 
 type DetailApiResponse = { data: OperationDetailResponse };
 type JenkinsRetryResponse = { data: JenkinsTriggerBuildResponse };
@@ -359,12 +361,7 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
   if (error || !detail) {
     return (
       <div className="space-y-6 animate-fade-in">
-        <Button asChild variant="outline" size="sm" className="rounded-full border-slate-200 bg-slate-50">
-          <Link href="/dashboard/operations">
-            <ArrowLeft className="h-4 w-4" />
-            Back to Ops Hub
-          </Link>
-        </Button>
+        <BackLink href="/dashboard/operations" label="Back to Ops Hub" />
         <section className="rounded-lg border border-rose-400/30 bg-rose-500/10 p-6 text-sm text-rose-800">
           {error ?? 'Operation detail was not found.'}
         </section>
@@ -374,38 +371,31 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <Button asChild variant="outline" size="sm" className="rounded-full border-slate-200 bg-slate-50 text-slate-700 hover:bg-blue-50">
-        <Link href="/dashboard/operations">
-          <ArrowLeft className="h-4 w-4" />
-          Back to Ops Hub
-        </Link>
-      </Button>
-
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${statusTone(detail.status)}`}>
-                {detail.status}
-              </span>
-              <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">
-                {detail.source}
-              </span>
-              <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${riskTone(detail.governance.riskLevel)}`}>
-                {detail.governance.riskLevel} risk
-              </span>
-            </div>
-            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900 lg:text-3xl">{detail.title}</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-              Safe operation detail for {detail.targetLabel ?? 'an AutoOps operation'}. Raw provider input, result, and error blobs are not exposed.
-            </p>
+      <WorkspaceHeader
+        title="Operation Record"
+        purpose={`Safe operation detail for ${detail.targetLabel ?? 'an AutoOps operation'}. Raw provider input, result, and error blobs are not exposed.`}
+        backLink={{ href: '/dashboard/operations', label: 'Back to Ops Hub' }}
+        breadcrumbs={[{ label: 'AutoOps' }, { label: 'Operations', href: '/dashboard/operations' }, { label: shortId(detail.id) }]}
+        statusSummary={
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${statusTone(detail.status)}`}>
+              {detail.status}
+            </span>
+            <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">
+              {detail.source}
+            </span>
+            <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${riskTone(detail.governance.riskLevel)}`}>
+              {detail.governance.riskLevel} risk
+            </span>
           </div>
+        }
+        primaryAction={
           <Button type="button" onClick={() => void loadDetail()} disabled={isRefreshing} className="rounded-full bg-white text-slate-950 hover:bg-slate-200">
             <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
             Refresh
           </Button>
-        </div>
-      </section>
+        }
+      />
 
       {queuedOperationId ? (
         <section className="rounded-md border border-cyan-300/20 bg-cyan-300/10 p-4 text-sm text-blue-700">
@@ -445,9 +435,8 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.75fr_1.25fr]">
-        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-base font-semibold text-slate-900">Governance</h2>
-          <div className="mt-5 grid gap-3 text-sm">
+        <EvidencePanel title="Governance" className="shadow-sm">
+          <div className="p-5 grid gap-3 text-sm">
             {[
               ['Risk level', detail.governance.riskLevel],
               ['Confirmation required', detail.governance.confirmationRequired ? 'Yes' : 'No'],
@@ -468,11 +457,10 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
               </div>
             ))}
           </div>
-        </section>
+        </EvidencePanel>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-base font-semibold text-slate-900">Lifecycle</h2>
-          <div className="mt-5 space-y-3">
+        <EvidencePanel title="Lifecycle" className="shadow-sm">
+          <div className="p-5 space-y-3">
             {detail.lifecycle.map((item) => (
               <div key={item.label} className="rounded-md border border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -486,13 +474,13 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
               </div>
             ))}
           </div>
-        </section>
+        </EvidencePanel>
       </div>
 
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+      <EvidencePanel title="Governance Evidence" className="shadow-sm">
+        <div className="p-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Governance Evidence</h2>
             <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
               {detail.governanceEvidence.evidenceSummary}
             </p>
@@ -519,9 +507,10 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
           ))}
         </div>
         <div className="mt-4 rounded-md border border-cyan-300/15 bg-cyan-300/10 p-4 text-sm text-blue-700">
-          Evidence excludes raw input, raw provider result objects, raw error objects, stack traces, tokens, kubeconfig, and environment values.
+            Evidence excludes raw input, raw provider result objects, raw error objects, stack traces, tokens, kubeconfig, and environment values.
+          </div>
         </div>
-      </section>
+      </EvidencePanel>
 
       {isPendingApproval ? (
         <section className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-5 shadow-sm">
@@ -567,9 +556,9 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
       ) : null}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <EvidencePanel title="Provider details" className="shadow-sm">
+          <div className="p-5">
           <div className="flex items-center justify-between gap-4">
-            <h2 className="text-base font-semibold text-slate-900">Provider details</h2>
             {detail.externalUrl ? (
               <Button asChild size="sm" variant="outline" className="rounded-full border-slate-200 bg-slate-50">
                 <a href={detail.externalUrl} target="_blank" rel="noreferrer noopener">
@@ -594,11 +583,12 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
               </p>
             ))}
           </div>
-        </section>
+          </div>
+        </EvidencePanel>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-base font-semibold text-slate-900">Safe result</h2>
-          <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-4">
+        <EvidencePanel title="Safe result" className="shadow-sm">
+          <div className="p-5">
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
             {detail.errorMessage ? (
               <div className="flex gap-3 text-sm text-rose-800">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-700" />
@@ -617,14 +607,14 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
           <div className="mt-5 rounded-md border border-cyan-300/15 bg-cyan-300/10 p-4 text-sm text-blue-700">
             Raw operation input, result, and error metadata are intentionally hidden from this view.
           </div>
-        </section>
+          </div>
+        </EvidencePanel>
       </div>
 
       {detail.status === 'FAILED' ? (
-        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <EvidencePanel title="Linked incident" className="shadow-sm">
+          <div className="p-5 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
-              <h2 className="text-base font-semibold text-slate-900">Linked incident</h2>
               {detail.incident ? (
                 <>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -650,13 +640,13 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
               </Button>
             ) : null}
           </div>
-        </section>
+        </EvidencePanel>
       ) : null}
 
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Recovery</h2>
+      <EvidencePanel title="Recovery" className="shadow-sm">
+          <div className="p-5">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div>
             <p className="mt-1 text-sm text-slate-600">
               Recovery uses provider-specific controlled endpoints with the same confirmation model.
             </p>
@@ -681,8 +671,9 @@ export function OperationDetailClient({ operationId }: { operationId: string }) 
               ? `${retryAction.label} is available for ${retryAction.target}. Confirmation ${retryAction.token} is required.`
               : detail.permissions.reason ?? 'You do not have permission to trigger recovery for this operation.'
             : detail.retry.reason ?? 'Recovery action is not available for this operation.'}
-        </div>
-      </section>
+          </div>
+          </div>
+        </EvidencePanel>
 
       {pendingRetry ? (
         <div
