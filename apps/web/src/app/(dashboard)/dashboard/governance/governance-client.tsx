@@ -11,9 +11,12 @@ import type {
   OperationRiskLevel,
   OperationStatus,
 } from '@autoops/types';
-import { AlertTriangle, Download, ExternalLink, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Download, ExternalLink, RefreshCw } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { WorkspaceHeader } from '@/components/layout/workspace-header';
+import { EvidencePanel } from '@/components/layout/evidence-panel';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 type GovernanceApiResponse = { data: GovernanceEvidenceResponse };
 type GovernanceExportApiResponse = { data: GovernanceExportResponse };
@@ -59,22 +62,7 @@ function actorLabel(actor: GovernanceEvidenceItem['requestedBy']): string {
   return actor.name ?? actor.email ?? actor.id;
 }
 
-function tone(value: string): string {
-  if (['SUCCEEDED', 'APPROVED', 'LOW', 'RESOLVED', 'NOT_REQUIRED'].includes(value)) {
-    return 'border-emerald-300 bg-emerald-50 text-emerald-700';
-  }
-  if (['FAILED', 'REJECTED', 'HIGH', 'OPEN', 'CANCELLED'].includes(value)) {
-    return 'border-rose-300 bg-rose-50 text-rose-700';
-  }
-  if (['PENDING', 'PENDING_APPROVAL', 'MEDIUM', 'RUNNING', 'QUEUED', 'ACKNOWLEDGED'].includes(value)) {
-    return 'border-amber-300 bg-amber-50 text-amber-800';
-  }
-  return 'border-slate-300 bg-slate-50 text-slate-700';
-}
 
-function Badge({ value }: { value: string }) {
-  return <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${tone(value)}`}>{value}</span>;
-}
 
 function SummaryCard({ label, value, helper }: { label: string; value: string | number; helper: string }) {
   return (
@@ -154,31 +142,28 @@ export function GovernanceClient() {
   const evidence = data?.evidence ?? [];
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-blue-700">
-              <ShieldCheck className="h-4 w-4" />
-              AutoOps &gt; Governance
-            </div>
-            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950 lg:text-3xl">Governance Center</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-              Review audit-style evidence for controlled operations without exposing raw provider metadata, secrets, or unsafe payloads.
-            </p>
-          </div>
+    <div className="animate-fade-in flex flex-col min-h-screen">
+      <WorkspaceHeader
+        title="Governance Workspace"
+        purpose="Audit evidence and approval governance for controlled operations."
+        breadcrumbs={[
+          { label: 'AutoOps', href: '/dashboard' },
+          { label: 'Governance', href: '/dashboard/governance' }
+        ]}
+        primaryAction={
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" onClick={() => void exportEvidence()} disabled={isExporting} className="rounded-full border-slate-200 bg-slate-50">
+            <Button type="button" variant="outline" onClick={() => void exportEvidence()} disabled={isExporting} className="bg-white">
               <Download className="h-4 w-4" />
               {isExporting ? 'Exporting...' : 'Export JSON'}
             </Button>
-            <Button type="button" onClick={() => void loadGovernance()} disabled={isRefreshing} className="rounded-full bg-white text-slate-950 hover:bg-slate-200">
+            <Button type="button" variant="outline" onClick={() => void loadGovernance()} disabled={isRefreshing} className="bg-white">
               <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
               Refresh
             </Button>
           </div>
-        </div>
-      </section>
+        }
+      />
+      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 space-y-6">
 
       {error ? (
         <section className="rounded-md border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800">{error}</section>
@@ -196,49 +181,46 @@ export function GovernanceClient() {
         <SummaryCard label="Median duration" value={formatDuration(summary?.medianExecutionDurationMs ?? null)} helper="Execution window" />
       </div>
 
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search target, requester, incident, or operation ID"
-            className="min-h-10 flex-1 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-          />
-          {[
-            ['Provider', provider, setProvider, PROVIDERS],
-            ['Status', status, setStatus, STATUSES],
-            ['Risk', risk, setRisk, RISKS],
-            ['Approval', approvalStatus, setApprovalStatus, APPROVALS],
-          ].map(([label, value, setter, options]) => (
-            <label key={label as string} className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              {label as string}
-              <select
-                value={value as string}
-                onChange={(event) => (setter as (next: string) => void)(event.target.value)}
-                className="mt-1 block min-h-10 rounded-md border border-slate-300 bg-white px-3 text-sm font-normal normal-case tracking-normal text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              >
-                {(options as string[]).map((option) => (
-                  <option key={option} value={option}>
-                    {option === 'ALL' ? 'All' : option}
-                  </option>
+      <EvidencePanel title="Governance Evidence" description="Tenant-scoped requester, policy, approval, worker, and incident evidence for controlled operations.">
+        <div className="border-b border-slate-100 bg-slate-50/50 px-5 py-3">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center flex-1">
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search target, requester, incident, or operation ID"
+                className="min-h-9 w-full xl:max-w-md rounded-md border border-input bg-white px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+              <div className="flex flex-wrap gap-3">
+                {[
+                  ['Provider', provider, setProvider, PROVIDERS],
+                  ['Status', status, setStatus, STATUSES],
+                  ['Risk', risk, setRisk, RISKS],
+                  ['Approval', approvalStatus, setApprovalStatus, APPROVALS],
+                ].map(([label, value, setter, options]) => (
+                  <label key={label as string} className="flex items-center gap-2 text-xs font-medium text-slate-700">
+                    {label as string}:
+                    <select
+                      value={value as string}
+                      onChange={(event) => (setter as (next: string) => void)(event.target.value)}
+                      className="h-8 rounded-md border border-input bg-white px-2 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    >
+                      {(options as string[]).map((option) => (
+                        <option key={option} value={option}>
+                          {option === 'ALL' ? 'All' : option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 ))}
-              </select>
-            </label>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-950">Governance evidence</h2>
-            <p className="mt-1 text-sm text-slate-600">
-              Tenant-scoped requester, policy, approval, worker, and incident evidence for controlled operations.
-            </p>
+              </div>
+            </div>
+            {data?.generatedAt ? (
+              <span className="text-[11px] font-medium text-slate-500 whitespace-nowrap">
+                Generated {formatDate(data.generatedAt)}
+              </span>
+            ) : null}
           </div>
-          <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700">
-            Generated {formatDate(data?.generatedAt ?? null)}
-          </span>
         </div>
 
         <div className="mt-5 overflow-x-auto">
@@ -272,12 +254,12 @@ export function GovernanceClient() {
                     </td>
                     <td className="border-b border-slate-100 px-3 py-4 text-slate-700">{item.targetDisplayName ?? '-'}</td>
                     <td className="border-b border-slate-100 px-3 py-4 text-slate-700">{actorLabel(item.requestedBy)}</td>
-                    <td className="border-b border-slate-100 px-3 py-4"><Badge value={item.policy.riskLevel} /></td>
+                    <td className="border-b border-slate-100 px-3 py-4"><StatusBadge status={item.policy.riskLevel} /></td>
                     <td className="border-b border-slate-100 px-3 py-4">
-                      <Badge value={item.policy.approvalStatus} />
+                      <StatusBadge status={item.policy.approvalStatus} />
                       {item.policy.policyReason ? <p className="mt-2 max-w-72 text-xs text-slate-500">{item.policy.policyReason}</p> : null}
                     </td>
-                    <td className="border-b border-slate-100 px-3 py-4"><Badge value={item.status} /></td>
+                    <td className="border-b border-slate-100 px-3 py-4"><StatusBadge status={item.status} /></td>
                     <td className="border-b border-slate-100 px-3 py-4">
                       {item.incident ? (
                         <Link className="inline-flex items-center gap-1 text-blue-700 hover:underline" href={`/dashboard/incidents/${item.incident.id}`}>
@@ -299,17 +281,17 @@ export function GovernanceClient() {
             </table>
           )}
         </div>
-      </section>
+      </EvidencePanel>
 
-      <section className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+      <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
         <div className="flex gap-3">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <p>
-            Governance exports are audit-style evidence for review. They intentionally exclude raw operation input, raw provider result objects,
-            stack traces, environment values, tokens, kubeconfig, and secret-like metadata.
+            Governance records explain what was requested, approved, confirmed, and executed. They do not grant provider access or bypass approval policy. Governance exports are audit-style evidence for review. They intentionally exclude raw operation input, raw provider result objects, stack traces, environment values, tokens, kubeconfig, and secret-like metadata.
           </p>
         </div>
-      </section>
+      </div>
+      </div>
     </div>
   );
 }
