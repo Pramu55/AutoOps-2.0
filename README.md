@@ -2,7 +2,7 @@
 
 [![AutoOps CI](https://github.com/Pramu55/AutoOps-2.0/actions/workflows/ci.yml/badge.svg)](https://github.com/Pramu55/AutoOps-2.0/actions/workflows/ci.yml)
 
-AutoOps is a production-style DevOps Control Plane for managing, observing, and governing operations across Jenkins, GitHub Actions, Docker, Kubernetes, Terraform/OpenTofu, Ansible, Prometheus/Grafana, DevOps tooling, and cloud-readiness workflows. It combines real integrations, RBAC, approval workflows, worker-backed execution, observability, incidents, runbooks, and CI/release gates into one platform.
+AutoOps is a governance-first DevOps control plane for controlled provider operations, observability, incident correlation, resource graph evidence, and company-ready operational workflows. It combines real integrations, RBAC, approval workflows, worker-backed execution, observability, incidents, runbooks, and CI/release gates into one platform.
 
 ## What AutoOps Is
 
@@ -195,9 +195,13 @@ AutoOps includes a company handoff package for safe evaluation and controlled pi
 
 ## Documentation Map
 
-Start with [Documentation Home](./docs/README.md).
+Start with the comprehensive **[Documentation Index](./docs/DOCUMENTATION_INDEX.md)** or [Documentation Home](./docs/README.md).
 
+- [Documentation Index](./docs/DOCUMENTATION_INDEX.md)
 - [Evaluator Quickstart](./docs/EVALUATOR_QUICKSTART.md)
+- [AutoOps Demo Script](./docs/AUTOOPS_DEMO_SCRIPT.md)
+- [Interview Talking Points](./docs/INTERVIEW_TALKING_POINTS.md)
+- [Final Company-Ready Freeze Report](./docs/FINAL_COMPANY_READY_FREEZE_REPORT.md)
 - [Demo Guide](./docs/DEMO_GUIDE.md)
 - [Company Pilot Checklist](./docs/COMPANY_PILOT_CHECKLIST.md)
 - [Architecture Overview](./docs/ARCHITECTURE_OVERVIEW.md)

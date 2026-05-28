@@ -59,7 +59,20 @@ Phase 3 transforms the main dashboard into an enterprise Command Workspace. It a
 - Replaces raw JSON metadata blocks with safe structured EvidencePanels.
 - Preserves critical deployment safety controls (tenant isolation, RBAC, correct commit inputs).
 
+### Phase 7: Governance Workspace
+- Upgrades `/dashboard/governance` to a unified Governance Center.
+- Displays policy checks, operation risk metrics, and detailed audit evidence.
+- Integrates safe JSON evidence export while strictly redacting secrets.
+
+### Phase 8: Operations Workspace Polish
+- Polishes queue status indicators and operation activity feeds.
+- Hardens action triggers to ensure requester/approver separation and RBAC validation.
+
 ### Phase 9: Integration & Admin Platform Polish
 - Upgrades `/dashboard/integrations` and individual provider pages with `WorkspaceHeader` layouts and consistent category groupings and breadcrumbs.
 - Standardizes Settings workspace placeholder with clean, honest, organization-wide copy.
 - Enforces strict React safety, type safety, and secret/credential safety guidelines.
+
+### Phase 10: Company-Ready Demo Freeze
+- Packages final evaluation documentation, demo scripts, interview talking points, and freeze status.
+- Validates the entire control plane with local smoke scripts and secret scanners.
