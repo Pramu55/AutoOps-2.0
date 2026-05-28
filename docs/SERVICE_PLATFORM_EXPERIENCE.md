@@ -36,3 +36,7 @@ To maintain consistency, the following components govern the platform's layout a
 ## Service Platform Experience Phase 2
 
 Phase 2 introduces the Integrations Hub, providing a read-only, unified view of all control plane connectors and cloud readiness checks. It respects provider boundaries, does not execute actions, does not fake provider data, and never exposes credentials or secrets.
+
+## Service Platform Experience Phase 3
+
+Phase 3 transforms the main dashboard into an enterprise Command Workspace. It aggregates active incidents, pending approvals, critical signals, and provider health into a unified "Needs Attention" queue and logical snapshot panels. It adheres to strict React safety patterns and derives all next-best actions safely from real API state.
