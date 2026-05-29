@@ -1,0 +1,56 @@
+name: autoops
+
+services:
+  api:
+    user: autoops
+    environment:
+      # Hosted demo environment overrides
+      NODE_ENV: production
+      STRICT_ENV_VALIDATION: "false"
+      DOCKER_SOCKET_PATH: ""
+      JENKINS_URL: ""
+      KUBECONFIG: ""
+      AWS_INTEGRATION_ENABLED: "false"
+      GITHUB_ACTIONS_ENABLED: "false"
+      INFRA_AUTOMATION_ENABLED: "false"
+      DOCKER_HOST: ""
+    volumes: !reset
+      - ./infra:/app/infra:ro
+
+  worker:
+    user: autoops
+    environment:
+      NODE_ENV: production
+      STRICT_ENV_VALIDATION: "false"
+      DOCKER_SOCKET_PATH: ""
+      JENKINS_URL: ""
+      KUBECONFIG: ""
+      AWS_INTEGRATION_ENABLED: "false"
+      GITHUB_ACTIONS_ENABLED: "false"
+      INFRA_AUTOMATION_ENABLED: "false"
+      DOCKER_HOST: ""
+    volumes: !reset
+      - ./infra:/app/infra:ro
+
+  web:
+    environment:
+      NODE_ENV: production
+
+  # Disable local-only observability and routing services
+  nginx:
+    profiles:
+      - disabled
+
+  grafana:
+    profiles:
+      - disabled
+
+  prometheus:
+    profiles:
+      - disabled
+
+  postgres:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
