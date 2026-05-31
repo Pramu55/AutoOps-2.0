@@ -1,0 +1,32 @@
+services:
+  opa:
+    image: openpolicyagent/opa:0.70.0
+    container_name: autoops-opa
+    restart: unless-stopped
+    networks:
+      - autoops
+    command:
+      - run
+      - --server
+      - --addr=0.0.0.0:8181
+      - --log-level=info
+      - /policies
+    volumes:
+      - ./infra/opa/policies:/policies:ro
+    ports:
+      - "8181:8181"
+    healthcheck:
+      test: ["CMD", "/opa", "eval", "-d", "/policies", "1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  api:
+    depends_on:
+      opa:
+        condition: service_healthy
+    environment:
+      OPA_URL: http://opa:8181
+      OPA_POLICY_PATH: /v1/data/autoops/operation/decision
+      OPA_ENFORCEMENT_MODE: ${OPA_ENFORCEMENT_MODE:-shadow}

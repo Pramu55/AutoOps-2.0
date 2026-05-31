@@ -9,10 +9,11 @@ import { BadRequestError, ConflictError, NotFoundError, UnauthorizedError } from
 import { enqueueOperationJob } from './operation.queue.js';
 import { operationAuthorizationService } from './operation-authorization.service.js';
 import { evaluateOperationPolicy, type OperationPolicyDecision } from './operation-policy.service.js';
+import { evaluateOperationPolicy as evaluateOpaOperationPolicy } from '../policy/operation-policy.middleware.js';
+import { buildOperationPolicyInput } from '../policy/operation-policy.service.js';
 import { resourceGraphService } from '../resources/resource-graph.service.js';
 import { signalService } from '../signals/signal.service.js';
 import { SignalSeverity, SignalSource, SignalType } from '@autoops/types';
-
 
 type CreateOperationInput = {
   organizationId: string;
@@ -30,6 +31,14 @@ type CreateOperationInput = {
 type AuditRequestContext = {
   ipAddress?: string;
   userAgent?: string;
+};
+
+type OperationScope = {
+  environment?: {
+    kind: string;
+    name: string;
+    slug: string;
+  };
 };
 
 export class OperationService {
@@ -68,6 +77,12 @@ export class OperationService {
       throw new BadRequestError('A confirmation token is required for real operations');
     }
 
+    const scope = await this._validateOperationScope(
+      input.organizationId,
+      input.projectId,
+      input.environmentId,
+    );
+
     if (input.idempotencyKey) {
       const existing = await prisma.operation.findUnique({
         where: {
@@ -94,6 +109,54 @@ export class OperationService {
       throw new BadRequestError(`confirmationToken must be ${policy.confirmationTokenLabel}`);
     }
 
+    const opaEvaluation = await evaluateOpaOperationPolicy(
+      buildOperationPolicyInput({
+        organizationId: input.organizationId,
+        userId: input.userId,
+        role: input.role,
+        provider: input.provider,
+        operationType: input.operationType,
+        projectId: input.projectId,
+        environmentId: input.environmentId,
+        environment: scope.environment,
+        input: input.input,
+      }),
+    );
+
+    const opaDecision = opaEvaluation.enforcedDecision;
+    const approvalRequired = policy.approvalRequired || opaDecision.approvalRequired;
+
+    if (!opaDecision.allow) {
+      await prisma.auditLog.create({
+        data: {
+          organizationId: input.organizationId,
+          actorId: input.userId,
+          action: AuditAction.UPDATE,
+          provider: input.provider,
+          projectId: input.projectId ?? null,
+          environmentId: input.environmentId ?? null,
+          operationId: null,
+          resourceType: 'operation_policy',
+          resourceId: input.provider + ':' + input.operationType,
+          ipAddress: auditContext.ipAddress,
+          userAgent: auditContext.userAgent,
+          metadata: {
+            operationType: input.operationType,
+            provider: input.provider,
+            policyEngine: 'OPA',
+            mode: opaEvaluation.mode,
+            allow: opaDecision.allow,
+            approvalRequired: opaDecision.approvalRequired,
+            risk: opaDecision.risk,
+            reasons: opaDecision.reasons,
+            controls: opaDecision.controls,
+          },
+        },
+      });
+
+      throw new BadRequestError(opaDecision.reasons[0] ?? 'Denied by policy.');
+    }
+
     const created = await prisma.$transaction(async (tx) => {
       const operation = await tx.operation.create({
         data: {
@@ -102,10 +165,10 @@ export class OperationService {
           environmentId: input.environmentId ?? null,
           provider: input.provider,
           operationType: input.operationType,
-          status: policy.approvalRequired ? OperationStatus.PENDING_APPROVAL : OperationStatus.QUEUED,
+          status: approvalRequired ? OperationStatus.PENDING_APPROVAL : OperationStatus.QUEUED,
           requestedByUserId: input.userId,
           idempotencyKey: input.idempotencyKey ?? null,
-          input: this._inputWithPolicy(input.input, policy) as Prisma.InputJsonObject,
+          input: this._inputWithPolicy(input.input, { ...policy, approvalRequired }) as Prisma.InputJsonObject,
         },
       });
 
@@ -125,10 +188,15 @@ export class OperationService {
           metadata: {
             operationType: input.operationType,
             status: operation.status,
-            approvalRequired: policy.approvalRequired,
+            approvalRequired,
             approvalReason: policy.approvalReason,
             riskLevel: policy.riskLevel,
             policyName: policy.policyName,
+            opa: {
+              mode: opaEvaluation.mode,
+              decision: opaEvaluation.decision,
+              enforcedDecision: opaEvaluation.enforcedDecision,
+            },
           },
         },
       });
@@ -149,8 +217,7 @@ export class OperationService {
       dedupeMode: 'EVENT',
     }).catch(() => undefined);
 
-    if (!policy.approvalRequired) {
-
+    if (!approvalRequired) {
       await enqueueOperationJob({
         operationId: created.id,
         organizationId: input.organizationId,
@@ -308,7 +375,48 @@ export class OperationService {
     }).catch(() => undefined);
 
     return this._toOperation(updated);
+  }
 
+  private async _validateOperationScope(
+    organizationId: string,
+    projectId?: string,
+    environmentId?: string,
+  ): Promise<OperationScope> {
+    if (projectId) {
+      const project = await prisma.project.findFirst({
+        where: {
+          id: projectId,
+          organizationId,
+          archivedAt: null,
+        },
+        select: { id: true },
+      });
+      if (!project) throw new NotFoundError('Project');
+    }
+
+    if (!environmentId) return {};
+
+    const environment = await prisma.environment.findFirst({
+      where: {
+        id: environmentId,
+        archivedAt: null,
+        project: {
+          organizationId,
+          archivedAt: null,
+        },
+      },
+      select: {
+        kind: true,
+        name: true,
+        slug: true,
+        projectId: true,
+      },
+    });
+
+    if (!environment) throw new NotFoundError('Environment');
+    if (projectId && environment.projectId !== projectId) throw new NotFoundError('Environment');
+
+    return { environment };
   }
 
   private _auditAction(operationType: OperationType): AuditAction {

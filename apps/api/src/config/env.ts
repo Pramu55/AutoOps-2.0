@@ -46,6 +46,23 @@ const envSchema = z.object({
 
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(120),
+  OPA_URL: z.string().url().default('http://opa:8181'),
+  OPA_POLICY_PATH: z.string().default('/v1/data/autoops/operation/decision'),
+  OPA_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(100).max(30_000).default(2500),
+  OPA_ENFORCEMENT_MODE: z.enum(['shadow', 'enforce']).default('shadow'),
+
+  JENKINS_ALLOWED_JOBS: z
+    .string()
+    .default('')
+    .transform((s) => s.split(',').map((v) => v.trim()).filter(Boolean)),
+
+  POLICY_KUBERNETES_PROTECTED_NAMESPACES: z
+    .string()
+    .default('kube-system,kube-public,kube-node-lease')
+    .transform((s) => s.split(',').map((v) => v.trim()).filter(Boolean)),
+
+  POLICY_KUBERNETES_SCALE_APPROVAL_THRESHOLD: z.coerce.number().int().min(0).default(2),
+
 }).superRefine((value, ctx) => {
   if (value.NODE_ENV !== 'production' || !value.STRICT_ENV_VALIDATION) return;
 
