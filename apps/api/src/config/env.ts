@@ -63,6 +63,17 @@ const envSchema = z.object({
 
   POLICY_KUBERNETES_SCALE_APPROVAL_THRESHOLD: z.coerce.number().int().min(0).default(2),
 
+  ARGOCD_URL: z.string().trim().optional().default(''),
+  ARGOCD_AUTH_TOKEN: z.string().trim().optional().default(''),
+  ARGOCD_USERNAME: z.string().trim().optional().default(''),
+  ARGOCD_PASSWORD: z.string().trim().optional().default(''),
+  ARGOCD_SKIP_TLS_VERIFY: z
+    .string()
+    .optional()
+    .default('false')
+    .transform((value) => value === 'true' || value === '1'),
+  ARGOCD_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(5000),
+
 }).superRefine((value, ctx) => {
   if (value.NODE_ENV !== 'production' || !value.STRICT_ENV_VALIDATION) return;
 

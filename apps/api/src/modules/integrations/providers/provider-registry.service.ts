@@ -4,6 +4,7 @@ import {
   ProviderKey,
   type IntegrationProvider,
 } from '@autoops/types';
+import { argocdService } from '../argocd/argocd.service.js';
 import { awsService, mapAwsToProviderStatus } from '../aws/aws.service.js';
 import { dockerService } from '../docker/docker.service.js';
 import { jenkinsService } from '../jenkins/jenkins.service.js';
@@ -13,11 +14,12 @@ const now = () => new Date().toISOString();
 
 export class ProviderRegistryService {
   async listProviders(): Promise<IntegrationProvider[]> {
-    const [kubernetesStatus, awsStatus, jenkinsStatus, dockerStatus] = await Promise.all([
+    const [kubernetesStatus, awsStatus, jenkinsStatus, dockerStatus, argocdStatus] = await Promise.all([
       kubernetesService.getStatus(),
       awsService.getStatus(),
       jenkinsService.getStatus(),
       dockerService.getStatus(),
+      argocdService.getStatus(),
     ]);
 
     const awsMappedStatus = mapAwsToProviderStatus(awsStatus.status);
@@ -97,6 +99,34 @@ export class ProviderRegistryService {
         source: 'environment',
       },
       this._disconnected(ProviderKey.GITHUB, 'GitHub', ProviderCategory.CI_CD, ['GITHUB_TOKEN']),
+      {
+        key: ProviderKey.ARGOCD,
+        displayName: 'Argo CD',
+        category: ProviderCategory.GITOPS,
+        status: argocdStatus.status,
+        configured: argocdStatus.configured,
+        capabilities: [
+          'argocd.read.status',
+          'argocd.read.applications',
+          'argocd.read.summary',
+        ],
+        readCapabilities: [
+          'argocd.read.status',
+          'argocd.read.applications',
+          'argocd.read.summary',
+        ],
+        writeCapabilities: [],
+        dangerousCapabilities: [],
+        requiredEnvironment: [
+          'ARGOCD_URL',
+          'ARGOCD_AUTH_TOKEN',
+          'ARGOCD_USERNAME',
+          'ARGOCD_PASSWORD',
+        ],
+        lastCheckedAt: argocdStatus.checkedAt,
+        message: argocdStatus.message,
+        source: 'environment',
+      },
       {
         key: ProviderKey.DOCKER,
         displayName: 'Docker',

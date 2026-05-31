@@ -20,6 +20,7 @@ export * from './jenkins.js';
 export * from './operation.js';
 export * from './infrastructure.js';
 export * from './github-actions.js';
+export * from './argocd.js';
 export * from './observability-integration.js';
 export * from './devops-tools.js';
 export * from './cloud.js';

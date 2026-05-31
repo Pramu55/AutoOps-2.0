@@ -15,6 +15,7 @@ export const ProviderKey = {
   AWS: 'aws',
   JENKINS: 'jenkins',
   GITHUB: 'github',
+  ARGOCD: 'argocd',
   DOCKER: 'docker',
 } as const;
 export type ProviderKey = (typeof ProviderKey)[keyof typeof ProviderKey];
@@ -23,6 +24,7 @@ export const ProviderCategory = {
   ORCHESTRATION: 'orchestration',
   CLOUD: 'cloud',
   CI_CD: 'ci_cd',
+  GITOPS: 'gitops',
   CONTAINER: 'container',
 } as const;
 export type ProviderCategory = (typeof ProviderCategory)[keyof typeof ProviderCategory];

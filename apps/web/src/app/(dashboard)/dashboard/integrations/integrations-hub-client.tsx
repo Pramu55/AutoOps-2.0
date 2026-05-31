@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Network, Hammer, Container, Boxes, Cloud, Github, Gauge, Wrench, RefreshCw } from 'lucide-react';
+import { Network, Hammer, Container, Boxes, Cloud, Github, Gauge, Wrench, RefreshCw, GitBranch } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { WorkspaceHeader } from '@/components/layout/workspace-header';
 import { ProviderStateCard } from '@/components/layout/provider-state-card';
@@ -86,6 +86,17 @@ const PROVIDERS: Omit<ProviderStatus, 'status'>[] = [
     setupGuidance: 'Configure GITHUB_TOKEN or App installation.',
     safetyMode: 'Read Only',
     endpoint: '/v1/integrations/github-actions/status',
+  },
+  {
+    id: 'argocd',
+    name: 'Argo CD GitOps',
+    category: 'GitOps',
+    href: '/dashboard/integrations/argocd',
+    icon: <GitBranch className="h-5 w-5" />,
+    purpose: 'Read-only application sync, health, and drift visibility.',
+    setupGuidance: 'Configure ARGOCD_URL and read-only Argo CD credentials.',
+    safetyMode: 'Read Only',
+    endpoint: '/v1/integrations/argocd/status',
   },
   {
     id: 'observability',
@@ -236,7 +247,7 @@ export function IntegrationsHubClient() {
             },
             {
               name: 'Telemetry & Local Tooling',
-              ids: ['observability', 'github-actions', 'devops-tools'],
+              ids: ['observability', 'github-actions', 'argocd', 'devops-tools'],
             },
           ].map((group) => {
             const groupProviders = PROVIDERS.filter((p) => group.ids.includes(p.id));
