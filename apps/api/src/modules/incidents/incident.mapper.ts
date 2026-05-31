@@ -83,14 +83,31 @@ export class IncidentMapper {
   ): IncidentTimelineEventSummary {
     return {
       id: record.id,
-      type: record.type as IncidentEventType,
+      source: 'incident',
+      type: this._mapTimelineType(record.type as IncidentEventType),
+      severity: null,
+      status: null,
       title: record.title,
+      description: record.message,
+      relatedIds: {
+        incidentId: record.incidentId,
+      },
       message: record.message,
       actorUserId: record.actorUserId,
       actorUserEmail: record.actorUserEmail,
       metadata: (record.metadata as Record<string, string | number | boolean | null>) || {},
+      timestamp: record.occurredAt.toISOString(),
       occurredAt: record.occurredAt.toISOString(),
       createdAt: record.createdAt.toISOString(),
     };
+  }
+
+  private static _mapTimelineType(type: IncidentEventType): IncidentTimelineEventSummary['type'] {
+    if (type === IncidentEventType.INCIDENT_OPENED) return 'incident_detected';
+    if (type === IncidentEventType.ACKNOWLEDGED) return 'incident_acknowledged';
+    if (type === IncidentEventType.RESOLVED) return 'incident_resolved';
+    if (type === IncidentEventType.ARCHIVED) return 'incident_archived';
+    if (type === IncidentEventType.SIGNAL_LINKED || type === IncidentEventType.EVIDENCE_ADDED) return 'signal_observed';
+    return 'provider_evidence';
   }
 }

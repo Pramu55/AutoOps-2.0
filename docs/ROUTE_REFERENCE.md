@@ -261,7 +261,7 @@ Resource Graph responses never expose raw provider payloads, secrets, kubeconfig
 | GET | `/v1/incidents` | Authenticated | Tenant-scoped incident list with filters |
 | GET | `/v1/incidents/readiness` | Authenticated | Tenant-scoped incident readiness and counts |
 | GET | `/v1/incidents/:incidentId` | Authenticated | Tenant-scoped incident detail with evidence |
-| GET | `/v1/incidents/:incidentId/timeline` | Authenticated | Tenant-scoped vertical timeline events |
+| GET | `/v1/incidents/:incidentId/timeline` | Authenticated | Tenant-scoped incident, signal, operation, deployment, and governance evidence timeline |
 | POST | `/v1/incidents/:incidentId/notes` | Member+ | Add operator note to incident workflow |
 | POST | `/v1/incidents/:incidentId/acknowledge` | Member+ | Acknowledge open incident |
 | POST | `/v1/incidents/:incidentId/resolve` | Member+ | Resolve open/acknowledged incident |

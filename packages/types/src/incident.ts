@@ -131,14 +131,55 @@ export interface IncidentActionResponse {
   incident: IncidentSummary;
 }
 
+export type IncidentTimelineEventType =
+  | 'incident_detected'
+  | 'incident_acknowledged'
+  | 'incident_resolved'
+  | 'incident_archived'
+  | 'signal_observed'
+  | 'operation_requested'
+  | 'operation_pending_approval'
+  | 'operation_approved'
+  | 'operation_rejected'
+  | 'operation_started'
+  | 'operation_succeeded'
+  | 'operation_failed'
+  | 'deployment_event'
+  | 'provider_evidence';
+
+export type IncidentTimelineSource =
+  | 'incident'
+  | 'signal'
+  | 'operation'
+  | 'deployment'
+  | 'governance'
+  | 'provider';
+
+export interface IncidentTimelineRelatedIds {
+  incidentId: string;
+  signalId?: string | null;
+  operationId?: string | null;
+  deploymentId?: string | null;
+  projectId?: string | null;
+  environmentId?: string | null;
+  resourceNodeId?: string | null;
+  auditLogId?: string | null;
+}
+
 export interface IncidentTimelineEventSummary {
   id: string;
-  type: IncidentEventType;
+  source: IncidentTimelineSource;
+  type: IncidentTimelineEventType;
+  severity: string | null;
+  status: string | null;
   title: string;
+  description: string;
+  relatedIds: IncidentTimelineRelatedIds;
   message: string;
   actorUserId: string | null;
   actorUserEmail: string | null;
   metadata: Record<string, string | number | boolean | null>;
+  timestamp: string;
   occurredAt: string;
   createdAt: string;
 }

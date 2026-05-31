@@ -18,6 +18,9 @@ const incidentEventFindMany = vi.fn();
 
 const resourceSignalFindFirst = vi.fn();
 const resourceSignalFindMany = vi.fn();
+const operationFindMany = vi.fn();
+const deploymentEventFindMany = vi.fn();
+const auditLogFindMany = vi.fn();
 
 const userFindUnique = vi.fn();
 
@@ -47,6 +50,15 @@ vi.mock('@autoops/database', () => ({
       findFirst: resourceSignalFindFirst,
       findMany: resourceSignalFindMany,
     },
+    operation: {
+      findMany: operationFindMany,
+    },
+    deploymentEvent: {
+      findMany: deploymentEventFindMany,
+    },
+    auditLog: {
+      findMany: auditLogFindMany,
+    },
     user: {
       findUnique: userFindUnique,
     },
@@ -73,6 +85,15 @@ vi.mock('@autoops/database', () => ({
     EVIDENCE_ADDED: 'EVIDENCE_ADDED',
   },
   OrgRole: { OWNER: 'OWNER', ADMIN: 'ADMIN', MEMBER: 'MEMBER', VIEWER: 'VIEWER' },
+  OperationStatus: {
+    PENDING_APPROVAL: 'PENDING_APPROVAL',
+    QUEUED: 'QUEUED',
+    RUNNING: 'RUNNING',
+    SUCCEEDED: 'SUCCEEDED',
+    FAILED: 'FAILED',
+    REJECTED: 'REJECTED',
+    CANCELLED: 'CANCELLED',
+  },
 }));
 
 vi.mock('../operations/operation-authorization.service.js', () => ({
@@ -122,10 +143,11 @@ function makeIncident(overrides: Record<string, unknown> = {}) {
 
 function makeIncidentWithRelations(overrides: Record<string, unknown> = {}) {
   return {
-    ...makeIncident(overrides),
     linkedSignals: [],
     acknowledgedBy: null,
     resolvedBy: null,
+    ...makeIncident(),
+    ...overrides,
   };
 }
 
@@ -133,11 +155,14 @@ describe('IncidentService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     userFindUnique.mockResolvedValue({ email: 'test@autoops.dev', name: 'Test User' });
+    operationFindMany.mockResolvedValue([]);
+    deploymentEventFindMany.mockResolvedValue([]);
+    auditLogFindMany.mockResolvedValue([]);
   });
 
   describe('listIncidentTimeline', () => {
     it('returns events for a valid incident', async () => {
-      incidentFindFirst.mockResolvedValue({ id: INCIDENT_ID });
+      incidentFindFirst.mockResolvedValue(makeIncidentWithRelations());
       const mockEvent = {
         id: 'event-1',
         type: IncidentEventType.INCIDENT_OPENED,
@@ -154,7 +179,7 @@ describe('IncidentService', () => {
       const result = await incidentService.listIncidentTimeline(ORG_ID, USER_ID, INCIDENT_ID);
 
       expect(result.data).toHaveLength(1);
-      expect(result.data[0]!.type).toBe(IncidentEventType.INCIDENT_OPENED);
+      expect(result.data[0]!.type).toBe('incident_detected');
       expect(incidentFindFirst).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: INCIDENT_ID, organizationId: ORG_ID },
@@ -171,7 +196,7 @@ describe('IncidentService', () => {
     });
 
     it('timeline events are filtered by organizationId', async () => {
-      incidentFindFirst.mockResolvedValue({ id: INCIDENT_ID });
+      incidentFindFirst.mockResolvedValue(makeIncidentWithRelations());
       incidentEventFindMany.mockResolvedValue([]);
 
       await incidentService.listIncidentTimeline(ORG_ID, USER_ID, INCIDENT_ID);
@@ -182,13 +207,204 @@ describe('IncidentService', () => {
         }),
       );
     });
+
+    it('returns incident lifecycle events when related evidence is empty', async () => {
+      const openedAt = new Date('2026-05-31T10:00:00.000Z');
+      const acknowledgedAt = new Date('2026-05-31T10:05:00.000Z');
+      const resolvedAt = new Date('2026-05-31T10:20:00.000Z');
+
+      incidentFindFirst.mockResolvedValue(makeIncidentWithRelations({ openedAt, firstObservedAt: openedAt, lastObservedAt: resolvedAt }));
+      incidentEventFindMany.mockResolvedValue([
+        {
+          id: 'event-opened',
+          type: 'INCIDENT_OPENED',
+          title: 'Incident opened',
+          message: 'Opened',
+          actorUserId: null,
+          actorUserEmail: null,
+          metadata: {},
+          occurredAt: openedAt,
+          createdAt: openedAt,
+        },
+        {
+          id: 'event-ack',
+          type: 'ACKNOWLEDGED',
+          title: 'Incident acknowledged',
+          message: 'Ack',
+          actorUserId: USER_ID,
+          actorUserEmail: 'ops@example.com',
+          metadata: {},
+          occurredAt: acknowledgedAt,
+          createdAt: acknowledgedAt,
+        },
+        {
+          id: 'event-resolved',
+          type: 'RESOLVED',
+          title: 'Incident resolved',
+          message: 'Resolved',
+          actorUserId: USER_ID,
+          actorUserEmail: 'ops@example.com',
+          metadata: {},
+          occurredAt: resolvedAt,
+          createdAt: resolvedAt,
+        },
+      ]);
+
+      const result = await incidentService.listIncidentTimeline(ORG_ID, USER_ID, INCIDENT_ID);
+
+      expect(result.data.map((event) => event.type)).toEqual([
+        'incident_detected',
+        'incident_acknowledged',
+        'incident_resolved',
+      ]);
+      expect(result.data[0]!.relatedIds.incidentId).toBe(INCIDENT_ID);
+    });
+
+    it('includes linked signal evidence', async () => {
+      const observedAt = new Date('2026-05-31T10:10:00.000Z');
+      incidentFindFirst.mockResolvedValue(makeIncidentWithRelations({
+        openedAt: observedAt,
+        firstObservedAt: observedAt,
+        lastObservedAt: observedAt,
+        linkedSignals: [
+          {
+            id: 'incident-signal-1',
+            incidentId: INCIDENT_ID,
+            organizationId: ORG_ID,
+            signalId: 'signal-1',
+            role: 'TRIGGER',
+            createdAt: observedAt,
+            signal: {
+              id: 'signal-1',
+              organizationId: ORG_ID,
+              resourceNodeId: 'resource-1',
+              operationId: null,
+              deploymentId: null,
+              projectId: null,
+              environmentId: null,
+              source: 'KUBERNETES',
+              type: 'KUBERNETES_POD_PHASE_CHANGED',
+              severity: 'ERROR',
+              status: 'ACTIVE',
+              title: 'Pod failing',
+              message: 'CrashLoopBackOff',
+              fingerprint: 'fingerprint',
+              metadata: { namespace: 'payments' },
+              labels: null,
+              observedAt,
+              firstSeenAt: observedAt,
+              lastSeenAt: observedAt,
+              count: 1,
+              archivedAt: null,
+              createdAt: observedAt,
+              updatedAt: observedAt,
+            },
+          },
+        ],
+      }));
+      incidentEventFindMany.mockResolvedValue([]);
+
+      const result = await incidentService.listIncidentTimeline(ORG_ID, USER_ID, INCIDENT_ID);
+
+      expect(result.data).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source: 'signal',
+          type: 'signal_observed',
+          relatedIds: expect.objectContaining({ signalId: 'signal-1', resourceNodeId: 'resource-1' }),
+          metadata: expect.objectContaining({ namespace: 'payments' }),
+        }),
+      ]));
+    });
+
+    it('includes related operation evidence and sorts events ascending', async () => {
+      const openedAt = new Date('2026-05-31T10:00:00.000Z');
+      const updatedAt = new Date('2026-05-31T10:15:00.000Z');
+      incidentFindFirst.mockResolvedValue(makeIncidentWithRelations({
+        operationId: 'operation-1',
+        openedAt,
+        firstObservedAt: openedAt,
+        lastObservedAt: updatedAt,
+      }));
+      incidentEventFindMany.mockResolvedValue([]);
+      operationFindMany.mockResolvedValue([
+        {
+          id: 'operation-1',
+          organizationId: ORG_ID,
+          projectId: null,
+          environmentId: null,
+          provider: 'JENKINS',
+          operationType: 'JENKINS_BUILD_TRIGGER',
+          status: 'SUCCEEDED',
+          requestedByUserId: USER_ID,
+          approvedByUserId: null,
+          approvedAt: null,
+          rejectedByUserId: null,
+          rejectedAt: null,
+          idempotencyKey: null,
+          input: { jobName: 'deploy-api' },
+          result: { buildNumber: 42 },
+          error: null,
+          createdAt: new Date('2026-05-31T10:05:00.000Z'),
+          updatedAt,
+        },
+      ]);
+
+      const result = await incidentService.listIncidentTimeline(ORG_ID, USER_ID, INCIDENT_ID);
+
+      expect(result.data.map((event) => event.timestamp)).toEqual([
+        '2026-05-31T10:00:00.000Z',
+        '2026-05-31T10:05:00.000Z',
+        '2026-05-31T10:15:00.000Z',
+      ]);
+      expect(result.data).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'operation_requested', relatedIds: expect.objectContaining({ operationId: 'operation-1' }) }),
+        expect.objectContaining({ type: 'operation_succeeded', relatedIds: expect.objectContaining({ operationId: 'operation-1' }) }),
+      ]));
+    });
+
+    it('redacts sensitive metadata from timeline events', async () => {
+      const openedAt = new Date('2026-05-31T10:00:00.000Z');
+      incidentFindFirst.mockResolvedValue(makeIncidentWithRelations({ openedAt, firstObservedAt: openedAt, lastObservedAt: openedAt }));
+      incidentEventFindMany.mockResolvedValue([
+        {
+          id: 'event-secret',
+          type: 'EVIDENCE_ADDED',
+          title: 'Provider evidence',
+          message: 'Evidence captured',
+          actorUserId: null,
+          actorUserEmail: null,
+          metadata: {
+            token: 'super-secret-token',
+            password: 'super-secret-password',
+            kubeconfig: 'super-secret-kubeconfig',
+            safeKey: 'visible',
+          },
+          occurredAt: openedAt,
+          createdAt: openedAt,
+        },
+      ]);
+
+      const result = await incidentService.listIncidentTimeline(ORG_ID, USER_ID, INCIDENT_ID);
+      const serialized = JSON.stringify(result);
+      const secretEvent = result.data.find((event) => event.id === 'event-secret');
+
+      expect(serialized).not.toContain('super-secret-token');
+      expect(serialized).not.toContain('super-secret-password');
+      expect(serialized).not.toContain('super-secret-kubeconfig');
+      expect(secretEvent?.metadata).toMatchObject({
+        token: '[REDACTED]',
+        password: '[REDACTED]',
+        kubeconfig: '[REDACTED]',
+        safeKey: 'visible',
+      });
+    });
   });
 
   describe('addIncidentNote', () => {
     it('creates a NOTE_ADDED event', async () => {
       incidentFindFirst
         .mockResolvedValueOnce({ id: INCIDENT_ID }) // for addIncidentNote
-        .mockResolvedValueOnce({ id: INCIDENT_ID }); // for listIncidentTimeline
+        .mockResolvedValueOnce(makeIncidentWithRelations()); // for listIncidentTimeline
       incidentEventCreate.mockResolvedValue({});
       incidentEventFindMany.mockResolvedValue([]);
 

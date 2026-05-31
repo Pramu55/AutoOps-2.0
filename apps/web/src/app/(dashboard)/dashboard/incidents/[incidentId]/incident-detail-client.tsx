@@ -54,6 +54,15 @@ function severityTone(severity: string): string {
   return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-700';
 }
 
+function sourceTone(source: string): string {
+  if (source === 'operation') return 'border-indigo-200 bg-indigo-50 text-indigo-700';
+  if (source === 'signal') return 'border-blue-200 bg-blue-50 text-blue-700';
+  if (source === 'deployment') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (source === 'governance') return 'border-purple-200 bg-purple-50 text-purple-700';
+  if (source === 'provider') return 'border-amber-200 bg-amber-50 text-amber-700';
+  return 'border-slate-200 bg-slate-50 text-slate-700';
+}
+
 function formatDate(value: string | null): string {
   if (!value) return MISSING_VALUE;
   return new Intl.DateTimeFormat('en', {
@@ -71,22 +80,29 @@ function actorLabel(actor: IncidentDetail['acknowledgedBy']): string {
 
 function getEventIcon(type: string) {
   switch (type) {
-    case 'INCIDENT_OPENED':
+    case 'incident_detected':
       return <AlertTriangle className="h-4 w-4 text-rose-600" />;
-    case 'SIGNAL_LINKED':
-    case 'EVIDENCE_ADDED':
+    case 'signal_observed':
       return <Link2 className="h-4 w-4 text-blue-600" />;
-    case 'SEVERITY_CHANGED':
-      return <TrendingUp className="h-4 w-4 text-purple-600" />;
-    case 'STATUS_CHANGED':
-      return <Activity className="h-4 w-4 text-indigo-600" />;
-    case 'ACKNOWLEDGED':
+    case 'incident_acknowledged':
       return <Shield className="h-4 w-4 text-amber-600" />;
-    case 'RESOLVED':
+    case 'incident_resolved':
+    case 'operation_succeeded':
       return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
-    case 'ARCHIVED':
+    case 'incident_archived':
       return <Archive className="h-4 w-4 text-slate-600" />;
-    case 'NOTE_ADDED':
+    case 'operation_pending_approval':
+      return <Clock className="h-4 w-4 text-amber-600" />;
+    case 'operation_requested':
+    case 'operation_approved':
+    case 'operation_started':
+      return <Activity className="h-4 w-4 text-indigo-600" />;
+    case 'operation_rejected':
+    case 'operation_failed':
+      return <AlertTriangle className="h-4 w-4 text-rose-600" />;
+    case 'deployment_event':
+      return <TrendingUp className="h-4 w-4 text-emerald-600" />;
+    case 'provider_evidence':
       return <MessageSquare className="h-4 w-4 text-slate-600" />;
     default:
       return <Clock className="h-4 w-4 text-slate-400" />;
@@ -95,26 +111,41 @@ function getEventIcon(type: string) {
 
 function getEventColorClass(type: string): string {
   switch (type) {
-    case 'INCIDENT_OPENED':
+    case 'incident_detected':
       return 'bg-rose-50 border-rose-200';
-    case 'SIGNAL_LINKED':
-    case 'EVIDENCE_ADDED':
+    case 'signal_observed':
       return 'bg-blue-50 border-blue-200';
-    case 'SEVERITY_CHANGED':
-      return 'bg-purple-50 border-purple-200';
-    case 'STATUS_CHANGED':
-      return 'bg-indigo-50 border-indigo-200';
-    case 'ACKNOWLEDGED':
+    case 'incident_acknowledged':
+    case 'operation_pending_approval':
       return 'bg-amber-50 border-amber-200';
-    case 'RESOLVED':
+    case 'incident_resolved':
+    case 'operation_succeeded':
+    case 'deployment_event':
       return 'bg-emerald-50 border-emerald-200';
-    case 'ARCHIVED':
+    case 'incident_archived':
       return 'bg-slate-100 border-slate-350';
-    case 'NOTE_ADDED':
+    case 'provider_evidence':
       return 'bg-slate-50 border-slate-200';
+    case 'operation_requested':
+    case 'operation_approved':
+    case 'operation_started':
+      return 'bg-indigo-50 border-indigo-200';
+    case 'operation_rejected':
+    case 'operation_failed':
+      return 'bg-rose-50 border-rose-200';
     default:
       return 'bg-slate-50 border-slate-200';
   }
+}
+
+function formatEventType(type: string): string {
+  return type.replaceAll('_', ' ');
+}
+
+function relatedIdEntries(event: IncidentTimelineEventSummary): Array<[string, string]> {
+  return Object.entries(event.relatedIds)
+    .filter(([key, value]) => key !== 'incidentId' && Boolean(value))
+    .map(([key, value]) => [key.replace(/Id$/, ''), String(value)]);
 }
 
 export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
@@ -354,9 +385,12 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
         <div className="space-y-4">
           {/* Vertical Timeline */}
           <section className="rounded-lg border border-slate-200 bg-white p-5">
-            <h2 className="text-base font-semibold text-slate-900 mb-5">Activity Timeline</h2>
+            <div className="mb-5 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="text-base font-semibold text-slate-900">Correlation Timeline</h2>
+              <span className="text-xs text-slate-500">{timelineEvents.length} evidence events</span>
+            </div>
             {timelineEvents.length === 0 ? (
-              <p className="text-sm text-slate-500 italic">No timeline events recorded.</p>
+              <p className="rounded-md border border-slate-100 bg-slate-50 p-4 text-sm text-slate-500">No correlated evidence has been recorded for this incident.</p>
             ) : (
               <div className="relative pl-6 border-l border-slate-100 space-y-6">
                 {timelineEvents.map((event) => (
@@ -369,13 +403,32 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
                     <div>
                       <div className="flex items-baseline justify-between gap-4">
                         <h4 className="text-xs font-semibold text-slate-800">{event.title}</h4>
-                        <span className="text-[10px] text-slate-400 whitespace-nowrap">{formatDate(event.occurredAt)}</span>
+                        <span className="text-[10px] text-slate-400 whitespace-nowrap">{formatDate(event.timestamp)}</span>
                       </div>
-                      <p className="mt-1 text-xs text-slate-650 leading-relaxed whitespace-pre-wrap">{event.message}</p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${sourceTone(event.source)}`}>{event.source}</span>
+                        <span className="inline-flex rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-500">{formatEventType(event.type)}</span>
+                        {event.severity && (
+                          <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${severityTone(event.severity)}`}>{event.severity}</span>
+                        )}
+                        {event.status && (
+                          <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-600">{event.status}</span>
+                        )}
+                      </div>
+                      <p className="mt-2 text-xs text-slate-650 leading-relaxed whitespace-pre-wrap">{event.description}</p>
                       {event.actorUserEmail && (
                         <div className="mt-1.5 flex items-center gap-1">
                           <span className="text-[10px] text-slate-400">Actor:</span>
                           <span className="text-[10px] font-medium text-slate-600 bg-slate-100 rounded px-1.5 py-0.5">{event.actorUserEmail}</span>
+                        </div>
+                      )}
+                      {relatedIdEntries(event).length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {relatedIdEntries(event).slice(0, 4).map(([label, value]) => (
+                            <span key={`${event.id}-${label}`} className="max-w-full truncate rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                              {label}: {value}
+                            </span>
+                          ))}
                         </div>
                       )}
                     </div>

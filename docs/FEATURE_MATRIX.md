@@ -57,6 +57,7 @@
 | Governance | Safe evidence export | Complete | Yes | OWNER/ADMIN export + safe DTO | JSON only; no raw metadata or secrets |
 | Incidents | Failed operation incident | Complete | Yes | Safe summary + lifecycle | One incident per failed operation |
 | Incidents | Incident workflow timeline & notes | Complete | Yes | Transactional events + note composer | Strict tenant isolation by organizationId; no AI/automated remediation |
+| Incidents | Incident evidence correlation timeline | Complete | Yes | Read-only public-safe timeline | Correlates incidents, signals, operations, deployments, and governance evidence |
 | Runbooks | Deterministic runbooks | Complete | Yes | Observe/verify/recover/escalate guidance | No AI runbooks |
 | Production Readiness | `.env.example` | Complete | N/A | Safe placeholders | Local-only notes |
 | Production Readiness | Production compose | Complete | N/A | No default socket/kubeconfig | Company pilot topology |

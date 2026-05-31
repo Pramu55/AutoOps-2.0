@@ -25,6 +25,7 @@ import { BadRequestError, NotFoundError, UnauthorizedError } from '@autoops/util
 import { sanitizeMetadata } from '@autoops/utils';
 import { operationAuthorizationService } from '../operations/operation-authorization.service.js';
 import { IncidentMapper } from './incident.mapper.js';
+import { incidentTimelineService } from './incident-timeline.service.js';
 
 interface RecordEventInput {
   organizationId: string;
@@ -387,22 +388,7 @@ export class IncidentService {
     incidentId: string,
   ): Promise<IncidentTimelineResponse> {
     await this._requireOrganizationMember(organizationId, userId);
-
-    const incident = await prisma.incident.findFirst({
-      where: { id: incidentId, organizationId },
-      select: { id: true },
-    });
-    if (!incident) throw new NotFoundError('Incident');
-
-    const events = await prisma.incidentEvent.findMany({
-      where: { organizationId, incidentId },
-      orderBy: { occurredAt: 'asc' },
-      take: 200,
-    });
-
-    return {
-      data: events.map((e) => IncidentMapper.toTimelineEventSummary(e)),
-    };
+    return incidentTimelineService.buildTimeline(organizationId, incidentId);
   }
 
   async addIncidentNote(
