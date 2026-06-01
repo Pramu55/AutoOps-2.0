@@ -7,7 +7,11 @@ import {
   OperationType,
   type IncidentDetail,
 } from '@autoops/types';
-import { buildRemediationRecommendations, type RemediationRulesContext } from './remediation-rules.service.js';
+import {
+  buildRemediationPreparationPlan,
+  buildRemediationRecommendations,
+  type RemediationRulesContext,
+} from './remediation-rules.service.js';
 
 const baseIncident: IncidentDetail = {
   id: 'incident-1',
@@ -90,7 +94,7 @@ describe('incident remediation rules', () => {
       provider: OperationProvider.KUBERNETES,
       actionType: OperationType.KUBERNETES_DEPLOYMENT_RESTART,
       confirmationToken: 'ROLLOUT',
-      approvalRequired: true,
+      approvalRequired: false,
       canPrepareOperation: false,
     });
     expect(JSON.stringify(recommendations)).not.toContain('must-not-leak');
@@ -118,9 +122,58 @@ describe('incident remediation rules', () => {
         provider: OperationProvider.JENKINS,
         actionType: OperationType.JENKINS_BUILD_TRIGGER,
         confirmationToken: 'BUILD',
+        approvalRequired: false,
         canPrepareOperation: false,
       }),
     );
+  });
+
+  it('prepares Docker restart only when evidence includes a verified container identifier', () => {
+    const recommendations = buildRemediationRecommendations({
+      ...baseContext,
+      timeline: [
+        {
+          id: 'timeline-docker',
+          source: 'signal',
+          type: 'signal_observed',
+          severity: 'ERROR',
+          status: 'ACTIVE',
+          title: 'Docker container exited',
+          description: 'Container exited',
+          relatedIds: { incidentId: 'incident-1', signalId: 'signal-docker' },
+          message: 'Container exited',
+          actorUserId: null,
+          actorUserEmail: null,
+          metadata: {
+            id: 'container-123',
+            name: 'api',
+            image: 'autoops-api:test',
+          },
+          timestamp: '2026-06-01T00:03:00.000Z',
+          occurredAt: '2026-06-01T00:03:00.000Z',
+          createdAt: '2026-06-01T00:03:00.000Z',
+        },
+      ],
+    });
+    const docker = recommendations.find((item) => item.id.endsWith(':docker-restart-review'));
+
+    expect(docker).toMatchObject({
+      provider: OperationProvider.DOCKER,
+      actionType: OperationType.DOCKER_CONTAINER_RESTART,
+      canPrepareOperation: true,
+      blockedReason: undefined,
+    });
+    expect(buildRemediationPreparationPlan(docker!)).toMatchObject({
+      canPrepare: true,
+      provider: OperationProvider.DOCKER,
+      operationType: OperationType.DOCKER_CONTAINER_RESTART,
+      confirmationToken: 'RESTART',
+      input: expect.objectContaining({
+        action: 'restart',
+        containerId: 'container-123',
+        containerName: 'api',
+      }),
+    });
   });
 
   it('returns investigation-only recommendation when no deterministic rule matches', () => {

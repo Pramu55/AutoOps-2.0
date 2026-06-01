@@ -7,6 +7,7 @@ import type {
   IncidentDetail,
   IncidentTimelineEventSummary,
   IncidentTimelineResponse,
+  PrepareRemediationRecommendationResponse,
   RemediationRecommendation,
 } from '@autoops/types';
 import { RecordSummary } from '@/components/layout/record-summary';
@@ -38,7 +39,15 @@ import { Input } from '@/components/ui/input';
 
 type IncidentDetailApiResponse = { data: IncidentDetail };
 type RecommendationsApiResponse = { data: RemediationRecommendation[] };
+type PrepareRecommendationApiResponse = { data: PrepareRemediationRecommendationResponse };
 type ModalAction = 'acknowledge' | 'resolve' | 'archive';
+type PrepareState = {
+  token: string;
+  isSubmitting: boolean;
+  error: string | null;
+  operationId: string | null;
+  operationStatus: string | null;
+};
 
 const MISSING_VALUE = '-';
 
@@ -159,7 +168,24 @@ function relatedIdEntries(event: IncidentTimelineEventSummary): Array<[string, s
     .map(([key, value]) => [key.replace(/Id$/, ''), String(value)]);
 }
 
-function RecommendationCard({ recommendation }: { recommendation: RemediationRecommendation }) {
+function RecommendationCard({
+  recommendation,
+  state,
+  onTokenChange,
+  onPrepare,
+}: {
+  recommendation: RemediationRecommendation;
+  state: PrepareState;
+  onTokenChange: (value: string) => void;
+  onPrepare: () => void;
+}) {
+  const expectedToken = recommendation.confirmationToken ?? '';
+  const canSubmit =
+    recommendation.canPrepareOperation &&
+    !state.isSubmitting &&
+    expectedToken.length > 0 &&
+    state.token.trim() === expectedToken;
+
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -175,10 +201,29 @@ function RecommendationCard({ recommendation }: { recommendation: RemediationRec
           <h3 className="mt-3 text-sm font-semibold text-slate-900">{recommendation.title}</h3>
           <p className="mt-2 text-xs leading-5 text-slate-650">{recommendation.description}</p>
         </div>
-        <Button type="button" variant="outline" size="sm" disabled className="shrink-0 rounded-full border-slate-200 bg-slate-50">
-          <Lock className="h-3.5 w-3.5" />
-          Prepare governed action
-        </Button>
+        <div className="flex shrink-0 flex-col gap-2 sm:min-w-56">
+          {recommendation.canPrepareOperation ? (
+            <Input
+              aria-label={`Confirmation token for ${recommendation.title}`}
+              value={state.token}
+              onChange={(event) => onTokenChange(event.target.value)}
+              placeholder={expectedToken}
+              className="h-9 border-slate-200 bg-white text-xs"
+              disabled={state.isSubmitting || Boolean(state.operationId)}
+            />
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!canSubmit || Boolean(state.operationId)}
+            onClick={onPrepare}
+            className="rounded-full border-slate-200 bg-slate-50"
+          >
+            <Lock className="h-3.5 w-3.5" />
+            {state.isSubmitting ? 'Preparing...' : 'Prepare governed action'}
+          </Button>
+        </div>
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -220,6 +265,19 @@ function RecommendationCard({ recommendation }: { recommendation: RemediationRec
             {recommendation.blockedReason}
           </p>
         ) : null}
+        {state.error ? (
+          <p className="mt-2 rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-800">
+            {state.error}
+          </p>
+        ) : null}
+        {state.operationId ? (
+          <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">
+            Prepared operation {state.operationStatus ?? 'created'}.{' '}
+            <Link className="font-semibold underline underline-offset-2" href={`/dashboard/operations/${state.operationId}`}>
+              Open operation detail
+            </Link>
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-4">
@@ -257,6 +315,7 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [noteError, setNoteError] = useState<string | null>(null);
+  const [prepareStates, setPrepareStates] = useState<Record<string, PrepareState>>({});
   const [modalAction, setModalAction] = useState<ModalAction | null>(null);
   const [confirmation, setConfirmation] = useState('');
   const [resolutionNote, setResolutionNote] = useState('');
@@ -274,6 +333,19 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
       setIncident(incidentRes.data);
       setTimelineEvents(timelineRes.data);
       setRecommendations(recommendationsRes.data);
+      setPrepareStates((current) => {
+        const next: Record<string, PrepareState> = {};
+        for (const recommendation of recommendationsRes.data) {
+          next[recommendation.id] = current[recommendation.id] ?? {
+            token: '',
+            isSubmitting: false,
+            error: null,
+            operationId: null,
+            operationStatus: null,
+          };
+        }
+        return next;
+      });
     } catch (loadError) {
       setError(getErrorMessage(loadError));
     } finally {
@@ -310,6 +382,57 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
       setActionError(getErrorMessage(actionSubmitError));
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const getPrepareState = (recommendationId: string): PrepareState =>
+    prepareStates[recommendationId] ?? {
+      token: '',
+      isSubmitting: false,
+      error: null,
+      operationId: null,
+      operationStatus: null,
+    };
+
+  const updatePrepareState = (recommendationId: string, patch: Partial<PrepareState>) => {
+    setPrepareStates((current) => ({
+      ...current,
+      [recommendationId]: {
+        ...(current[recommendationId] ?? {
+          token: '',
+          isSubmitting: false,
+          error: null,
+          operationId: null,
+          operationStatus: null,
+        }),
+        ...patch,
+      },
+    }));
+  };
+
+  const prepareRecommendation = async (recommendation: RemediationRecommendation) => {
+    const state = getPrepareState(recommendation.id);
+    if (!incident || !recommendation.canPrepareOperation || !recommendation.confirmationToken) return;
+    if (state.token.trim() !== recommendation.confirmationToken) return;
+
+    updatePrepareState(recommendation.id, { isSubmitting: true, error: null });
+    try {
+      const res = await api.post<PrepareRecommendationApiResponse>(
+        `/v1/incidents/${encodeURIComponent(incident.id)}/remediation-recommendations/${encodeURIComponent(recommendation.id)}/prepare`,
+        { confirmationToken: state.token.trim() },
+      );
+      updatePrepareState(recommendation.id, {
+        isSubmitting: false,
+        operationId: res.data.operation.id,
+        operationStatus: res.data.operation.status,
+        error: null,
+      });
+      await loadIncident();
+    } catch (prepareError) {
+      updatePrepareState(recommendation.id, {
+        isSubmitting: false,
+        error: getErrorMessage(prepareError),
+      });
     }
   };
 
@@ -497,7 +620,13 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
             </div>
             <div className="space-y-3">
               {recommendations.map((recommendation) => (
-                <RecommendationCard key={recommendation.id} recommendation={recommendation} />
+                <RecommendationCard
+                  key={recommendation.id}
+                  recommendation={recommendation}
+                  state={getPrepareState(recommendation.id)}
+                  onTokenChange={(value) => updatePrepareState(recommendation.id, { token: value, error: null })}
+                  onPrepare={() => void prepareRecommendation(recommendation)}
+                />
               ))}
             </div>
           </section>

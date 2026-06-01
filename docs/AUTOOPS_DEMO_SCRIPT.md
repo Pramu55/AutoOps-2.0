@@ -54,7 +54,8 @@ This script is designed for a **10–15 minute live demo** of AutoOps. It guides
 - **Action**: Navigate to **Incidents** (`/dashboard/incidents`). Click on a failed-operation incident to open the Detail View (`/dashboard/incidents/[incidentId]`).
 - **Explain**: "When an operation fails on a connector, the platform automatically registers it as an incident. We provide a vertical chronological event timeline and manual analyst note composer."
 - **Action**: Type a manual note (e.g., *'Investigating Docker container logs'*) and click **Add Note**.
-- **Point out**: The **Runbook Section**. "Runbooks in AutoOps are deterministic and safety-first. We guide the operator step-by-step to observe, verify, and resolve issues safely, rather than executing dangerous automated scripts."
+- **Point out**: The **Recommended Remediation** cards. "These are deterministic recommendations from real incident evidence. If a card can bind a verified target, the operator can type the displayed token and prepare an existing governed operation. If the target is not safe, the card remains disabled with a reason."
+- **Explain**: "Preparation is not autonomous remediation. It creates the same operation record used by the provider pages, so confirmation, approval, policy, audit evidence, and worker execution still apply."
 
 ---
 

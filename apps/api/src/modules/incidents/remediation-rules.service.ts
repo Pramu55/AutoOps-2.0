@@ -30,6 +30,19 @@ export type RemediationRulesContext = {
   }>;
 };
 
+export type RemediationPreparationPlan =
+  | {
+      canPrepare: true;
+      provider: OperationProvider;
+      operationType: OperationType;
+      confirmationToken: string;
+      input: Record<string, unknown>;
+    }
+  | {
+      canPrepare: false;
+      blockedReason: string;
+    };
+
 const HIGH_SEVERITIES = new Set<IncidentSeverity>([
   IncidentSeverity.CRITICAL,
   IncidentSeverity.ERROR,
@@ -45,7 +58,7 @@ export function buildRemediationRecommendations(
   const recommendations: RemediationRecommendation[] = [];
 
   if (HIGH_SEVERITIES.has(context.incident.severity) && hasKubernetesEvidence(searchable)) {
-    recommendations.push({
+    const draft = {
       id: `${context.incident.id}:kubernetes-rollout-review`,
       incidentId: context.incident.id,
       title: 'Review Kubernetes rollout restart',
@@ -55,17 +68,23 @@ export function buildRemediationRecommendations(
       actionType: OperationType.KUBERNETES_DEPLOYMENT_RESTART,
       reason: 'High-severity incident evidence references Kubernetes workload health or rollout state.',
       evidence: evidence.filter((item) => evidenceMatches(item, /kubernetes|k8s|pod|deployment|workload|namespace|rollout|crashloop/i)),
-      riskLevel: 'HIGH',
+      riskLevel: 'HIGH' as const,
       confirmationToken: 'ROLLOUT',
-      approvalRequired: true,
+      approvalRequired: false,
       canPrepareOperation: false,
       blockedReason:
         'Preparation is disabled until AutoOps can bind verified namespace and deployment targets to a preparation-only governed operation.',
+    };
+    const plan = buildRemediationPreparationPlan(draft);
+    recommendations.push({
+      ...draft,
+      canPrepareOperation: plan.canPrepare,
+      blockedReason: plan.canPrepare ? undefined : plan.blockedReason,
     });
   }
 
   if (hasDockerFailureEvidence(searchable)) {
-    recommendations.push({
+    const draft = {
       id: `${context.incident.id}:docker-restart-review`,
       incidentId: context.incident.id,
       title: 'Review Docker container restart',
@@ -75,17 +94,23 @@ export function buildRemediationRecommendations(
       actionType: OperationType.DOCKER_CONTAINER_RESTART,
       reason: 'Incident evidence references Docker container health, exit, restart, or failure states.',
       evidence: evidence.filter((item) => evidenceMatches(item, /docker|container|unhealthy|restart|exited|exit|failed|failure/i)),
-      riskLevel: 'MEDIUM',
+      riskLevel: 'MEDIUM' as const,
       confirmationToken: 'RESTART',
       approvalRequired: true,
       canPrepareOperation: false,
       blockedReason:
         'Preparation is disabled until the incident evidence contains a verified container identifier and a preparation-only operation path.',
+    };
+    const plan = buildRemediationPreparationPlan(draft);
+    recommendations.push({
+      ...draft,
+      canPrepareOperation: plan.canPrepare,
+      blockedReason: plan.canPrepare ? undefined : plan.blockedReason,
     });
   }
 
   if (hasCiOrDeploymentFailure(context, searchable)) {
-    recommendations.push({
+    const draft = {
       id: `${context.incident.id}:ci-deployment-investigation`,
       incidentId: context.incident.id,
       title: 'Investigate failed deployment or CI evidence',
@@ -95,12 +120,18 @@ export function buildRemediationRecommendations(
       actionType: OperationType.JENKINS_BUILD_TRIGGER,
       reason: 'The incident is linked to failed deployment, Jenkins, CI, build, or pipeline evidence.',
       evidence: evidence.filter((item) => evidenceMatches(item, /deployment|build|jenkins|ci|pipeline|failed|failure/i)),
-      riskLevel: 'MEDIUM',
+      riskLevel: 'MEDIUM' as const,
       confirmationToken: 'BUILD',
-      approvalRequired: true,
+      approvalRequired: false,
       canPrepareOperation: false,
       blockedReason:
         'A Jenkins operation requires a verified allowlisted job name, which is not safely derivable from incident evidence alone.',
+    };
+    const plan = buildRemediationPreparationPlan(draft);
+    recommendations.push({
+      ...draft,
+      canPrepareOperation: plan.canPrepare,
+      blockedReason: plan.canPrepare ? undefined : plan.blockedReason,
     });
   }
 
@@ -147,6 +178,101 @@ export function buildRemediationRecommendations(
     ...recommendation,
     evidence: recommendation.evidence.slice(0, 8),
   }));
+}
+
+export function buildRemediationPreparationPlan(
+  recommendation: RemediationRecommendation,
+): RemediationPreparationPlan {
+  if (
+    recommendation.provider === OperationProvider.DOCKER &&
+    recommendation.actionType === OperationType.DOCKER_CONTAINER_RESTART
+  ) {
+    const containerId = firstEvidenceString(recommendation, ['containerId', 'id']);
+    if (!containerId) {
+      return {
+        canPrepare: false,
+        blockedReason:
+          'Preparation is disabled until the incident evidence contains a verified Docker container identifier.',
+      };
+    }
+
+    return {
+      canPrepare: true,
+      provider: OperationProvider.DOCKER,
+      operationType: OperationType.DOCKER_CONTAINER_RESTART,
+      confirmationToken: 'RESTART',
+      input: compactRecord({
+        action: 'restart',
+        containerId,
+        containerName: firstEvidenceString(recommendation, ['containerName', 'name']),
+        image: firstEvidenceString(recommendation, ['image']),
+        confirmationLabel: 'RESTART',
+        preparedFromIncidentId: recommendation.incidentId,
+        remediationRecommendationId: recommendation.id,
+      }),
+    };
+  }
+
+  if (
+    recommendation.provider === OperationProvider.KUBERNETES &&
+    recommendation.actionType === OperationType.KUBERNETES_DEPLOYMENT_RESTART
+  ) {
+    const namespace = firstEvidenceString(recommendation, ['namespace']);
+    const name = firstEvidenceString(recommendation, ['deploymentName', 'workloadName']);
+    if (!namespace || !name) {
+      return {
+        canPrepare: false,
+        blockedReason:
+          'Preparation is disabled until the incident evidence contains both verified Kubernetes namespace and deployment target fields.',
+      };
+    }
+
+    return {
+      canPrepare: true,
+      provider: OperationProvider.KUBERNETES,
+      operationType: OperationType.KUBERNETES_DEPLOYMENT_RESTART,
+      confirmationToken: 'ROLLOUT',
+      input: {
+        action: 'rolloutRestart',
+        namespace,
+        name,
+        preparedFromIncidentId: recommendation.incidentId,
+        remediationRecommendationId: recommendation.id,
+      },
+    };
+  }
+
+  if (
+    recommendation.provider === OperationProvider.JENKINS &&
+    recommendation.actionType === OperationType.JENKINS_BUILD_TRIGGER
+  ) {
+    const jobName = firstEvidenceString(recommendation, ['jobName', 'job', 'fullName']);
+    if (!jobName) {
+      return {
+        canPrepare: false,
+        blockedReason:
+          'A Jenkins operation requires a verified allowlisted job name, which is not safely derivable from incident evidence alone.',
+      };
+    }
+
+    return {
+      canPrepare: true,
+      provider: OperationProvider.JENKINS,
+      operationType: OperationType.JENKINS_BUILD_TRIGGER,
+      confirmationToken: 'BUILD',
+      input: {
+        jobName,
+        parameters: {},
+        preparedFromIncidentId: recommendation.incidentId,
+        remediationRecommendationId: recommendation.id,
+      },
+    };
+  }
+
+  return {
+    canPrepare: false,
+    blockedReason: recommendation.blockedReason ?? 'No governed operation is attached to this recommendation.',
+  };
 }
 
 function collectEvidence(context: RemediationRulesContext): RemediationEvidence[] {
@@ -272,4 +398,20 @@ function safeValue(value: unknown): string | number | boolean | null | undefined
   if (Array.isArray(value)) return JSON.stringify(value.slice(0, 8).map(safeValue));
   if (typeof value === 'object') return JSON.stringify(safeDetails(value as Record<string, unknown>));
   return String(value);
+}
+
+function firstEvidenceString(recommendation: RemediationRecommendation, keys: string[]): string | null {
+  for (const evidence of recommendation.evidence) {
+    for (const key of keys) {
+      const value = evidence.details?.[key];
+      if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+    }
+  }
+  return null;
+}
+
+function compactRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, item]) => item !== undefined && item !== null && item !== ''),
+  );
 }

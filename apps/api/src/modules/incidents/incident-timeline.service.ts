@@ -174,7 +174,7 @@ export class IncidentTimelineService {
       metadata: event.metadata,
       relatedIds: {
         signalId: this._stringFromMetadata(event.metadata, 'signalId'),
-        operationId: incident.operationId,
+        operationId: this._stringFromMetadata(event.metadata, 'operationId') ?? incident.operationId,
         deploymentId: incident.deploymentId,
         projectId: incident.projectId,
         environmentId: incident.environmentId,

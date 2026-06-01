@@ -20,6 +20,9 @@ import {
   SignalType,
   SignalSeverity,
   SignalStatus,
+  type Operation,
+  type PrepareRemediationRecommendationInput,
+  type PrepareRemediationRecommendationResponse,
   type IncidentTimelineResponse,
   type RemediationRecommendation,
 } from '@autoops/types';
@@ -28,7 +31,11 @@ import { sanitizeMetadata } from '@autoops/utils';
 import { operationAuthorizationService } from '../operations/operation-authorization.service.js';
 import { IncidentMapper } from './incident.mapper.js';
 import { incidentTimelineService } from './incident-timeline.service.js';
-import { buildRemediationRecommendations } from './remediation-rules.service.js';
+import {
+  buildRemediationPreparationPlan,
+  buildRemediationRecommendations,
+} from './remediation-rules.service.js';
+import { operationService } from '../operations/operation.service.js';
 
 interface RecordEventInput {
   organizationId: string;
@@ -41,6 +48,11 @@ interface RecordEventInput {
   metadata?: Record<string, unknown>;
   occurredAt?: Date;
 }
+
+type AuditRequestContext = {
+  ipAddress?: string;
+  userAgent?: string;
+};
 
 export class IncidentService {
   async listIncidents(
@@ -464,6 +476,53 @@ export class IncidentService {
     });
   }
 
+  async prepareRemediationRecommendation(
+    organizationId: string,
+    userId: string,
+    role: string | undefined,
+    incidentId: string,
+    recommendationId: string,
+    input: PrepareRemediationRecommendationInput,
+    auditContext: AuditRequestContext = {},
+  ): Promise<PrepareRemediationRecommendationResponse> {
+    const incident = await this.getIncident(organizationId, userId, incidentId);
+    const recommendations = await this.listRemediationRecommendations(organizationId, userId, incidentId);
+    const recommendation = recommendations.find((item) => item.id === recommendationId);
+    if (!recommendation) throw new NotFoundError('Remediation recommendation');
+
+    const plan = buildRemediationPreparationPlan(recommendation);
+    if (!plan.canPrepare) throw new BadRequestError(plan.blockedReason);
+    if (input.confirmationToken !== plan.confirmationToken) {
+      throw new BadRequestError(`confirmationToken must be ${plan.confirmationToken}`);
+    }
+
+    const operation = await operationService.createQueuedOperation(
+      {
+        organizationId,
+        userId,
+        role,
+        provider: plan.provider,
+        operationType: plan.operationType,
+        input: plan.input,
+        projectId: incident.projectId ?? undefined,
+        environmentId: incident.environmentId ?? undefined,
+        idempotencyKey: `remediation:${recommendation.id}`,
+        confirmationToken: input.confirmationToken,
+      },
+      auditContext,
+    );
+
+    await this._recordRemediationPreparationEvent(
+      organizationId,
+      userId,
+      incidentId,
+      recommendation,
+      operation,
+    );
+
+    return { recommendation, operation };
+  }
+
   async addIncidentNote(
     organizationId: string,
     userId: string,
@@ -802,6 +861,35 @@ export class IncidentService {
       return value as Record<string, unknown>;
     }
     return {};
+  }
+
+  private async _recordRemediationPreparationEvent(
+    organizationId: string,
+    userId: string,
+    incidentId: string,
+    recommendation: RemediationRecommendation,
+    operation: Operation,
+  ): Promise<void> {
+    const userInfo = await this._getUserInfo(userId);
+    await prisma.incidentEvent.create({
+      data: {
+        organizationId,
+        incidentId,
+        type: DbIncidentEventType.EVIDENCE_ADDED,
+        actorUserId: userId,
+        actorUserEmail: userInfo.email,
+        title: 'Governed remediation operation prepared',
+        message: `Prepared ${operation.operationType} from recommendation ${recommendation.id}.`,
+        metadata: sanitizeMetadata({
+          operationId: operation.id,
+          recommendationId: recommendation.id,
+          provider: operation.provider,
+          operationType: operation.operationType,
+          operationStatus: operation.status,
+        }),
+        occurredAt: new Date(),
+      },
+    });
   }
 }
 

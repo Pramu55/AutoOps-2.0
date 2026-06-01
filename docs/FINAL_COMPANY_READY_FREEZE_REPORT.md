@@ -24,6 +24,8 @@ This document reports the final completion of **Phase 10: Company-Ready Demo Fre
 8. **SERVICE_PLATFORM_EXPERIENCE_PHASE_8_OPERATIONS_WORKSPACE_POLISH_GREEN** ✅: Polished Operations Hub queues and action flows.
 9. **SERVICE_PLATFORM_EXPERIENCE_PHASE_9_INTEGRATION_ADMIN_PLATFORM_POLISH_GREEN** ✅: Polished dynamic Integrations Hub and settings placeholder copy.
 10. **SERVICE_PLATFORM_EXPERIENCE_PHASE_10_COMPANY_READY_DEMO_FREEZE_GREEN** ✅: Complete system documentation, demo narratives, safety summaries, and quickstarts.
+11. **AUTOMATED_REMEDIATION_RULES_FOUNDATION_GREEN** ✅: Deterministic recommendation cards from real incident evidence, with no autonomous execution.
+12. **REMEDIATION_OPERATION_PREPARATION_GREEN** ✅: Safe recommendation preparation into the existing governed operation pipeline when verified target evidence is available.
 
 ---
 
@@ -60,6 +62,7 @@ This document reports the final completion of **Phase 10: Company-Ready Demo Fre
 - [x] **RBAC Enforcement**: Requester/Approver separation is strictly validated on the backend.
 - [x] **Action Confirmations**: Strict confirmation inputs (e.g., `START`, `STOP`, `APPLY`, `ROLLBACK`) must be typed by users to trigger writes.
 - [x] **No Unsafe Execution**: No arbitrary kubectl, Docker CLI execution, or shell access is exposed.
+- [x] **No Autonomous Remediation**: Recommendations can only prepare existing governed operations after server-side recomputation, exact confirmation, policy checks, audit logging, and any required approval.
 
 ---
 
@@ -73,9 +76,11 @@ This document reports the final completion of **Phase 10: Company-Ready Demo Fre
 - **Sanitized Metadata Responses**: UI never prints raw state data, environment values, or secrets.
 - **AWS Cost/Blast-Radius Estimator**: Guardrails validate cost thresholds and block executions if limits are exceeded.
 - **Incident & Note Composition**: Vertically scrolled timelines track operation logs and support human analyst notes.
+- **Governed Remediation Preparation**: Supported incident recommendations can create existing operation records through the controlled operation system when verified target evidence exists.
 
 ### Intentionally Not Implemented (Roadmapped)
 - **AI-Driven Remediation**: No automated AI fixes. AI is restricted to a future roadmapped interface helper.
+- **Autonomous Remediation**: Recommendations never execute automatically and unsupported actions remain disabled with honest blocked reasons.
 - **Slack/PagerDuty Webhook Fanout**: No external alerts are shipped.
 - **SLO Governance & OpenTelemetry Collectors**: Core telemetries are monitored, but advanced distributed tracing is out of scope.
 - **Tenant User Invites**: Local testing accounts simulate Org switching; user registration creates an isolated, new workspace.

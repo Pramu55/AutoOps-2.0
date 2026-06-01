@@ -8,11 +8,17 @@ import {
   IncidentEventType,
 } from './enums.js';
 import { OperationProvider, OperationType } from './operation.js';
+import type { Operation } from './operation.js';
 
 export { IncidentSeverity, IncidentStatus, IncidentSource, IncidentSignalRole, IncidentEventType };
 
 export const incidentParamsSchema = z.object({
   incidentId: idSchema,
+});
+
+export const remediationRecommendationPrepareParamsSchema = z.object({
+  incidentId: idSchema,
+  recommendationId: z.string().trim().min(1).max(240),
 });
 
 export const incidentFilterSchema = z.object({
@@ -49,6 +55,11 @@ export const incidentNoteSchema = z.object({
   message: z.string().trim().min(1).max(2000),
 });
 export type IncidentNoteInput = z.infer<typeof incidentNoteSchema>;
+
+export const prepareRemediationRecommendationSchema = z.object({
+  confirmationToken: z.string().trim().min(1).max(64),
+});
+export type PrepareRemediationRecommendationInput = z.infer<typeof prepareRemediationRecommendationSchema>;
 
 export interface IncidentActor {
   id: string;
@@ -214,4 +225,9 @@ export interface RemediationRecommendation {
   approvalRequired: boolean;
   canPrepareOperation: boolean;
   blockedReason?: string;
+}
+
+export interface PrepareRemediationRecommendationResponse {
+  recommendation: RemediationRecommendation;
+  operation: Operation;
 }
