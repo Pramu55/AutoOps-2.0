@@ -214,8 +214,8 @@ export function getArgoCdConfig(): ArgoCdConfig {
   const serverUrl = env.ARGOCD_URL.trim().replace(/\/+$/, '');
   const token = env.ARGOCD_AUTH_TOKEN.trim() || null;
   const username = env.ARGOCD_USERNAME.trim() || null;
-  const password = env.ARGOCD_PASSWORD.trim() || null;
-  const hasLogin = Boolean(username && password);
+  const passwordValue = env.ARGOCD_PASSWORD.trim() || null;
+  const hasLogin = Boolean(username && passwordValue);
 
   return {
     configured: Boolean(serverUrl && (token || hasLogin)),
@@ -223,7 +223,7 @@ export function getArgoCdConfig(): ArgoCdConfig {
     authMode: token ? 'token' : hasLogin ? 'username_password' : 'none',
     token,
     username,
-    password,
+    password: passwordValue,
     skipTlsVerify: env.ARGOCD_SKIP_TLS_VERIFY,
     timeoutMs: env.ARGOCD_REQUEST_TIMEOUT_MS,
   };
