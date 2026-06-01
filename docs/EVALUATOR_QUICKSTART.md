@@ -1,13 +1,16 @@
 # Evaluator Quickstart
 
+Welcome! If you are a recruiter, engineering manager, or interviewer evaluating this project, this guide will provide the fastest path to understanding AutoOps and experiencing its core value proposition.
+
 ## What to Read First
 
 1. [README](../README.md)
 2. [Feature Matrix](./FEATURE_MATRIX.md)
 3. [Architecture Overview](./ARCHITECTURE_OVERVIEW.md)
-4. [Demo Guide](./DEMO_GUIDE.md)
 
 ## What to Run First
+
+To start the platform locally using Docker Compose:
 
 ```powershell
 cd "C:\AutoOps 2.0"
@@ -16,76 +19,33 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 docker compose -f docker-compose.yml -f docker-compose.k8s.yml ps
 ```
 
-## What to Click First
+## Recommended Demo Path
 
-1. `/login`
-2. Use Operator / Requester demo account.
-3. `/dashboard`
-4. `/dashboard/operations`
-5. `/dashboard/integrations/docker`
-6. `/dashboard/integrations/kubernetes`
-7. `/dashboard/incidents`
+We recommend the following flow to evaluate the application's workspaces and safety mechanisms:
 
-## What to Verify
+1. **Login**: Navigate to `http://localhost:3000/login`. Use the pre-filled Operator account.
+2. **Command Workspace**: Observe the high-level signals, resource counts, and priority alerts.
+3. **Operations Hub**: Check the worker queue, active platform status, and pending approvals.
+4. **Incidents**: Open the incident log to see failure records generated from worker operations.
+5. **Incident detail**: Click into an incident to see the vertical event timeline and runbook.
+6. **Recommended Remediation**: Observe the deterministic, evidence-based remediation recommendation cards.
+7. **Governed preparation safety behavior**: Click "Prepare governed action". Notice how it uses the existing approval and RBAC pipeline without executing autonomously. Unsafe actions remain disabled.
+8. **Governance Center**: View the immutable audit log of operations and policy decisions.
+9. **Docker/Kubernetes/Jenkins integrations**: View real status from local connectors. Try a governed action like a Docker restart, and notice the exact confirmation token requirement.
+10. **Projects and deployments**: View tenant-scoped delivery configurations.
 
-- Real auth login.
-- Runtime health.
-- Worker heartbeat.
-- Provider health.
-- Governed Docker/Kubernetes operation.
-- Pending approval.
-- Admin approval.
-- Operation detail lifecycle.
-- Incident and runbook.
-- CI/release gates.
+## What Safety Behavior to Notice
 
-## What Makes This Project Strong
-
-- It models real platform engineering concerns, not only UI screens.
-- It separates API governance from worker execution.
-- It includes RBAC and requester/approver separation.
-- It handles failed operations with incidents and runbooks.
-- It has production readiness, backup/restore, secret scanning, and CI gates.
-
-## What Is Intentionally Not Included
-
-- Unsafe Docker exec/delete/create.
-- Unsafe Kubernetes exec/apply/delete/Secret access.
-- AI-generated remediation.
-- AWS/GitHub product connectors.
-- Real production cloud deployment automation.
-- Enterprise certification claims.
+While evaluating, please pay attention to these enterprise safety mechanisms:
+- **No Autonomous Auto-Fix**: The system provides recommendations, but forces humans through an approval and confirmation pipeline.
+- **Requester/Approver Separation**: You cannot approve an operation that you requested.
+- **Tenant Isolation**: Operations and incidents belong to specific organizations.
+- **Confirmation Tokens**: Destructive actions require typing exact phrases (e.g., `RESTART`).
+- **Data Redaction**: Exported logs and API responses strip raw secrets, tokens, and kubeconfig values.
 
 ## Suggested Interview Questions
 
-- How does AutoOps prevent requester self-approval?
-- Why does the worker own execution instead of the API?
-- How are optional integrations handled safely?
+- How does AutoOps separate API governance from worker execution?
+- Why did you choose deterministic remediation recommendations over an AI-driven auto-fix bot?
+- How are optional integrations handled without generating fake mock data?
 - What happens when a worker-executed operation fails?
-- What would you add before a real production rollout?
-
-## Suggested Demo Path
-
-Use the [Demo Guide](./DEMO_GUIDE.md#demo-flow-summary) or follow the comprehensive [AutoOps Demo Script](./AUTOOPS_DEMO_SCRIPT.md).
-
-## How to Evaluate Architecture
-
-Look for separation of concerns:
-
-- web is UX
-- API is policy/security
-- worker is execution
-- database is durable state
-- Redis/BullMQ is queueing
-- connectors are limited and governed
-
-## How to Evaluate Safety
-
-Run:
-
-```powershell
-.\scripts\scan-secrets.ps1
-.\scripts\check-release.ps1
-```
-
-Review [Security Checklist](./SECURITY_CHECKLIST.md) and [Controlled Operations Overview](./CONTROLLED_OPERATIONS_OVERVIEW.md).

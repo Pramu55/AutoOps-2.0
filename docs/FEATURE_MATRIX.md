@@ -1,93 +1,36 @@
 # AutoOps Feature Matrix
 
-| Area | Feature | Status | Real Data? | Safety Model | Notes |
-| --- | --- | --- | --- | --- | --- |
-| Authentication | Login/register | Complete | Yes | Real auth API | Demo buttons only prefill |
-| Organizations | Membership and tenant scope | Complete | Yes | Organization ID scoping | New registration creates a new organization |
-| RBAC | Trigger authorization | Complete | Yes | OWNER/ADMIN/MEMBER trigger | VIEWER denied |
-| RBAC | Approval authorization | Complete | Yes | OWNER/ADMIN approve | Requester self-approval blocked |
-| Operations | Operation records | Complete | Yes | Durable lifecycle | No fake records |
-| Operations | Operation detail | Complete | Yes | Safe DTOs | No raw input/result/error |
-| Approvals | Pending approval workflow | Complete | Yes | Policy + RBAC | Not enqueued before approval |
-| Jenkins | Status/jobs/builds | Complete | Yes when configured | Status sanitized; inventory requires org provider access | Optional connector |
-| Jenkins | Governed build trigger | Complete | Yes | BUILD confirmation + allowlisted jobs | No arbitrary Jenkins mutation |
-| Docker | Engine inventory | Complete | Yes | OWNER/ADMIN plus org provider access | Containers/images/networks/volumes/logs |
-| Docker | Start container | Complete | Yes | START confirmation | No approval by local policy |
-| Docker | Stop/restart container | Complete | Yes | STOP/RESTART confirmation + approval | No exec/delete/create |
-| Kubernetes | Cluster inventory | Complete | Yes | OWNER/ADMIN plus org provider access | Namespaces/workloads/pods/services |
-| Kubernetes | Metrics API status | Complete | Yes when configured | Read-only metrics | Honest unavailable state |
-| Kubernetes | Scale deployment | Complete | Yes | SCALE confirmation + approval threshold | Protected namespaces blocked |
-| Kubernetes | Rollout restart | Complete | Yes | ROLLOUT confirmation | No apply/delete/exec |
-| Infrastructure | Terraform/OpenTofu workspace discovery | Complete | Yes | Allowlisted directories only | No arbitrary path execution |
-| Infrastructure | Terraform/OpenTofu validate and plan | Complete | Yes when tool installed | VALIDATE/PLAN confirmation + worker execution | No cloud credentials included |
-| Infrastructure | Terraform/OpenTofu apply | Complete | Yes when tool installed | APPLY confirmation + approval required | No arbitrary variables or shell |
-| Infrastructure | Ansible playbook discovery | Complete | Yes | Allowlisted playbooks and inventory only | Local smoke playbook included |
-| Infrastructure | Ansible syntax-check and check mode | Complete | Yes when tool installed | SYNTAX/CHECK confirmation + worker execution | No SSH keys or vault secrets |
-| Infrastructure | Ansible run | Complete | Yes when tool installed | RUN confirmation + approval required | No arbitrary playbook path |
-| GitHub Actions | Workflow/run readiness | Complete | Yes when token configured | Status sanitized; inventory requires org provider access | No arbitrary dispatch |
-| Observability | Prometheus/Grafana readiness | Complete | Yes | Status sanitized; details require org provider access | No fake metrics |
-| DevOps Tools | Helm/Kustomize/tool readiness | Complete | Yes | Version detection only | No apply/mutation |
-| Cloud Readiness | AWS/Azure/GCP readiness center | Complete | Yes when configured | Status sanitized; details require org provider access; no direct writes | Cloud writes future via Terraform approval |
-| AWS Foundation | AWS deployment foundation diagnostics | Complete | Yes when configured | OWNER/ADMIN only; read-only STS/IAM/S3/DynamoDB probes | No apply/destroy; no secrets; sanitized status for all users |
-| AWS Foundation | AWS identity verification | Complete | Yes when configured | STS GetCallerIdentity; OWNER/ADMIN only | Account ID, ARN, region returned; no credentials exposed |
-| AWS Foundation | AWS IAM permission diagnostics | Complete | Yes when configured | Read-only permission probes per AWS service | Missing permissions reported; no privilege escalation |
-| AWS Foundation | AWS remote state readiness | Complete | Yes when configured | S3 HeadBucket + DynamoDB DescribeTable | No state file read/write; reachability check only |
-| AWS Foundation | AWS workspace readiness | Complete | Yes when configured | Allowlisted workspace file and tooling checks | Local state/init directory flagged; no execution |
-| AWS Foundation | AWS deployment targets | Complete | Yes when configured | Allowlisted ECS Fargate workspaces only | Plan approval-gated; apply disabled by default |
-| AWS ECR | ECR readiness and repository inventory | Complete | Yes when configured | OWNER/ADMIN provider-boundary access + allowlisted repositories | No repository creation or deletion |
-| AWS ECR | Docker image build | Complete | Yes when configured | BUILD confirmation + allowlisted build target | No arbitrary Dockerfile, context, tag, or shell |
-| AWS ECR | ECR image push | Complete | Yes when configured | PUSH confirmation + production approval gate | Push disabled by default; no credential exposure |
-| AWS Terraform ECS | Plan-only ECS review | Complete | Yes when configured | PLAN confirmation + remote state + tenant-scoped pushed image metadata | No apply, destroy, arbitrary workspace, arbitrary tfvars, or raw plan output exposure |
-| AWS Terraform ECS | Approval-gated ECS apply | Complete | Yes when configured | APPLY confirmation + approval required + plan safety validation | No apply runs without approval; no destroy; no secrets exposed; ECS verification after apply |
-| AWS Guardrails | Cost estimate and blast-radius analysis | Complete | Yes from safe plan metadata | Account/region allowlists + local conservative estimate + mutation block | No Pricing API; estimated monthly cost is not a billing guarantee |
-| AWS Guardrails | Apply/promotion/rollback enforcement | Complete | Yes | Guardrails checked at plan time and immediately before mutation | `BLOCKED` guardrails cannot be overridden by approval |
-| Company Handoff | Company deployment handoff package | Complete | N/A | Documentation and readiness script | Does not claim company deployment; requires official approval and credentials |
-| Company Handoff | Company security review checklist | Complete | N/A | Identity, provider, secret, network, audit, worker, and guardrail checks | Company pilot gate |
-| Provider Onboarding | Organization provider access UX | Complete | Yes | `BLOCKED_BY_ORG_POLICY` for blocked orgs | New orgs see onboarding instead of misleading connector misconfiguration |
-| Integrations | Integrations Hub | Complete | Yes | Read-only aggregator | Does not execute actions, fake data, or expose secrets |
-| Resource Graph | Resource graph foundation planning | Planned foundation | N/A | Docs and shared contracts only | No DB migration or fake graph data |
-| Resource Graph | URN helper foundation | Complete | N/A | Deterministic secret-rejecting URN builders | No organization IDs in public URNs |
-| AWS ECS Releases | Release history & timeline | Complete | Yes | Tenant-scoped by organizationId | No fake demo releases; empty history for new orgs |
-| AWS ECS Releases | Release promotion | Complete | Yes | PROMOTE confirmation + production approval gate | Promotion reuses plan and apply safety gates; no arbitrary image URIs |
-| AWS ECS Releases | Governed rollback | Complete | Yes | ROLLBACK confirmation + always requires approval | Rollback blocked if destroyCount > 0 or applyEligible=false; no direct mutations |
-| Worker Runtime | BullMQ execution | Complete | Yes | Worker-only execution | API queues accepted work |
-| Worker Runtime | Heartbeat registry | Complete | Yes | Persisted heartbeat rows | Fresh/stale/offline derived |
-| Observability | Operations Hub | Complete | Yes | Safe summaries | Platform/provider/queue/worker/incidents |
-| Governance | Governance Center | Complete | Yes | Tenant-scoped safe evidence | Requester, approver, policy, provider, lifecycle, incident linkage |
-| Governance | Safe evidence export | Complete | Yes | OWNER/ADMIN export + safe DTO | JSON only; no raw metadata or secrets |
-| Incidents | Failed operation incident | Complete | Yes | Safe summary + lifecycle | One incident per failed operation |
-| Incidents | Incident workflow timeline & notes | Complete | Yes | Transactional events + note composer | Strict tenant isolation by organizationId; no AI/automated remediation |
-| Incidents | Incident evidence correlation timeline | Complete | Yes | Read-only public-safe timeline | Correlates incidents, signals, operations, deployments, and governance evidence |
-| Incidents | Automated remediation rules foundation | Complete | Yes | Deterministic recommendation-only | Evidence-based recommendations; no autonomous execution; preparation disabled unless safe |
-| Incidents | Governed remediation operation preparation | Complete | Yes | Reuses operation governance | Enabled only for verified targets; RBAC, confirmation, policy, approval, audit, and worker flow preserved |
-| Runbooks | Deterministic runbooks | Complete | Yes | Observe/verify/recover/escalate guidance | No AI runbooks |
-| Production Readiness | `.env.example` | Complete | N/A | Safe placeholders | Local-only notes |
-| Production Readiness | Production compose | Complete | N/A | No default socket/kubeconfig | Company pilot topology |
-| CI/Release Gates | GitHub Actions CI | Complete | N/A | Build/typecheck/test/scan | Optional connectors not required |
-| Backup/Restore | PostgreSQL scripts | Complete | Yes | Backup safe, restore requires RESTORE | No migrate reset |
-| Secret Safety | Redaction utility and scans | Complete | N/A | Redacts and detects suspicious values | Values not printed |
-| Documentation | Evaluator docs | Complete | N/A | Honest positioning | Day 17 docs |
+This matrix provides the final, honest capability list for the AutoOps platform.
 
-| Resource Graph | Database-backed Resource Graph | Complete | Yes | Tenant-scoped read model | ResourceNode/ResourceEdge with safe metadata and no action controls |
-| Resource Graph | Resource Graph API and UI | Complete | Yes | Authenticated, organization-scoped, read-only | `/dashboard/resources` and `/api/v1/resources/*` |
-| Resource Graph | Provider registration hooks | Complete | Yes for allowlisted orgs | Provider inventory policy preserved | Jenkins, Docker, Kubernetes registration side effects are non-blocking |
-| Dashboard | Command Workspace Phase 3 | Complete | Yes | Read-only aggregator | Integrates Needs Attention, Active Incidents, and Signals |
-| Incidents | Incident Workspace Phase 4 | Complete | Yes | UI/UX refactor | Upgrades incident triage queue and detail views using enterprise layout components |
-| Observability | Observations Workspace Phase 5 | Complete | Yes | UI/UX refactor | Upgrades signals and resources views into enterprise evidence workspaces |
-| Delivery | Delivery Workspace Phase 6 | Complete | Yes | UI/UX refactor | Upgrades projects and deployments views into enterprise workspaces |
-| Governance | Governance Workspace Phase 7 | Complete | Yes | UI/UX refactor | Upgrades governance evidence views into enterprise audit workspaces with safe export. |
-| Operations | Operations Workspace Polish Phase 8 | Complete | Yes | UI/UX refactor | Upgrades operations queue controls and detail recovery triggers. |
-| Integration & Admin | Integration & Admin Platform Polish Phase 9 | Complete | Yes | UI/UX refactor | Standardizes layouts, WorkspaceHeaders, and breadcrumbs across all provider pages and settings placeholder. |
-| Demo Freeze | Company-Ready Demo Freeze Phase 10 | Complete | N/A | Documentation freeze | Packages the final portfolio guides, demo script, freeze reports, and talk points. |
+## Supported Capabilities
 
-## AUTOMATED_REMEDIATION_RULES_FOUNDATION_GREEN
+- **Projects/Environments/Deployments**: Tenant-isolated structures defining deployment lifecycles.
+- **BullMQ Worker Execution**: Asynchronous, isolated job execution decoupled from the API.
+- **Operations Hub**: Centralized command center for operations, providers, queues, failures, and approvals.
+- **Governance Center**: Immutable, audit-ready evidence log of all completed operations, configurations, and decisions.
+- **Approvals**: Policy-driven gates separating requesters from execution approval.
+- **Docker Connector**: Status, container/image/network visibility, and governed start/stop/restart.
+- **Kubernetes Connector**: Status, workloads, pods, services, and governed scale/rollout restart.
+- **Jenkins Connector**: Allowlisted job discovery and governed build triggers.
+- **GitHub Actions Connector**: Workflow and run observability for configured repositories.
+- **AWS Deployment Planning**: Governed ECR image build/push and ECS Terraform plan/apply workflows.
+- **Prometheus/Grafana Observability**: Integration readiness checks and embedded metrics proxy.
+- **Argo CD / GitOps Foundation**: Prepared routes and structural models for future GitOps integrations.
+- **Signals**: Real-time telemetry ingest, deduplication, and normalized observation streams.
+- **Resource Graph**: Database-backed read-only Resource Graph mapping infrastructure topology.
+- **Incidents**: Tenant-scoped failure records generated from failed worker operations.
+- **Incident Timeline**: Vertical chronological correlation of incidents, signals, deployments, and operations.
+- **Recommended Remediation**: Deterministic remediation suggestions derived from real incident evidence.
+- **Governed Remediation Preparation**: Safe mapping of recommendations to the standard governed operation pipeline.
+- **Audit/Evidence**: Exportable, safe JSON records of platform activity with redacted secrets.
+- **Hosted Demo Readiness**: Security profiles prepared for safe, read-only public hosted demonstrations.
 
-This milestone is green as a deterministic, recommendation-only foundation. Incident detail pages call `/api/v1/incidents/:incidentId/remediation-recommendations` and show safe recommendations derived from the incident record, linked signal evidence, timeline evidence, linked deployments, and recent operations.
+## Explicit Non-Goals & Blocked Capabilities
 
-The milestone does not implement autonomous remediation, AI auto-fix, fake incidents, fake provider state, hidden demo data, or direct execution from recommendations.
+To maintain a production-grade safety model, AutoOps explicitly **DOES NOT** and **WILL NOT** implement:
 
-## REMEDIATION_OPERATION_PREPARATION_GREEN
-
-This milestone is green as a governed preparation flow. Incident detail recommendation cards enable **Prepare governed action** only when the backend can recompute the recommendation, bind a verified target from safe evidence, and create an existing operation through the normal governance system. Unsupported recommendations remain disabled with blocked reasons.
-
-The preparation endpoint does not call provider APIs directly and does not bypass confirmation, approval, tenant isolation, operation policy, OPA policy, audit evidence, or the worker queue. It is not autonomous remediation.
+- **No autonomous remediation**: AutoOps never triggers remediation actions without human interaction.
+- **No AI auto-fix**: There are no LLM agents writing code, patching infrastructure, or autonomously executing fixes.
+- **No fake data**: Status indicators represent real connector checks. Unconfigured connectors report honestly.
+- **No unsafe provider mutation**: There is no arbitrary `kubectl apply`, Docker `exec`, Jenkins job deletion, or raw cloud permission escalation.
+- **No Slack/PagerDuty fanout unless actually implemented**: Notifications are not spoofed. Integrations do not exist unless explicitly verified and tested.
