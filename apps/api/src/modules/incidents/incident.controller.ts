@@ -6,6 +6,7 @@ import {
   IncidentListResponse,
   IncidentReadinessResponse,
   IncidentTimelineResponse,
+  RemediationRecommendation,
   incidentFilterSchema,
   incidentNoteSchema,
 } from '@autoops/types';
@@ -106,6 +107,19 @@ export class IncidentController {
       input,
     );
     res.json(data);
+  };
+
+  remediationRecommendations = async (
+    req: Request<{ incidentId: string }>,
+    res: Response<{ data: RemediationRecommendation[] }>,
+  ): Promise<void> => {
+    const auth = this._requireAuth(req);
+    const data = await incidentService.listRemediationRecommendations(
+      auth.organizationId,
+      auth.userId,
+      req.params.incidentId,
+    );
+    res.json({ data });
   };
 
   private _requireAuth(req: Request): { organizationId: string; userId: string } {

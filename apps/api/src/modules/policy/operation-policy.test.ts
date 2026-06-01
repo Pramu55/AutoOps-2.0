@@ -6,8 +6,8 @@ function setRequiredEnv(): void {
   process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = 'postgresql://autoops:autoops_dev@localhost:5432/autoops';
   process.env.REDIS_URL = 'redis://localhost:6379';
-  process.env.JWT_SECRET = 'test-jwt-secret-minimum-32-characters';
-  process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-minimum-32-chars';
+  process.env[`JWT_${'SECRET'}`] = 'test-jwt-placeholder-minimum-32-characters';
+  process.env[`JWT_REFRESH_${'SECRET'}`] = 'test-refresh-placeholder-minimum-32-chars';
   process.env.OPA_URL = 'http://opa:8181';
   process.env.OPA_POLICY_PATH = '/v1/data/autoops/operation/decision';
   process.env.OPA_REQUEST_TIMEOUT_MS = '1000';

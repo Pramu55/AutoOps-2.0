@@ -58,6 +58,7 @@
 | Incidents | Failed operation incident | Complete | Yes | Safe summary + lifecycle | One incident per failed operation |
 | Incidents | Incident workflow timeline & notes | Complete | Yes | Transactional events + note composer | Strict tenant isolation by organizationId; no AI/automated remediation |
 | Incidents | Incident evidence correlation timeline | Complete | Yes | Read-only public-safe timeline | Correlates incidents, signals, operations, deployments, and governance evidence |
+| Incidents | Automated remediation rules foundation | Complete | Yes | Deterministic recommendation-only | Evidence-based recommendations; no autonomous execution; preparation disabled unless safe |
 | Runbooks | Deterministic runbooks | Complete | Yes | Observe/verify/recover/escalate guidance | No AI runbooks |
 | Production Readiness | `.env.example` | Complete | N/A | Safe placeholders | Local-only notes |
 | Production Readiness | Production compose | Complete | N/A | No default socket/kubeconfig | Company pilot topology |
@@ -77,3 +78,9 @@
 | Operations | Operations Workspace Polish Phase 8 | Complete | Yes | UI/UX refactor | Upgrades operations queue controls and detail recovery triggers. |
 | Integration & Admin | Integration & Admin Platform Polish Phase 9 | Complete | Yes | UI/UX refactor | Standardizes layouts, WorkspaceHeaders, and breadcrumbs across all provider pages and settings placeholder. |
 | Demo Freeze | Company-Ready Demo Freeze Phase 10 | Complete | N/A | Documentation freeze | Packages the final portfolio guides, demo script, freeze reports, and talk points. |
+
+## AUTOMATED_REMEDIATION_RULES_FOUNDATION_GREEN
+
+This milestone is green as a deterministic, recommendation-only foundation. Incident detail pages call `/api/v1/incidents/:incidentId/remediation-recommendations` and show safe recommendations derived from the incident record, linked signal evidence, timeline evidence, linked deployments, and recent operations.
+
+The milestone does not implement autonomous remediation, AI auto-fix, fake incidents, fake provider state, hidden demo data, or direct execution from recommendations. Governed operation preparation remains disabled unless AutoOps can safely bind a verified target and reuse a preparation-only operation path without queueing or mutating provider state.

@@ -12,6 +12,7 @@ router.post('/correlate', incidentController.correlate);
 
 router.get('/:incidentId', incidentController.detail);
 router.get('/:incidentId/timeline', incidentController.timeline);
+router.get('/:incidentId/remediation-recommendations', incidentController.remediationRecommendations);
 router.post('/:incidentId/notes', incidentController.addNote);
 router.post('/:incidentId/acknowledge', incidentController.acknowledge);
 router.post('/:incidentId/resolve', incidentController.resolve);

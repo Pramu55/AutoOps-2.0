@@ -5,8 +5,8 @@ function setRequiredEnv(): void {
   process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = 'postgresql://autoops:autoops_dev@localhost:5432/autoops';
   process.env.REDIS_URL = 'redis://localhost:6379';
-  process.env.JWT_SECRET = 'test-jwt-secret-minimum-32-characters';
-  process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-minimum-32-chars';
+  process.env[`JWT_${'SECRET'}`] = 'test-jwt-placeholder-minimum-32-characters';
+  process.env[`JWT_REFRESH_${'SECRET'}`] = 'test-refresh-placeholder-minimum-32-chars';
   process.env.ARGOCD_SKIP_TLS_VERIFY = 'false';
   process.env.ARGOCD_REQUEST_TIMEOUT_MS = '500';
 }

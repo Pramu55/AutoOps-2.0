@@ -5,6 +5,7 @@ import {
   IncidentSource as DbIncidentSource,
   IncidentSignalRole as DbIncidentSignalRole,
   IncidentEventType as DbIncidentEventType,
+  DeploymentStatus as DbDeploymentStatus,
   OrgRole,
   type Prisma,
 } from '@autoops/database';
@@ -20,12 +21,14 @@ import {
   SignalSeverity,
   SignalStatus,
   type IncidentTimelineResponse,
+  type RemediationRecommendation,
 } from '@autoops/types';
 import { BadRequestError, NotFoundError, UnauthorizedError } from '@autoops/utils';
 import { sanitizeMetadata } from '@autoops/utils';
 import { operationAuthorizationService } from '../operations/operation-authorization.service.js';
 import { IncidentMapper } from './incident.mapper.js';
 import { incidentTimelineService } from './incident-timeline.service.js';
+import { buildRemediationRecommendations } from './remediation-rules.service.js';
 
 interface RecordEventInput {
   organizationId: string;
@@ -391,6 +394,76 @@ export class IncidentService {
     return incidentTimelineService.buildTimeline(organizationId, incidentId);
   }
 
+  async listRemediationRecommendations(
+    organizationId: string,
+    userId: string,
+    incidentId: string,
+  ): Promise<RemediationRecommendation[]> {
+    const incident = await this.getIncident(organizationId, userId, incidentId);
+    const timeline = await this.listIncidentTimeline(organizationId, userId, incidentId);
+    const deploymentWhere: Prisma.DeploymentWhereInput = {
+      project: { organizationId },
+      status: {
+        in: [
+          DbDeploymentStatus.FAILED,
+          DbDeploymentStatus.CANCELLED,
+          DbDeploymentStatus.ROLLED_BACK,
+        ],
+      },
+      OR: [
+        ...(incident.deploymentId ? [{ id: incident.deploymentId }] : []),
+        ...(incident.projectId ? [{ projectId: incident.projectId }] : []),
+      ],
+    };
+    const operationScopes: Prisma.OperationWhereInput[] = [
+      ...(incident.operationId ? [{ id: incident.operationId }] : []),
+      ...(incident.projectId ? [{ projectId: incident.projectId }] : []),
+      ...(incident.environmentId ? [{ environmentId: incident.environmentId }] : []),
+    ];
+
+    const [failedDeployments, recentOperations] = await Promise.all([
+      deploymentWhere.OR && deploymentWhere.OR.length > 0
+        ? prisma.deployment.findMany({
+            where: deploymentWhere,
+            orderBy: { updatedAt: 'desc' },
+            take: 10,
+          })
+        : Promise.resolve([]),
+      operationScopes.length > 0
+        ? prisma.operation.findMany({
+            where: {
+              organizationId,
+              OR: operationScopes,
+            },
+            orderBy: { updatedAt: 'desc' },
+            take: 10,
+          })
+        : Promise.resolve([]),
+    ]);
+
+    return buildRemediationRecommendations({
+      incident,
+      timeline: timeline.data,
+      failedDeployments: failedDeployments.map((deployment) => ({
+        id: deployment.id,
+        status: deployment.status,
+        errorMessage: deployment.errorMessage,
+        branch: deployment.branch,
+        commitSha: deployment.commitSha,
+        imageTag: deployment.imageTag,
+        updatedAt: deployment.updatedAt.toISOString(),
+        metadata: this._toRecord(deployment.metadata),
+      })),
+      recentOperations: recentOperations.map((operation) => ({
+        id: operation.id,
+        provider: operation.provider,
+        operationType: operation.operationType,
+        status: operation.status,
+        updatedAt: operation.updatedAt.toISOString(),
+      })),
+    });
+  }
+
   async addIncidentNote(
     organizationId: string,
     userId: string,
@@ -722,6 +795,13 @@ export class IncidentService {
       select: { email: true, name: true },
     });
     return { email: user?.email ?? 'unknown', name: user?.name ?? null };
+  }
+
+  private _toRecord(value: unknown): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+    return {};
   }
 }
 
