@@ -28,6 +28,7 @@ const userFindUnique = vi.fn();
 const orgMembershipFindUnique = vi.fn();
 
 const transactionFn = vi.fn();
+const createQueuedOperation = vi.fn();
 
 vi.mock('@autoops/database', () => ({
   prisma: {
@@ -116,6 +117,12 @@ vi.mock('../operations/operation-authorization.service.js', () => ({
   },
 }));
 
+vi.mock('../operations/operation.service.js', () => ({
+  operationService: {
+    createQueuedOperation,
+  },
+}));
+
 const { incidentService } = await import('./incident.service.js');
 
 const ORG_ID = 'org-111';
@@ -173,6 +180,27 @@ describe('IncidentService', () => {
     deploymentFindMany.mockResolvedValue([]);
     deploymentEventFindMany.mockResolvedValue([]);
     auditLogFindMany.mockResolvedValue([]);
+    incidentEventCreate.mockResolvedValue({});
+    createQueuedOperation.mockResolvedValue({
+      id: 'operation-remediation-1',
+      organizationId: ORG_ID,
+      projectId: null,
+      environmentId: null,
+      provider: 'DOCKER',
+      operationType: 'DOCKER_CONTAINER_RESTART',
+      status: 'PENDING_APPROVAL',
+      requestedByUserId: USER_ID,
+      approvedByUserId: null,
+      approvedAt: null,
+      rejectedByUserId: null,
+      rejectedAt: null,
+      idempotencyKey: `remediation:${INCIDENT_ID}:docker-restart-review`,
+      input: {},
+      result: null,
+      error: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
   });
 
   describe('listIncidentTimeline', () => {
@@ -732,6 +760,153 @@ describe('IncidentService', () => {
           }),
         }),
       );
+    });
+
+    it('prepares a supported Docker recommendation through existing operation governance', async () => {
+      incidentFindFirst.mockResolvedValue(makeIncidentWithRelations({
+        title: 'Docker container failing',
+        summary: 'Docker container exited and needs review',
+        severity: 'ERROR',
+        projectId: 'project-1',
+        environmentId: 'environment-1',
+      }));
+      incidentEventFindMany.mockResolvedValue([
+        {
+          id: 'event-docker',
+          type: 'EVIDENCE_ADDED',
+          title: 'Docker container exited',
+          message: 'Container exited',
+          actorUserId: null,
+          actorUserEmail: null,
+          metadata: {
+            id: 'container-123',
+            name: 'api',
+            image: 'autoops-api:test',
+          },
+          occurredAt: new Date('2026-06-01T00:00:00.000Z'),
+          createdAt: new Date('2026-06-01T00:00:00.000Z'),
+        },
+      ]);
+
+      const result = await incidentService.prepareRemediationRecommendation(
+        ORG_ID,
+        USER_ID,
+        'OWNER',
+        INCIDENT_ID,
+        `${INCIDENT_ID}:docker-restart-review`,
+        { confirmationToken: 'RESTART' },
+        { ipAddress: '127.0.0.1', userAgent: 'vitest' },
+      );
+
+      expect(createQueuedOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: ORG_ID,
+          userId: USER_ID,
+          role: 'OWNER',
+          provider: 'DOCKER',
+          operationType: 'DOCKER_CONTAINER_RESTART',
+          projectId: 'project-1',
+          environmentId: 'environment-1',
+          confirmationToken: 'RESTART',
+          idempotencyKey: `remediation:${INCIDENT_ID}:docker-restart-review`,
+          input: expect.objectContaining({
+            action: 'restart',
+            containerId: 'container-123',
+            containerName: 'api',
+            preparedFromIncidentId: INCIDENT_ID,
+            remediationRecommendationId: `${INCIDENT_ID}:docker-restart-review`,
+          }),
+        }),
+        { ipAddress: '127.0.0.1', userAgent: 'vitest' },
+      );
+      expect(incidentEventCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            organizationId: ORG_ID,
+            incidentId: INCIDENT_ID,
+            type: 'EVIDENCE_ADDED',
+            metadata: expect.objectContaining({
+              operationId: 'operation-remediation-1',
+              recommendationId: `${INCIDENT_ID}:docker-restart-review`,
+            }),
+          }),
+        }),
+      );
+      expect(result.operation.id).toBe('operation-remediation-1');
+    });
+
+    it('rejects stale recommendation IDs before creating an operation', async () => {
+      incidentFindFirst.mockResolvedValue(makeIncidentWithRelations());
+      incidentEventFindMany.mockResolvedValue([]);
+
+      await expect(
+        incidentService.prepareRemediationRecommendation(
+          ORG_ID,
+          USER_ID,
+          'OWNER',
+          INCIDENT_ID,
+          `${INCIDENT_ID}:missing`,
+          { confirmationToken: 'RESTART' },
+        ),
+      ).rejects.toThrow('Remediation recommendation');
+
+      expect(createQueuedOperation).not.toHaveBeenCalled();
+    });
+
+    it('rejects unsupported recommendations before creating an operation', async () => {
+      incidentFindFirst.mockResolvedValue(makeIncidentWithRelations({
+        title: 'Docker container failing',
+        summary: 'Docker container exited and needs review',
+        severity: 'ERROR',
+      }));
+      incidentEventFindMany.mockResolvedValue([
+        {
+          id: 'event-docker',
+          type: 'EVIDENCE_ADDED',
+          title: 'Docker container exited',
+          message: 'Container exited',
+          actorUserId: null,
+          actorUserEmail: null,
+          metadata: { name: 'api' },
+          occurredAt: new Date('2026-06-01T00:00:00.000Z'),
+          createdAt: new Date('2026-06-01T00:00:00.000Z'),
+        },
+      ]);
+
+      await expect(
+        incidentService.prepareRemediationRecommendation(
+          ORG_ID,
+          USER_ID,
+          'OWNER',
+          INCIDENT_ID,
+          `${INCIDENT_ID}:docker-restart-review`,
+          { confirmationToken: 'RESTART' },
+        ),
+      ).rejects.toThrow('verified Docker container identifier');
+
+      expect(createQueuedOperation).not.toHaveBeenCalled();
+    });
+
+    it('enforces tenant isolation when preparing recommendations', async () => {
+      incidentFindFirst.mockResolvedValue(null);
+
+      await expect(
+        incidentService.prepareRemediationRecommendation(
+          OTHER_ORG_ID,
+          USER_ID,
+          'OWNER',
+          INCIDENT_ID,
+          `${INCIDENT_ID}:docker-restart-review`,
+          { confirmationToken: 'RESTART' },
+        ),
+      ).rejects.toThrow('Incident');
+
+      expect(incidentFindFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: INCIDENT_ID, organizationId: OTHER_ORG_ID },
+        }),
+      );
+      expect(createQueuedOperation).not.toHaveBeenCalled();
     });
   });
 });

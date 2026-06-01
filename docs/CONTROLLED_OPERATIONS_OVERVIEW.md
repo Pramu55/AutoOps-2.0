@@ -98,7 +98,9 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Recovery remains controlled by existing confirmation, policy, RBAC, and worker execution. AutoOps does not perform automatic remediation or unsafe shell/exec/apply/delete actions.
 - `AUTOMATED_REMEDIATION_RULES_FOUNDATION_GREEN` adds deterministic incident recommendations based on incident records, linked signals, timeline evidence, failed deployments, and related operations.
 - Recommendations are recommendation-only metadata. They show provider, action type, reason, evidence, risk level, required confirmation token, approval requirement, preparation availability, and blocked reasons.
-- Recommendation cards never auto-execute provider actions. Governed operation preparation stays disabled unless the backend can bind a verified target and use a preparation-only operation path without queueing or mutating provider state.
+- `REMEDIATION_OPERATION_PREPARATION_GREEN` adds a preparation step for recommendations that can be mapped to an existing governed operation with a verified target. Today this is enabled only when server-side recomputation can bind safe evidence to an existing provider operation input.
+- Preparation uses the same operation pipeline as manual provider actions: RBAC, tenant scope validation, confirmation token validation, local policy, OPA policy, audit logging, approval state, and worker queueing. The incident endpoint never calls provider APIs directly.
+- Unsupported recommendations remain disabled with honest blocked reasons. Recommendation cards never auto-execute provider actions and AutoOps still does not provide autonomous remediation.
 
 ## Governance Center and Audit-Style Evidence
 

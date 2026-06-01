@@ -6,9 +6,12 @@ import {
   IncidentListResponse,
   IncidentReadinessResponse,
   IncidentTimelineResponse,
+  PrepareRemediationRecommendationResponse,
   RemediationRecommendation,
   incidentFilterSchema,
   incidentNoteSchema,
+  prepareRemediationRecommendationSchema,
+  remediationRecommendationPrepareParamsSchema,
 } from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { incidentService } from './incident.service.js';
@@ -122,10 +125,36 @@ export class IncidentController {
     res.json({ data });
   };
 
-  private _requireAuth(req: Request): { organizationId: string; userId: string } {
+  prepareRemediationRecommendation = async (
+    req: Request<{ incidentId: string; recommendationId: string }>,
+    res: Response<{ data: PrepareRemediationRecommendationResponse }>,
+  ): Promise<void> => {
+    const auth = this._requireAuth(req);
+    const params = remediationRecommendationPrepareParamsSchema.parse(req.params);
+    const input = prepareRemediationRecommendationSchema.parse(req.body);
+    const data = await incidentService.prepareRemediationRecommendation(
+      auth.organizationId,
+      auth.userId,
+      auth.role,
+      params.incidentId,
+      params.recommendationId,
+      input,
+      this._auditContext(req),
+    );
+    res.status(202).json({ data });
+  };
+
+  private _requireAuth(req: Request): { organizationId: string; userId: string; role?: string } {
     if (!req.auth) throw new UnauthenticatedError();
     if (!req.auth.orgId) throw new UnauthorizedError('Organization context is required');
-    return { organizationId: req.auth.orgId, userId: req.auth.userId };
+    return { organizationId: req.auth.orgId, userId: req.auth.userId, role: req.auth.role };
+  }
+
+  private _auditContext(req: Request): { ipAddress?: string; userAgent?: string } {
+    return {
+      ipAddress: req.ip,
+      userAgent: req.header('user-agent'),
+    };
   }
 }
 

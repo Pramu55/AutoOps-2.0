@@ -59,6 +59,7 @@
 | Incidents | Incident workflow timeline & notes | Complete | Yes | Transactional events + note composer | Strict tenant isolation by organizationId; no AI/automated remediation |
 | Incidents | Incident evidence correlation timeline | Complete | Yes | Read-only public-safe timeline | Correlates incidents, signals, operations, deployments, and governance evidence |
 | Incidents | Automated remediation rules foundation | Complete | Yes | Deterministic recommendation-only | Evidence-based recommendations; no autonomous execution; preparation disabled unless safe |
+| Incidents | Governed remediation operation preparation | Complete | Yes | Reuses operation governance | Enabled only for verified targets; RBAC, confirmation, policy, approval, audit, and worker flow preserved |
 | Runbooks | Deterministic runbooks | Complete | Yes | Observe/verify/recover/escalate guidance | No AI runbooks |
 | Production Readiness | `.env.example` | Complete | N/A | Safe placeholders | Local-only notes |
 | Production Readiness | Production compose | Complete | N/A | No default socket/kubeconfig | Company pilot topology |
@@ -83,4 +84,10 @@
 
 This milestone is green as a deterministic, recommendation-only foundation. Incident detail pages call `/api/v1/incidents/:incidentId/remediation-recommendations` and show safe recommendations derived from the incident record, linked signal evidence, timeline evidence, linked deployments, and recent operations.
 
-The milestone does not implement autonomous remediation, AI auto-fix, fake incidents, fake provider state, hidden demo data, or direct execution from recommendations. Governed operation preparation remains disabled unless AutoOps can safely bind a verified target and reuse a preparation-only operation path without queueing or mutating provider state.
+The milestone does not implement autonomous remediation, AI auto-fix, fake incidents, fake provider state, hidden demo data, or direct execution from recommendations.
+
+## REMEDIATION_OPERATION_PREPARATION_GREEN
+
+This milestone is green as a governed preparation flow. Incident detail recommendation cards enable **Prepare governed action** only when the backend can recompute the recommendation, bind a verified target from safe evidence, and create an existing operation through the normal governance system. Unsupported recommendations remain disabled with blocked reasons.
+
+The preparation endpoint does not call provider APIs directly and does not bypass confirmation, approval, tenant isolation, operation policy, OPA policy, audit evidence, or the worker queue. It is not autonomous remediation.
