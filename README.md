@@ -2,11 +2,13 @@
 
 [![AutoOps CI](https://github.com/Pramu55/AutoOps-2.0/actions/workflows/ci.yml/badge.svg)](https://github.com/Pramu55/AutoOps-2.0/actions/workflows/ci.yml)
 
-AutoOps is a governance-first DevOps control plane for controlled provider operations, observability, incident correlation, resource graph evidence, and company-ready operational workflows. It combines real integrations, RBAC, approval workflows, worker-backed execution, observability, incidents, runbooks, and CI/release gates into one platform.
+AutoOps is a production-grade DevOps control plane, acting as an incident-aware operations platform, governed operations platform, and deterministic remediation recommendation platform. It combines real integrations, RBAC, approval workflows, worker-backed execution, observability, incidents, runbooks, and CI/release gates into one portfolio and company-demo ready project.
+
+AutoOps is a governed remediation preparation platform. It is **not** an autonomous auto-fix bot.
 
 ## What AutoOps Is
 
-AutoOps is a local-first, production-inspired platform engineering project. It gives operators one console to discover runtime status, execute governed operations, audit changes, handle failed operations as incidents, and validate release readiness.
+AutoOps gives operators one console to discover runtime status, execute governed operations, audit changes, handle failed operations as incidents, and validate release readiness.
 
 The project is designed as a serious portfolio and company-pilot-ready direction, not as a fake dashboard. Backend records are real, connector status comes from actual connector checks, and controlled actions flow through policy, confirmation, approval, queueing, and worker execution.
 
@@ -40,7 +42,7 @@ Once the services are started, you can access the following local endpoints:
 - **Unconfigured Providers**: Any modules or providers that are not configured with environment credentials will safely display `NOT_CONFIGURED` status badges and screens in the UI rather than showing mock/fake data.
 - **Security Warning**: Do not commit the local `.env` file or any credentials to the git repository.
 
-For more detailed instructions, see the [Installation Guide](./docs/INSTALL.md) and [Docker Compose Deployment Guide](./docs/DOCKER_INSTALL.md).
+For more detailed instructions, see the [Docker Compose Deployment Guide](./docs/DOCKER_INSTALL.md).
 
 ## Key Capabilities
 
@@ -49,27 +51,18 @@ For more detailed instructions, see the [Installation Guide](./docs/INSTALL.md) 
 - Jenkins status, jobs, builds, and allowlisted build trigger.
 - Docker status, containers, images, networks, volumes, logs, and governed start/stop/restart.
 - Kubernetes status, Metrics API status, namespaces, workloads, pods, services, scale, and rollout restart.
-- Infrastructure Automation Center for allowlisted Terraform/OpenTofu validate/plan/apply and Ansible syntax/check/run workflows.
+- Infrastructure Automation Center for allowlisted Terraform/OpenTofu validate/plan/apply and Ansible workflows.
 - GitHub Actions workflow/run visibility for a configured repository.
 - Resource Graph for tenant-scoped infrastructure topology discovery.
 - Signal Ingest for normalized, deduplicated observation stream.
-- Prometheus/Grafana integration readiness checks.
-- DevOps tools readiness for Helm, Kustomize, kubectl, Docker CLI, Terraform/OpenTofu, Ansible, Node, and pnpm.
-- Cloud Provider Readiness Center for AWS/Azure/GCP without unsafe direct cloud writes.
-- AWS ECR image build and push workflows using allowlisted build targets and repositories.
-- AWS ECS Terraform/OpenTofu plan-only workflow using remote state and tenant-scoped pushed ECR image metadata.
-- AWS cost and blast-radius guardrails for account/region allowlists, conservative estimated monthly cost, public load balancer default deny, and blocked mutation evidence.
-- Confirmation tokens for all controlled operations.
-- Policy engine for approval-required operations.
+- DevOps tools readiness and Cloud Provider Readiness Center without unsafe direct cloud writes.
+- AWS ECS Terraform/OpenTofu plan-only workflow using remote state and tenant-scoped ECR pushes.
+- Confirmation tokens for all controlled operations and policy engine for approval-required operations.
 - RBAC with requester/approver separation.
 - BullMQ worker-backed execution.
-- Worker heartbeat and runtime registry.
 - Operations Hub with runtime, queue, provider, approval, activity, failure, and incident visibility.
-- Failed-operation incidents with deterministic safe runbooks.
+- Failed-operation incidents with deterministic safe runbooks, recommended remediation, and governed preparation.
 - Production readiness docs, security checklist, backup/restore scripts, and release checks.
-- GitHub Actions CI and secret-scan release gates.
-
-Provider onboarding note: new organizations are intentionally blocked from shared provider inventory and see `BLOCKED_BY_ORG_POLICY` onboarding until a platform admin explicitly enables provider access for that organization. See [Provider Onboarding and Organization Access](./docs/PROVIDER_ONBOARDING_AND_ORG_ACCESS.md).
 
 ## Tech Stack
 
@@ -88,235 +81,44 @@ Provider onboarding note: new organizations are intentionally blocked from share
 ## Architecture Summary
 
 AutoOps separates control from execution:
-
 - The web console provides authenticated workflows and safe UI hints.
 - The API owns authentication, tenant scope, validation, policy, RBAC, approval decisions, safe DTOs, and audit records.
 - Redis/BullMQ queues accepted work.
 - The worker executes approved operations and writes lifecycle status.
 - PostgreSQL stores durable state through Prisma.
-- Jenkins, Docker, and Kubernetes are real connectors with intentionally limited safe controls.
+- Connectors (Jenkins, Docker, Kubernetes, AWS, Infrastructure) are real with intentionally limited safe controls.
 
 See [Architecture Overview](./docs/ARCHITECTURE_OVERVIEW.md).
-
-## Platform Modules
-
-| Module | Purpose |
-| --- | --- |
-| Dashboard | Command overview for runtime and platform posture |
-| Operations Hub | Health, approvals, activity, failures, incidents, queues, worker runtime |
-| Incidents | Failed-operation incident lifecycle, vertical activity timeline, operator notes, and runbooks |
-| Jenkins | Status, jobs, builds, allowlisted governed build trigger |
-| Docker | Inventory, logs, governed start/stop/restart |
-| Kubernetes | Cluster inventory, Metrics API, governed scale and rollout restart |
-| Infrastructure | Allowlisted Terraform/OpenTofu and Ansible automation |
-| GitHub Actions | Read-only workflow and run readiness |
-| Observability Integrations | Prometheus/Grafana readiness |
-| DevOps Tools | Helm, Kustomize, kubectl, Docker CLI, IaC, and runtime tooling |
-| Cloud Readiness | AWS/Azure/GCP readiness without direct cloud writes |
-| AWS Deployments | Governed AWS ECS Fargate deployment workflows using safe IaC |
-| AWS ECR | Separate governed Docker image build and ECR push operations |
-| Projects | Project and environment ownership |
-| Resource Graph | Tenant-scoped infrastructure topology discovery |
-| Signal Ingest | Normalized, deduplicated observation stream |
-| Deployments | Deployment records and safe simulation workflow |
 
 ## Safety and Governance Model
 
 AutoOps intentionally avoids unsafe generic automation. The backend enforces:
-
-- authenticated API access
-- organization scoping
-- RBAC operation authorization
-- requester/approver separation
-- exact confirmation tokens
-- policy-based approval gates
+- authenticated API access and organization scoping
+- RBAC operation authorization and requester/approver separation
+- exact confirmation tokens and policy-based approval gates
 - worker-only execution
 - operation lifecycle tracking
-- incident and runbook lifecycle
+- incident and runbook lifecycle with governed remediation
 - secret redaction and safe response DTOs
 
-AutoOps does not expose provider secrets, kubeconfig content, tokens, raw operation metadata, Kubernetes Secret data, Docker shell/exec controls, Kubernetes shell/exec/apply/delete controls, or ungoverned Jenkins mutations.
-
-Newly registered users receive a new organization and do not inherit demo provider access. Shared Jenkins, Docker, Kubernetes, AWS, GitHub Actions, infrastructure, cloud, and observability inventory requires OWNER/ADMIN role plus organization-level provider access; safe status endpoints remain sanitized and inventory-free.
-
-AWS ECR image build/push is limited to configured build targets and repositories. Build uses `BUILD` confirmation, push uses `PUSH` confirmation, and production/prod pushes require approval before worker execution.
-
-AWS ECS Terraform/OpenTofu planning requires remote state configuration and a successful tenant-scoped ECR push operation. It runs plan only, stores safe add/change/destroy evidence, and never exposes raw state, backend config, credentials, or raw plan output.
-
-Tenant-owned resources are scoped by organization. API handlers use authenticated organization membership, not frontend-supplied `organizationId`, and local demo includes an isolated tenant account for confidentiality checks. See [Tenant Isolation And Authorization](./docs/TENANT_ISOLATION_AND_AUTHORIZATION.md).
-
-## Local Demo Accounts
-
-These accounts are for local AutoOps demo/testing only. Do not use them in a real company deployment.
-
-| Demo role | Email | Organization | Purpose |
-| --- | --- | --- | --- |
-| Operator / Requester | `pramod.local@autoops.dev` | AutoOps Demo (Org A) | Trigger governed operations and request approvals |
-| Admin / Approver | `approver.local@autoops.dev` | AutoOps Demo (Org A) | Review, approve, reject, acknowledge, and resolve |
-| Isolated Tenant User | `isolated.local@autoops.dev` | AutoOps Isolated Demo (Org B) | Verify cross-organization tenant isolation |
-
-The local demo password is `StrongPass123` (shown in the login page and `.env.example`). Production should use real organization invites and managed users. Org A and Org B are separate organizations and must not share project, operation, incident, or governance data.
-
-## Quick Start
-
-```powershell
-git clone https://github.com/Pramu55/AutoOps-2.0.git
-cd "AutoOps 2.0"
-Copy-Item .env.example .env
-notepad .env
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\scripts\start-autoops.ps1 -Build
-```
-
-For a fresh database:
-
-```powershell
-$env:DATABASE_URL="postgresql://autoops:autoops_dev@localhost:5432/autoops?schema=public"
-.\node_modules\.bin\prisma.cmd migrate deploy --schema packages/database/prisma/schema.prisma
-pnpm.cmd --filter @autoops/database run seed
-```
-
-Open:
-
-| Service | URL |
-| --- | --- |
-| Web UI | http://localhost:3000 |
-| API health | http://localhost:4000/health |
-| API readiness | http://localhost:4000/ready |
-| Jenkins local controller | http://localhost:8080 |
-| Grafana | http://localhost:3001 |
-| Prometheus | http://localhost:9090 |
-
-## Main Routes
-
-- `/login`
-- `/register`
-- `/dashboard`
-- `/dashboard/operations`
-- `/dashboard/operations/:operationId`
-- `/dashboard/incidents`
-- `/dashboard/incidents/:incidentId`
-- `/dashboard/integrations/jenkins`
-- `/dashboard/integrations/docker`
-- `/dashboard/integrations/kubernetes`
-- `/dashboard/integrations/infrastructure`
-- `/dashboard/integrations/github-actions`
-- `/dashboard/integrations/observability`
-- `/dashboard/integrations/devops-tools`
-- `/dashboard/integrations/cloud`
-- `/dashboard/integrations/aws`
-- `/dashboard/projects`
-- `/dashboard/deployments`
-
-See [Route Reference](./docs/ROUTE_REFERENCE.md).
-
-## Company / Enterprise Pilot Readiness
-
-AutoOps includes a company handoff package for safe evaluation and controlled pilot planning. It does not claim deployment to any specific company, and real company deployment requires official authorization, credentials, network access, security review, and stakeholder approval.
-
-- [Company Deployment Handoff](./docs/COMPANY_DEPLOYMENT_HANDOFF.md)
-- [Company Security Review Checklist](./docs/COMPANY_SECURITY_REVIEW_CHECKLIST.md)
-- [Company Pilot Runbook](./docs/COMPANY_PILOT_RUNBOOK.md)
-- [Enterprise Architecture Overview](./docs/ENTERPRISE_ARCHITECTURE_OVERVIEW.md)
-- [TCS-Ready Positioning](./docs/TCS_READY_POSITIONING.md)
-- [Resource Graph Foundation Plan](./docs/RESOURCE_GRAPH_FOUNDATION_PLAN.md)
-
-## Documentation Map
-
-Start with the comprehensive **[Documentation Index](./docs/DOCUMENTATION_INDEX.md)** or [Documentation Home](./docs/README.md).
-
-- [Documentation Index](./docs/DOCUMENTATION_INDEX.md)
-- [Evaluator Quickstart](./docs/EVALUATOR_QUICKSTART.md)
-- [AutoOps Demo Script](./docs/AUTOOPS_DEMO_SCRIPT.md)
-- [Interview Talking Points](./docs/INTERVIEW_TALKING_POINTS.md)
-- [Final Company-Ready Freeze Report](./docs/FINAL_COMPANY_READY_FREEZE_REPORT.md)
-- [Demo Guide](./docs/DEMO_GUIDE.md)
-- [Company Pilot Checklist](./docs/COMPANY_PILOT_CHECKLIST.md)
-- [Architecture Overview](./docs/ARCHITECTURE_OVERVIEW.md)
-- [Feature Matrix](./docs/FEATURE_MATRIX.md)
-- [Portfolio Case Study](./docs/PORTFOLIO_CASE_STUDY.md)
-- [Screenshot and Media Guide](./docs/SCREENSHOT_AND_MEDIA_GUIDE.md)
-- [LinkedIn and Resume Content](./docs/LINKEDIN_AND_RESUME_CONTENT.md)
-- [Production Deployment Readiness](./docs/PRODUCTION_DEPLOYMENT_READINESS.md)
-- [Security Checklist](./docs/SECURITY_CHECKLIST.md)
-- [Tenant Isolation and Authorization](./docs/TENANT_ISOLATION_AND_AUTHORIZATION.md)
-- [Incident Workflow and Timeline](./docs/INCIDENT_WORKFLOW_AND_TIMELINE.md)
-- [CI and Release Gates](./docs/CI_AND_RELEASE_GATES.md)
-- [Controlled Operations Overview](./docs/CONTROLLED_OPERATIONS_OVERVIEW.md)
-- [Infrastructure Automation Center](./docs/INFRASTRUCTURE_AUTOMATION_CENTER.md)
-- [AWS Terraform ECS Plan](./docs/AWS_TERRAFORM_ECS_PLAN.md)
-- [Final Release Checklist](./docs/FINAL_RELEASE_CHECKLIST.md)
-- [Company Handoff Package](./docs/COMPANY_HANDOFF_PACKAGE.md)
-- [Company Deployment Handoff](./docs/COMPANY_DEPLOYMENT_HANDOFF.md)
-- [Company Security Review Checklist](./docs/COMPANY_SECURITY_REVIEW_CHECKLIST.md)
-- [Company Pilot Runbook](./docs/COMPANY_PILOT_RUNBOOK.md)
-- [Enterprise Architecture Overview](./docs/ENTERPRISE_ARCHITECTURE_OVERVIEW.md)
-- [TCS-Ready Positioning](./docs/TCS_READY_POSITIONING.md)
-- [Resource Graph Foundation Plan](./docs/RESOURCE_GRAPH_FOUNDATION_PLAN.md)
-- [Company Provider Connectivity Handoff](./docs/COMPANY_PROVIDER_CONNECTIVITY_HANDOFF.md)
-- [Final Evaluator Report](./docs/FINAL_EVALUATOR_REPORT.md)
-- [GitHub Release and Tagging](./docs/GITHUB_RELEASE_AND_TAGGING.md)
-- [Final Screenshot Checklist](./docs/FINAL_SCREENSHOT_CHECKLIST.md)
-- [Final Demo Script](./docs/FINAL_DEMO_SCRIPT.md)
-- [Final Route and API Verification](./docs/FINAL_ROUTE_AND_API_VERIFICATION.md)
-- [Limitations and Roadmap](./docs/LIMITATIONS_AND_ROADMAP.md)
-- [Demo Data Safety](./docs/DEMO_DATA_SAFETY.md)
-
-## Production Readiness
-
-AutoOps includes:
-
-- safe `.env.example`
-- strict production env validation
-- secret redaction utility
-- logger redaction paths
-- production-like compose file
-- backup and restore scripts
-- release check scripts
-- company pilot validation flow
-- security checklist
-
-Read [Production Deployment Readiness](./docs/PRODUCTION_DEPLOYMENT_READINESS.md) before any company demo.
-
-## CI and Release Gates
-
-GitHub Actions runs AutoOps CI on push and pull request to `main`. CI verifies builds, typechecks, tests, whitespace, and secret scanning without requiring Jenkins, Docker socket access, kubeconfig, Docker Desktop Kubernetes, or real connector secrets.
-
-Local release checks:
-
-```powershell
-.\scripts\check-release.ps1
-.\scripts\scan-secrets.ps1
-.\scripts\final-smoke-check.ps1
-```
-
-See [CI and Release Gates](./docs/CI_AND_RELEASE_GATES.md).
-
-## Screenshots and Demo
-
-Use the [Screenshot and Media Guide](./docs/SCREENSHOT_AND_MEDIA_GUIDE.md) before posting screenshots publicly. Never upload `.env`, tokens, kubeconfig, database credentials, Authorization headers, or raw logs with secrets.
-
-Use the [Demo Guide](./docs/DEMO_GUIDE.md) for 5-minute and 10-minute walkthroughs.
-
-## Current Status
-
-AutoOps is a company-evaluator-ready portfolio project with real local integrations, governed operations, incidents/runbooks, release hardening, and CI gates. It is not claimed to be enterprise-certified or production-certified.
-
-## Roadmap
-
-Planned future work includes broader test coverage, notification integrations, cloud deployment guides, GitHub integration, AWS controls, richer audit exports, and optional AI assistant workflows. See [Limitations and Roadmap](./docs/LIMITATIONS_AND_ROADMAP.md).
+AutoOps does not expose provider secrets, raw operation metadata, Kubernetes Secret data, Docker shell/exec controls, Kubernetes shell/exec/apply/delete controls, or ungoverned Jenkins mutations.
 
 ## Hosted Browser Demo Plan
 
 - Hosted demo is planned as a safe demo/read-only mode.
 - No real Docker socket, Kubernetes credentials, Jenkins token, AWS credentials, or destructive provider actions will be exposed publicly.
-- The browser demo will come after install docs are stable.
 
-## Author Links
+## Evaluator / Interviewer Path
 
-- GitHub: [Pramu55](https://github.com/Pramu55)
-- Project repository: [AutoOps 2.0](https://github.com/Pramu55/AutoOps-2.0)
+If you are evaluating this project:
+1. Review the [Evaluator Quickstart](./docs/EVALUATOR_QUICKSTART.md).
+2. Follow the [AutoOps Demo Script](./docs/AUTOOPS_DEMO_SCRIPT.md).
+3. Read the [Final Freeze Report](./docs/FINAL_COMPANY_READY_FREEZE_REPORT.md).
 
-## Resource Graph Foundation
+## Portfolio and Interview Positioning
 
-AutoOps now includes a database-backed, tenant-scoped Resource Graph at `/dashboard/resources`. It records curated resource nodes and edges from AutoOps domain records and authorized provider inventory reads. The graph is read-only, does not grant permissions, and does not execute actions. It is the grounding layer for future signal ingestion, incident correlation, governed runbooks, and read-only AI summaries.
+AutoOps is a production-grade DevOps control plane that unifies incident workflows, provider integrations, governed operations, audit evidence, and deterministic remediation recommendations. It focuses on enterprise safety through tenant isolation, approval gates, confirmation tokens, worker-based execution, and honest non-autonomous remediation.
+
+## Current Status and Limitations
+
+AutoOps is a company-evaluator-ready portfolio project. It is not claimed to be enterprise-certified or production-certified. Future work may include broader test coverage, advanced RBAC, and deeper integrations. See [Limitations and Roadmap](./docs/LIMITATIONS_AND_ROADMAP.md).

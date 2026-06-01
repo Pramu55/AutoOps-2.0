@@ -1,6 +1,15 @@
 # LinkedIn and Resume Content
 
-## LinkedIn Long Post
+## 1-line Resume Version
+AutoOps is a production-grade DevOps control plane for incident workflows, provider integrations, governed operations, audit evidence, and deterministic remediation recommendations.
+
+## 3-line Resume Version
+Built AutoOps, a production-grade DevOps control plane using Next.js, Express, TypeScript, PostgreSQL, Prisma, Redis, BullMQ, Docker, Kubernetes, Jenkins, GitHub Actions, AWS, Prometheus/Grafana, and Argo CD/GitOps foundations. Implemented incident workflows, resource graph, governance, approval controls, audit evidence, and deterministic remediation recommendations. Designed safety-first remediation preparation without autonomous execution or fake provider data.
+
+## LinkedIn / Project Showcase Version
+AutoOps is a production-grade DevOps control plane that unifies incident workflows, provider integrations, governed operations, audit evidence, and deterministic remediation recommendations across Docker, Kubernetes, Jenkins, GitHub Actions, AWS, and observability tooling. It focuses on enterprise safety through tenant isolation, approval gates, confirmation tokens, worker-based execution, and honest non-autonomous remediation.
+
+## Older LinkedIn Long Post
 
 I built AutoOps, a production-style DevOps Control Plane for governed Jenkins, Docker, and Kubernetes operations.
 
@@ -12,42 +21,9 @@ This project helped me practice platform engineering, backend architecture, DevO
 
 AutoOps is local-first and production-style. It is not enterprise-certified or claimed to be deployed at a real company, but it is built with production-grade architecture principles and company-pilot readiness in mind.
 
-## LinkedIn Short Post
-
-I built AutoOps, a production-style DevOps Control Plane for Jenkins, Docker, and Kubernetes.
-
-It includes RBAC, requester/approver separation, governed operations, worker-backed execution with Redis/BullMQ, PostgreSQL/Prisma persistence, incidents, runbooks, observability, production readiness docs, secret scanning, and GitHub Actions release gates.
-
-This was built as a serious DevOps/platform engineering portfolio project with real integrations and safe governance workflows.
-
-## LinkedIn Headline Suggestions
-
-- DevOps and Platform Engineering | TypeScript, Kubernetes, Docker, CI/CD
-- Cloud and DevOps Engineer | Building governed operations platforms
-- Platform Engineering Portfolio | Kubernetes, Docker, Jenkins, RBAC, CI
-
-## Project Title Suggestions
-
-- AutoOps: DevOps Control Plane
-- AutoOps: Governed Operations Platform
-- AutoOps: Production-Style Platform Engineering Project
-- AutoOps: Jenkins, Docker, and Kubernetes Operations Console
-
-## Resume Bullet Points
-
-- Built AutoOps, a production-style DevOps Control Plane integrating Jenkins, Docker, and Kubernetes with RBAC, approval workflows, worker-backed execution, and operation lifecycle tracking.
-- Implemented governed operations using confirmation tokens, policy decisions, requester/approver separation, BullMQ queues, Redis, PostgreSQL, and Prisma.
-- Added incidents and deterministic runbooks for failed operations with safe error summaries and tenant-scoped lifecycle management.
-- Created production readiness assets including `.env.example`, secret redaction, backup/restore scripts, security checklist, release checks, and Docker Compose deployment guidance.
-- Added GitHub Actions CI gates for builds, typechecks, tests, whitespace checks, and secret scanning without requiring private connector secrets.
-
 ## Portfolio Summary
 
 AutoOps is a local-first, production-style DevOps Control Plane that demonstrates real platform engineering concerns: governed infrastructure actions, RBAC, approvals, worker execution, observability, incidents, runbooks, release hardening, and CI gates. It is designed for DevOps, Cloud, Platform, SRE, Backend, and Full-stack engineering evaluation.
-
-## GitHub Repo Description
-
-Production-style DevOps Control Plane for governed Jenkins, Docker, and Kubernetes operations with RBAC, approvals, worker execution, incidents, runbooks, and CI release gates.
 
 ## 30-Second Interview Pitch
 
