@@ -19,6 +19,7 @@ const incidentEventFindMany = vi.fn();
 const resourceSignalFindFirst = vi.fn();
 const resourceSignalFindMany = vi.fn();
 const operationFindMany = vi.fn();
+const deploymentFindMany = vi.fn();
 const deploymentEventFindMany = vi.fn();
 const auditLogFindMany = vi.fn();
 
@@ -53,6 +54,9 @@ vi.mock('@autoops/database', () => ({
     operation: {
       findMany: operationFindMany,
     },
+    deployment: {
+      findMany: deploymentFindMany,
+    },
     deploymentEvent: {
       findMany: deploymentEventFindMany,
     },
@@ -85,6 +89,16 @@ vi.mock('@autoops/database', () => ({
     EVIDENCE_ADDED: 'EVIDENCE_ADDED',
   },
   OrgRole: { OWNER: 'OWNER', ADMIN: 'ADMIN', MEMBER: 'MEMBER', VIEWER: 'VIEWER' },
+  DeploymentStatus: {
+    QUEUED: 'QUEUED',
+    BUILDING: 'BUILDING',
+    DEPLOYING: 'DEPLOYING',
+    RUNNING: 'RUNNING',
+    SUCCEEDED: 'SUCCEEDED',
+    FAILED: 'FAILED',
+    CANCELLED: 'CANCELLED',
+    ROLLED_BACK: 'ROLLED_BACK',
+  },
   OperationStatus: {
     PENDING_APPROVAL: 'PENDING_APPROVAL',
     QUEUED: 'QUEUED',
@@ -156,6 +170,7 @@ describe('IncidentService', () => {
     vi.clearAllMocks();
     userFindUnique.mockResolvedValue({ email: 'test@autoops.dev', name: 'Test User' });
     operationFindMany.mockResolvedValue([]);
+    deploymentFindMany.mockResolvedValue([]);
     deploymentEventFindMany.mockResolvedValue([]);
     auditLogFindMany.mockResolvedValue([]);
   });
@@ -669,6 +684,54 @@ describe('IncidentService', () => {
       await expect(
         incidentService.getIncident(OTHER_ORG_ID, USER_ID, INCIDENT_ID),
       ).rejects.toThrow('Incident');
+    });
+  });
+
+  describe('listRemediationRecommendations', () => {
+    it('scopes recommendation evidence reads to organization-owned records', async () => {
+      incidentFindFirst.mockResolvedValue(makeIncidentWithRelations({
+        title: 'Kubernetes deployment failing',
+        summary: 'Kubernetes pod CrashLoopBackOff',
+        severity: 'CRITICAL',
+        projectId: 'project-1',
+        environmentId: 'environment-1',
+        deploymentId: 'deployment-1',
+        operationId: 'operation-1',
+      }));
+      incidentEventFindMany.mockResolvedValue([]);
+      deploymentFindMany.mockResolvedValue([]);
+      operationFindMany.mockResolvedValue([]);
+
+      await incidentService.listRemediationRecommendations(ORG_ID, USER_ID, INCIDENT_ID);
+
+      expect(incidentFindFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: INCIDENT_ID, organizationId: ORG_ID },
+        }),
+      );
+      expect(deploymentFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            project: { organizationId: ORG_ID },
+            OR: expect.arrayContaining([
+              { id: 'deployment-1' },
+              { projectId: 'project-1' },
+            ]),
+          }),
+        }),
+      );
+      expect(operationFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            organizationId: ORG_ID,
+            OR: expect.arrayContaining([
+              { id: 'operation-1' },
+              { projectId: 'project-1' },
+              { environmentId: 'environment-1' },
+            ]),
+          }),
+        }),
+      );
     });
   });
 });

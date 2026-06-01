@@ -7,6 +7,7 @@ import {
   IncidentSignalRole,
   IncidentEventType,
 } from './enums.js';
+import { OperationProvider, OperationType } from './operation.js';
 
 export { IncidentSeverity, IncidentStatus, IncidentSource, IncidentSignalRole, IncidentEventType };
 
@@ -186,4 +187,31 @@ export interface IncidentTimelineEventSummary {
 
 export interface IncidentTimelineResponse {
   data: IncidentTimelineEventSummary[];
+}
+
+export type RemediationRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+
+export interface RemediationEvidence {
+  source: 'incident' | 'signal' | 'timeline' | 'deployment' | 'operation' | 'resource';
+  sourceId: string;
+  type: string;
+  label: string;
+  occurredAt?: string;
+  details?: Record<string, string | number | boolean | null>;
+}
+
+export interface RemediationRecommendation {
+  id: string;
+  incidentId: string;
+  title: string;
+  description: string;
+  provider: OperationProvider | 'AUTOOPS' | 'POLICY' | 'GITOPS';
+  actionType: OperationType | 'INVESTIGATE' | 'REVIEW_POLICY' | 'REVIEW_GITOPS';
+  reason: string;
+  evidence: RemediationEvidence[];
+  riskLevel: RemediationRiskLevel;
+  confirmationToken: string | null;
+  approvalRequired: boolean;
+  canPrepareOperation: boolean;
+  blockedReason?: string;
 }

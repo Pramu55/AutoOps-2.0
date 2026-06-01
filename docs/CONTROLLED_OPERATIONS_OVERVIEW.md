@@ -96,6 +96,9 @@ AutoOps controlled operations use real provider APIs through authenticated, tena
 - Runbooks are fixed, safe guidance for observe, verify, recover, and escalate steps. AutoOps does not use AI-generated runbooks yet.
 - Incident views show safe error summaries only and never expose raw operation input, result, error metadata, stack traces, credentials, or provider secrets.
 - Recovery remains controlled by existing confirmation, policy, RBAC, and worker execution. AutoOps does not perform automatic remediation or unsafe shell/exec/apply/delete actions.
+- `AUTOMATED_REMEDIATION_RULES_FOUNDATION_GREEN` adds deterministic incident recommendations based on incident records, linked signals, timeline evidence, failed deployments, and related operations.
+- Recommendations are recommendation-only metadata. They show provider, action type, reason, evidence, risk level, required confirmation token, approval requirement, preparation availability, and blocked reasons.
+- Recommendation cards never auto-execute provider actions. Governed operation preparation stays disabled unless the backend can bind a verified target and use a preparation-only operation path without queueing or mutating provider state.
 
 ## Governance Center and Audit-Style Evidence
 

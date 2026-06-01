@@ -7,6 +7,7 @@ import type {
   IncidentDetail,
   IncidentTimelineEventSummary,
   IncidentTimelineResponse,
+  RemediationRecommendation,
 } from '@autoops/types';
 import { RecordSummary } from '@/components/layout/record-summary';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
@@ -27,12 +28,16 @@ import {
   Activity,
   Send,
   Zap,
+  Wrench,
+  Lock,
+  ClipboardCheck,
 } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
 type IncidentDetailApiResponse = { data: IncidentDetail };
+type RecommendationsApiResponse = { data: RemediationRecommendation[] };
 type ModalAction = 'acknowledge' | 'resolve' | 'archive';
 
 const MISSING_VALUE = '-';
@@ -61,6 +66,12 @@ function sourceTone(source: string): string {
   if (source === 'governance') return 'border-purple-200 bg-purple-50 text-purple-700';
   if (source === 'provider') return 'border-amber-200 bg-amber-50 text-amber-700';
   return 'border-slate-200 bg-slate-50 text-slate-700';
+}
+
+function riskTone(risk: string): string {
+  if (risk === 'HIGH') return 'border-rose-400/30 bg-rose-50 text-rose-700';
+  if (risk === 'MEDIUM') return 'border-amber-400/25 bg-amber-50 text-amber-700';
+  return 'border-emerald-400/25 bg-emerald-50 text-emerald-700';
 }
 
 function formatDate(value: string | null): string {
@@ -148,9 +159,98 @@ function relatedIdEntries(event: IncidentTimelineEventSummary): Array<[string, s
     .map(([key, value]) => [key.replace(/Id$/, ''), String(value)]);
 }
 
+function RecommendationCard({ recommendation }: { recommendation: RemediationRecommendation }) {
+  return (
+    <article className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${riskTone(recommendation.riskLevel)}`}>
+              {recommendation.riskLevel} risk
+            </span>
+            <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-600">
+              {recommendation.provider}
+            </span>
+          </div>
+          <h3 className="mt-3 text-sm font-semibold text-slate-900">{recommendation.title}</h3>
+          <p className="mt-2 text-xs leading-5 text-slate-650">{recommendation.description}</p>
+        </div>
+        <Button type="button" variant="outline" size="sm" disabled className="shrink-0 rounded-full border-slate-200 bg-slate-50">
+          <Lock className="h-3.5 w-3.5" />
+          Prepare governed action
+        </Button>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-md border border-slate-100 bg-slate-50/70 p-3">
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase text-slate-500">
+            <Wrench className="h-3 w-3" />
+            Action
+          </div>
+          <p className="mt-1 break-words text-xs font-medium text-slate-800">{recommendation.actionType}</p>
+        </div>
+        <div className="rounded-md border border-slate-100 bg-slate-50/70 p-3">
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase text-slate-500">
+            <Shield className="h-3 w-3" />
+            Approval
+          </div>
+          <p className="mt-1 text-xs font-medium text-slate-800">{recommendation.approvalRequired ? 'Required' : 'Not required'}</p>
+        </div>
+        <div className="rounded-md border border-slate-100 bg-slate-50/70 p-3">
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase text-slate-500">
+            <ClipboardCheck className="h-3 w-3" />
+            Token
+          </div>
+          <p className="mt-1 text-xs font-medium text-slate-800">{recommendation.confirmationToken ?? 'Not required'}</p>
+        </div>
+        <div className="rounded-md border border-slate-100 bg-slate-50/70 p-3">
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase text-slate-500">
+            <Lock className="h-3 w-3" />
+            Preparation
+          </div>
+          <p className="mt-1 text-xs font-medium text-slate-800">{recommendation.canPrepareOperation ? 'Available' : 'Disabled'}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-md border border-slate-100 bg-slate-50/70 p-3">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Reason</p>
+        <p className="mt-1 text-xs text-slate-700">{recommendation.reason}</p>
+        {recommendation.blockedReason ? (
+          <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+            {recommendation.blockedReason}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="mt-4">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Evidence used</p>
+        <div className="mt-2 grid grid-cols-1 gap-2 xl:grid-cols-2">
+          {recommendation.evidence.length === 0 ? (
+            <p className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
+              No evidence attached to this recommendation.
+            </p>
+          ) : (
+            recommendation.evidence.map((item) => (
+              <div key={`${item.source}:${item.sourceId}:${item.type}`} className="rounded-md border border-slate-100 bg-slate-50/60 p-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-500">{item.source}</span>
+                  <span className="text-[10px] text-slate-400">{formatDate(item.occurredAt ?? null)}</span>
+                </div>
+                <p className="mt-2 line-clamp-2 text-xs font-semibold text-slate-800">{item.label}</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">{item.type}</p>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
 export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
   const [incident, setIncident] = useState<IncidentDetail | null>(null);
   const [timelineEvents, setTimelineEvents] = useState<IncidentTimelineEventSummary[]>([]);
+  const [recommendations, setRecommendations] = useState<RemediationRecommendation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isNoteSubmitting, setIsNoteSubmitting] = useState(false);
@@ -166,12 +266,14 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
     setIsLoading(true);
     setError(null);
     try {
-      const [incidentRes, timelineRes] = await Promise.all([
+      const [incidentRes, timelineRes, recommendationsRes] = await Promise.all([
         api.get<IncidentDetailApiResponse>(`/v1/incidents/${encodeURIComponent(incidentId)}`),
         api.get<IncidentTimelineResponse>(`/v1/incidents/${encodeURIComponent(incidentId)}/timeline`),
+        api.get<RecommendationsApiResponse>(`/v1/incidents/${encodeURIComponent(incidentId)}/remediation-recommendations`),
       ]);
       setIncident(incidentRes.data);
       setTimelineEvents(timelineRes.data);
+      setRecommendations(recommendationsRes.data);
     } catch (loadError) {
       setError(getErrorMessage(loadError));
     } finally {
@@ -383,6 +485,23 @@ export function IncidentDetailClient({ incidentId }: { incidentId: string }) {
         </div>
 
         <div className="space-y-4">
+          <section className="rounded-lg border border-slate-200 bg-white p-5">
+            <div className="mb-5 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Recommended Remediation</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  Deterministic recommendations from incident evidence, signals, timeline, deployments, and operations.
+                </p>
+              </div>
+              <span className="text-xs text-slate-500">{recommendations.length} recommendations</span>
+            </div>
+            <div className="space-y-3">
+              {recommendations.map((recommendation) => (
+                <RecommendationCard key={recommendation.id} recommendation={recommendation} />
+              ))}
+            </div>
+          </section>
+
           {/* Vertical Timeline */}
           <section className="rounded-lg border border-slate-200 bg-white p-5">
             <div className="mb-5 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">

@@ -262,8 +262,11 @@ Resource Graph responses never expose raw provider payloads, secrets, kubeconfig
 | GET | `/v1/incidents/readiness` | Authenticated | Tenant-scoped incident readiness and counts |
 | GET | `/v1/incidents/:incidentId` | Authenticated | Tenant-scoped incident detail with evidence |
 | GET | `/v1/incidents/:incidentId/timeline` | Authenticated | Tenant-scoped incident, signal, operation, deployment, and governance evidence timeline |
+| GET | `/v1/incidents/:incidentId/remediation-recommendations` | Authenticated | Deterministic recommendation-only remediation guidance derived from real incident evidence |
 | POST | `/v1/incidents/:incidentId/notes` | Member+ | Add operator note to incident workflow |
 | POST | `/v1/incidents/:incidentId/acknowledge` | Member+ | Acknowledge open incident |
 | POST | `/v1/incidents/:incidentId/resolve` | Member+ | Resolve open/acknowledged incident |
 | POST | `/v1/incidents/:incidentId/archive` | Admin+ | Archive resolved incident |
 | POST | `/v1/incidents/correlate` | Authenticated | Run deterministic signal correlation |
+
+Remediation recommendations are metadata only. They include provider, action type, evidence used, risk level, confirmation token, approval requirement, and preparation availability. This route does not execute remediation and does not create hidden demo data.
