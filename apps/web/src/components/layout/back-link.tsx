@@ -13,7 +13,7 @@ export function BackLink({ href, label, className }: BackLinkProps) {
     <Link
       href={href}
       className={cn(
-        "inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900 transition-colors",
+        "inline-flex min-w-0 shrink-0 items-center gap-1.5 text-xs font-medium text-slate-500 transition-colors hover:text-slate-900",
         className
       )}
     >

@@ -592,7 +592,7 @@ export function Topbar() {
   return (
     <>
       <header className="sticky top-0 z-40 border-b border-[#d9dee7] bg-white/90 shadow-sm backdrop-blur">
-        <div className="flex min-h-16 items-center gap-3 px-3 lg:px-6">
+        <div className="flex min-h-16 flex-wrap items-center gap-2 px-3 py-2 sm:gap-3 lg:px-6">
           <button
             type="button"
             onClick={() => setIsServicesOpen(true)}
@@ -601,7 +601,7 @@ export function Topbar() {
             <Menu className="h-4 w-4" />
             Services
           </button>
-          <Link href="/dashboard" className="flex w-[15.25rem] shrink-0 items-center gap-3">
+          <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-3 sm:w-[15.25rem] sm:flex-none">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0972d3] text-white shadow-sm">
               <Zap className="h-4 w-4" />
             </div>
@@ -613,7 +613,7 @@ export function Topbar() {
             </div>
           </Link>
 
-          <div className="relative flex h-10 min-w-[14rem] flex-1 items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm shadow-sm transition focus-within:border-[#0972d3] focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 lg:max-w-3xl">
+          <div className="relative order-last flex h-10 min-w-0 flex-[1_0_100%] items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm shadow-sm transition focus-within:border-[#0972d3] focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 sm:order-none sm:min-w-[14rem] sm:flex-1 lg:max-w-3xl">
             <Search className="h-4 w-4 shrink-0 text-slate-500" />
             <input
               ref={searchInputRef}

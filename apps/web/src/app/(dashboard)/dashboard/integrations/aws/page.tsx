@@ -1,7 +1,7 @@
 import { AwsDeploymentClient } from './aws-deployment-client';
 
 export const metadata = {
-  title: 'AWS Deployments | AutoOps',
+  title: 'AWS Deployments',
 };
 
 export default function AwsDeploymentsPage() {

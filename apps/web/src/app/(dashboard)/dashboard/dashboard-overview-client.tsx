@@ -52,7 +52,7 @@ function formatTime(value: Date | string | null): string {
   }).format(new Date(value));
 }
 
-const POLL_INTERVAL_MS = 15_000;
+const POLL_INTERVAL_MS = 60_000;
 
 export function DashboardOverviewClient() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -119,10 +119,13 @@ export function DashboardOverviewClient() {
 
       setIncidents(allActiveIncidents.slice(0, 5));
 
+      const visibleProjects = projectsRes.data.slice(0, 12);
       const environmentResults = await Promise.allSettled(
-        projectsRes.data.map((project) => api.get<{ data: Environment[] }>(`/v1/projects/${project.id}/environments`)),
+        visibleProjects.map((project) => api.get<{ data: Environment[] }>(`/v1/projects/${project.id}/environments`)),
       );
-      const loadedEnvironments = environmentResults.flatMap((result) => (result.status === 'fulfilled' ? result.value.data : []));
+      const loadedEnvironments = environmentResults.flatMap((result) =>
+        result.status === 'fulfilled' ? result.value.data : [],
+      );
       setEnvironments(loadedEnvironments);
 
       setLastUpdated(new Date());
@@ -143,16 +146,8 @@ export function DashboardOverviewClient() {
       void loadOverview('refresh');
     }, POLL_INTERVAL_MS);
 
-    function refreshWhenVisible() {
-      if (document.visibilityState === 'visible') {
-        void loadOverview('refresh');
-      }
-    }
-
-    document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       window.clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, [loadOverview]);
 

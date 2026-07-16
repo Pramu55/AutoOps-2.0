@@ -375,8 +375,8 @@ export function AwsDeploymentClient() {
           <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-950">
             <StatusIcon status={permissions.status} /> IAM Permission Diagnostics
           </h2>
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full text-left text-sm text-slate-600">
+          <div className="mt-4 min-w-0 max-w-full overflow-x-auto">
+            <table className="min-w-[42rem] text-left text-sm text-slate-600">
               <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
                   <th className="px-4 py-2 font-medium">Service</th>
@@ -405,7 +405,7 @@ export function AwsDeploymentClient() {
       )}
 
       {workspaceRes && (
-        <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="min-w-0 rounded-md border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-950">
             <StatusIcon status={workspaceRes.status} /> Allowlisted Workspace ({workspaceRes.targetSlug})
           </h2>
@@ -511,24 +511,24 @@ export function AwsDeploymentClient() {
             </Button>
           </div>
           {planMessage && <p className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{planMessage}</p>}
-          <div className="mt-4 grid gap-4 lg:grid-cols-3">
-            <div className="rounded-md border border-slate-100 p-4">
+          <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-3">
+            <div className="min-w-0 rounded-md border border-slate-100 p-4">
               <h3 className="text-sm font-semibold text-slate-900">Remote state</h3>
               <ul className="mt-3 space-y-2 text-sm text-slate-600">
-                <li className="flex items-center justify-between">S3 bucket <StatusIcon status={planReadiness.remoteStateBucketConfigured ? 'PASS' : 'FAIL'} /></li>
-                <li className="flex items-center justify-between">DynamoDB lock table <StatusIcon status={planReadiness.remoteStateLockTableConfigured ? 'PASS' : 'FAIL'} /></li>
-                <li className="flex items-center justify-between">State region <StatusIcon status={planReadiness.remoteStateRegionConfigured ? 'PASS' : 'FAIL'} /></li>
+                <li className="flex flex-wrap items-center justify-between gap-2">S3 bucket <StatusIcon status={planReadiness.remoteStateBucketConfigured ? 'PASS' : 'FAIL'} /></li>
+                <li className="flex flex-wrap items-center justify-between gap-2">DynamoDB lock table <StatusIcon status={planReadiness.remoteStateLockTableConfigured ? 'PASS' : 'FAIL'} /></li>
+                <li className="flex flex-wrap items-center justify-between gap-2">State region <StatusIcon status={planReadiness.remoteStateRegionConfigured ? 'PASS' : 'FAIL'} /></li>
               </ul>
             </div>
-            <div className="rounded-md border border-slate-100 p-4">
+            <div className="min-w-0 rounded-md border border-slate-100 p-4">
               <h3 className="text-sm font-semibold text-slate-900">Workspace and image</h3>
               <ul className="mt-3 space-y-2 text-sm text-slate-600">
-                <li className="flex items-center justify-between">Allowlisted workspace <StatusIcon status={planReadiness.allowedWorkspaceConfigured ? 'PASS' : 'FAIL'} /></li>
-                <li className="flex items-center justify-between">Workspace exists <StatusIcon status={planReadiness.workspaceExists ? 'PASS' : 'FAIL'} /></li>
-                <li className="flex items-center justify-between">Pushed image metadata <StatusIcon status={planReadiness.safeImageAvailable ? 'PASS' : 'FAIL'} /></li>
+                <li className="flex flex-wrap items-center justify-between gap-2">Allowlisted workspace <StatusIcon status={planReadiness.allowedWorkspaceConfigured ? 'PASS' : 'FAIL'} /></li>
+                <li className="flex flex-wrap items-center justify-between gap-2">Workspace exists <StatusIcon status={planReadiness.workspaceExists ? 'PASS' : 'FAIL'} /></li>
+                <li className="flex flex-wrap items-center justify-between gap-2">Pushed image metadata <StatusIcon status={planReadiness.safeImageAvailable ? 'PASS' : 'FAIL'} /></li>
               </ul>
             </div>
-            <div className="rounded-md border border-slate-100 p-4">
+            <div className="min-w-0 rounded-md border border-slate-100 p-4">
               <h3 className="text-sm font-semibold text-slate-900">Plan blockers</h3>
               {planReadiness.missing.length === 0 && planReadiness.blockedReasons.length === 0 ? (
                 <p className="mt-3 text-sm text-emerald-700">Plan prerequisites are ready.</p>
@@ -539,8 +539,8 @@ export function AwsDeploymentClient() {
               )}
             </div>
           </div>
-          <div className="mt-5 overflow-x-auto">
-            <table className="w-full text-left text-sm text-slate-600">
+          <div className="mt-5 min-w-0 max-w-full overflow-x-auto">
+            <table className="min-w-[36rem] text-left text-sm text-slate-600">
               <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
                   <th className="px-4 py-2 font-medium">Pushed image</th>
@@ -1133,8 +1133,8 @@ export function AwsDeploymentClient() {
 
       <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-950">Recent ECR Image Operations</h2>
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-left text-sm text-slate-600">
+        <div className="mt-4 min-w-0 max-w-full overflow-x-auto">
+          <table className="min-w-[42rem] text-left text-sm text-slate-600">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
                 <th className="px-4 py-2 font-medium">Action</th>

@@ -149,7 +149,7 @@ export default function RegisterPage() {
 
   return (
     <main className="min-h-screen bg-[linear-gradient(120deg,#f7fff0_0%,#d9ffd9_36%,#f7fbff_72%,#ffffff_100%)] text-[#16191f]">
-      <div className="border-b border-[#d5dbdb] bg-white"><div className="mx-auto flex h-20 max-w-[1280px] items-center justify-between px-6"><a href="/" className="flex items-end gap-2 text-3xl font-bold tracking-tight text-[#111827]"><span>autoops</span><span className="mb-1.5 h-1.5 w-10 rounded-full bg-[#ff9900]" /></a><span className="text-sm font-semibold text-[#5f6b7a]">Create local workspace</span></div></div>
+      <div className="border-b border-[#d5dbdb] bg-white"><div className="mx-auto flex min-h-20 max-w-[1280px] items-center justify-between gap-4 px-4 py-4 sm:px-6"><a href="/" className="flex min-w-0 items-end gap-2 text-3xl font-bold tracking-tight text-[#111827]"><span>autoops</span><span className="mb-1.5 h-1.5 w-10 rounded-full bg-[#ff9900]" /></a><span className="hidden text-sm font-semibold text-[#5f6b7a] sm:inline">Create local workspace</span></div></div>
 
       <div className="mx-auto grid min-h-[calc(100vh-5rem)] w-full max-w-[1280px] grid-cols-1 gap-10 px-6 py-12 md:grid-cols-[0.9fr_1.1fr] md:items-center lg:gap-16">
         <section className="hidden md:block">

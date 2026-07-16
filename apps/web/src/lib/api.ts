@@ -78,9 +78,39 @@ async function request<T>(path: string, options?: RequestInit, hasRetried = fals
   return res.json() as Promise<T>;
 }
 
+const inFlightGets = new Map<string, Promise<unknown>>();
+
+function getDedupeKey(path: string, init?: RequestInit): string | null {
+  if (typeof window === 'undefined') return null;
+  if (init?.signal || init?.body) return null;
+
+  const headers = new Headers(init?.headers);
+  const headerParts = Array.from(headers.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}:${value}`)
+    .join('|');
+
+  return `${path}|${headerParts}`;
+}
+
+function getWithDedupe<T>(path: string, init?: RequestInit): Promise<T> {
+  const dedupeKey = getDedupeKey(path, init);
+  if (!dedupeKey) {
+    return request<T>(path, { method: 'GET', ...init });
+  }
+
+  const existing = inFlightGets.get(dedupeKey);
+  if (existing) return existing as Promise<T>;
+
+  const promise = request<T>(path, { method: 'GET', ...init }).finally(() => {
+    inFlightGets.delete(dedupeKey);
+  });
+  inFlightGets.set(dedupeKey, promise);
+  return promise;
+}
+
 export const api = {
-  get: <T>(path: string, init?: RequestInit) =>
-    request<T>(path, { method: 'GET', ...init }),
+  get: <T>(path: string, init?: RequestInit) => getWithDedupe<T>(path, init),
 
   post: <T>(path: string, body: unknown, init?: RequestInit) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body), ...init }),

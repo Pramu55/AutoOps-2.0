@@ -217,7 +217,7 @@ export function ResourcesClient() {
         title="Resources Workspace"
         purpose="Resource map of connected infrastructure and AutoOps entities."
         secondaryAction={
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <Button variant="ghost" size="sm" asChild><Link href="/dashboard/signals">Signals</Link></Button>
             <Button variant="ghost" size="sm" asChild><Link href="/dashboard/incidents">Incidents</Link></Button>
             <Button variant="ghost" size="sm" asChild><Link href="/dashboard/integrations">Integrations</Link></Button>
@@ -280,7 +280,7 @@ export function ResourcesClient() {
         description="Search and inspect tenant-owned resource nodes. No actions are available from this view."
         isEmpty={false}
         emptyState={null}
-        className="w-full"
+        className="w-full min-w-0 overflow-hidden"
       >
         <div className="border-b border-slate-100 p-4">
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[10rem_12rem_10rem_18rem]">
@@ -304,8 +304,45 @@ export function ResourcesClient() {
           </div>
         </div>
 
-        <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_26rem]">
-          <div className="overflow-x-auto">
+        <div className="grid min-w-0 gap-0 xl:grid-cols-[minmax(0,1fr)_26rem]">
+          <div className="min-w-0 max-w-full space-y-2 overflow-hidden p-4 xl:hidden">
+            {isLoading ? (
+              <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-600">
+                Loading resources...
+              </div>
+            ) : resourceItems.length === 0 ? (
+              <EmptyState
+                icon={<Boxes />}
+                title="No resources found"
+                description="No Resource Graph nodes found for this organization and filter set. Provider inventory may be blocked by org policy or not yet discovered."
+                action={<Button variant="outline" asChild><Link href="/dashboard/integrations">View Integrations</Link></Button>}
+              />
+            ) : (
+              resourceItems.map((resource) => (
+                <button
+                  key={resource.id}
+                  type="button"
+                  onClick={() => setSelectedResourceId(resource.id)}
+                  className={cn(
+                    'block w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-50 p-4 text-left transition hover:bg-blue-50',
+                    resource.id === selectedResourceId && 'bg-blue-50 ring-1 ring-inset ring-blue-200',
+                  )}
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-0 truncate text-sm font-semibold text-slate-950">{resource.displayName}</span>
+                    <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                      {labelize(resource.provider)}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs font-medium text-slate-600">{labelize(resource.kind)}</p>
+                  <p className="mt-2 break-all font-mono text-xs text-slate-500">{resource.urn}</p>
+                  <p className="mt-2 text-xs text-slate-500">Last seen {formatDate(resource.lastSeenAt)}</p>
+                </button>
+              ))
+            )}
+          </div>
+
+          <div className="hidden w-full max-w-full min-w-0 overflow-x-auto xl:block">
             <div className="grid min-w-[56rem] grid-cols-[10rem_12rem_13rem_1fr_10rem] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <span>Name</span>
               <span>Provider</span>
@@ -329,7 +366,7 @@ export function ResourcesClient() {
             )}
           </div>
 
-          <aside className="border-t border-slate-200 bg-slate-50 p-5 xl:border-l xl:border-t-0">
+          <aside className="min-w-0 border-t border-slate-200 bg-slate-50 p-5 xl:border-l xl:border-t-0">
             {!selectedResourceId ? (
               <div className="rounded-md border border-dashed border-slate-300 bg-white p-5 text-sm text-slate-600">
                 Select a resource to inspect safe metadata and graph neighbors.

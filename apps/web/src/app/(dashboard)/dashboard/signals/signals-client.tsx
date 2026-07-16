@@ -32,7 +32,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 type SignalListApiResponse = { data: SignalListResponse };
 type SignalReadinessApiResponse = { data: SignalReadinessResponse };
 
-const POLL_INTERVAL_MS = 10_000;
+const POLL_INTERVAL_MS = 30_000;
 
 function formatDateTime(value: string | null): string {
   if (!value) return 'Never';
@@ -146,7 +146,7 @@ export function SignalsClient() {
         title="Signals Workspace"
         purpose="Evidence view of normalized observations from provider monitoring."
         secondaryAction={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="ghost" size="sm" asChild><Link href="/dashboard/incidents">Incidents</Link></Button>
             <Button variant="ghost" size="sm" asChild><Link href="/dashboard/resources">Resources</Link></Button>
             <Button variant="ghost" size="sm" asChild><Link href="/dashboard">Command Workspace</Link></Button>
@@ -226,8 +226,8 @@ export function SignalsClient() {
               />
             }
           >
-            <div className="flex items-center gap-4 border-b border-slate-100 p-4">
-              <div className="relative flex-1">
+            <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:gap-4">
+              <div className="relative min-w-0 flex-1">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input
                   placeholder="Search signals..."
@@ -236,10 +236,10 @@ export function SignalsClient() {
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <Filter className="h-4 w-4 text-slate-500" />
                 <select
-                  className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className="min-w-0 flex-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20 sm:flex-none"
                   value={severityFilter}
                   onChange={(e) => setSeverityFilter(e.target.value)}
                 >
@@ -251,7 +251,7 @@ export function SignalsClient() {
                   ))}
                 </select>
                 <select
-                  className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className="min-w-0 flex-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20 sm:flex-none"
                   value={sourceFilter}
                   onChange={(e) => setSourceFilter(e.target.value)}
                 >

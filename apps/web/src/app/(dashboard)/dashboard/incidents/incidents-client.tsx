@@ -227,22 +227,22 @@ export function IncidentsClient() {
             <h2 className="text-base font-semibold text-slate-900">Incident Registry</h2>
             <p className="mt-1 text-sm text-slate-600">Showing {filteredItems.length} matching incidents.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="relative">
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <label className="relative min-w-0">
               <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search incidents..."
-                className="h-9 w-64 rounded-full border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-slate-300 focus:ring-1 focus:ring-slate-200"
+                className="h-9 w-full rounded-full border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-slate-300 focus:ring-1 focus:ring-slate-200 sm:w-64"
               />
             </label>
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Filter className="h-4 w-4 text-slate-500" />
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 rounded-full border border-slate-200 bg-white px-3 pr-8 text-sm text-slate-900 outline-none focus:border-slate-300">
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 min-w-0 flex-1 rounded-full border border-slate-200 bg-white px-3 pr-8 text-sm text-slate-900 outline-none focus:border-slate-300 sm:flex-none">
                 {['ALL', 'OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'ARCHIVED'].map((item) => <option key={item}>{item}</option>)}
               </select>
-              <select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)} className="h-9 rounded-full border border-slate-200 bg-white px-3 pr-8 text-sm text-slate-900 outline-none focus:border-slate-300">
+              <select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)} className="h-9 min-w-0 flex-1 rounded-full border border-slate-200 bg-white px-3 pr-8 text-sm text-slate-900 outline-none focus:border-slate-300 sm:flex-none">
                 {['ALL', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'].map((item) => <option key={item}>{item}</option>)}
               </select>
             </div>

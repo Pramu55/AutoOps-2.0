@@ -1,7 +1,7 @@
 import { GitHubActionsClient } from './github-actions-client';
 
 export const metadata = {
-  title: 'GitHub Actions | AutoOps',
+  title: 'GitHub Actions',
 };
 
 export default function GitHubActionsPage() {
