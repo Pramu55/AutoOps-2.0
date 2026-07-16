@@ -41,7 +41,7 @@ type PendingApprovalDecision = {
   decision: ApprovalDecision;
 };
 
-const POLL_INTERVAL_MS = 5_000;
+const POLL_INTERVAL_MS = 30_000;
 const MISSING_VALUE = '-';
 
 function getErrorMessage(error: unknown): string {
@@ -330,7 +330,7 @@ function WorkerRuntimeCard({
           ['Deployments', queueCoverage?.deployments ?? 'UNKNOWN'],
           ['System', queueCoverage?.system ?? 'UNKNOWN'],
         ] satisfies Array<[string, string]>).map(([label, value]) => (
-          <div key={label} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+          <div key={label} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
             <span className="text-xs text-slate-600">{label}</span>
             <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusTone(value)}`}>
               {value}
@@ -579,18 +579,8 @@ export function OperationsClient() {
       void loadSummary();
     }, POLL_INTERVAL_MS);
 
-    function refreshWhenVisible() {
-      if (document.visibilityState === 'visible') {
-        void loadSummary();
-      }
-    }
-
-    window.addEventListener('focus', refreshWhenVisible);
-    document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       window.clearInterval(intervalId);
-      window.removeEventListener('focus', refreshWhenVisible);
-      document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, [loadSummary]);
 

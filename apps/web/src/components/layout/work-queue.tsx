@@ -25,13 +25,13 @@ export function WorkQueue({
   className,
 }: WorkQueueProps) {
   return (
-    <section className={cn("rounded-lg border border-slate-200 bg-white shadow-sm flex flex-col", className)}>
-      <div className="flex flex-col gap-2 border-b border-slate-100 p-5 sm:flex-row sm:items-center sm:justify-between">
+    <section className={cn("ao-card ao-card-hover ao-section-top flex flex-col overflow-hidden rounded-2xl bg-white", className)}>
+      <div className="flex flex-col gap-2 border-b border-slate-100 bg-[linear-gradient(180deg,#ffffff,#f8fafc)] p-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-3">
-            <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+            <h2 className="text-base font-extrabold text-slate-950">{title}</h2>
             {count !== undefined && (
-              <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+              <span className="ao-pill px-2 py-0 text-[11px]">
                 {count}
               </span>
             )}
@@ -43,7 +43,7 @@ export function WorkQueue({
         {viewAllLink && (
           <Link
             href={viewAllLink}
-            className="group inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
+            className="group ao-link text-sm"
           >
             View all
             <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
@@ -57,7 +57,7 @@ export function WorkQueue({
             {emptyState}
           </div>
         ) : (
-          <div className="divide-y divide-slate-100 flex-1 flex flex-col">
+          <div className="flex flex-1 flex-col divide-y divide-slate-100">
             {children}
           </div>
         )}

@@ -28,11 +28,11 @@ export function ProviderStateCard({
   className,
 }: ProviderStateCardProps) {
   return (
-    <article className={cn("flex flex-col rounded-lg border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-300 hover:shadow-md", className)}>
+    <article className={cn("ao-card ao-card-hover flex flex-col rounded-2xl bg-white p-5", className)}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-3">
           {icon && (
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-600">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-700">
               {icon}
             </div>
           )}
@@ -54,7 +54,7 @@ export function ProviderStateCard({
       <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4">
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-slate-500">Safety Mode:</span>
-          <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+          <span className="ao-pill px-2 py-0.5 text-[10px]">
             {safetyMode}
           </span>
         </div>

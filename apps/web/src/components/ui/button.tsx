@@ -4,15 +4,15 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/cn';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-bold transition-all duration-150 focus-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
   {
     variants: {
       variant: {
-        default:     'bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm',
-        destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-sm',
-        outline:     'border border-border bg-transparent hover:bg-accent hover:text-accent-foreground',
-        secondary:   'bg-secondary text-secondary-foreground hover:bg-secondary/80',
-        ghost:       'hover:bg-accent hover:text-accent-foreground',
+        default:     'bg-[#0972d3] text-white shadow-sm hover:bg-[#075fae] hover:shadow-md',
+        destructive: 'bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90 hover:shadow-md',
+        outline:     'border border-slate-300 bg-white text-slate-800 shadow-sm hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800',
+        secondary:   'border border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100',
+        ghost:       'text-slate-700 hover:bg-slate-100 hover:text-slate-950',
         link:        'text-primary underline-offset-4 hover:underline',
       },
       size: {

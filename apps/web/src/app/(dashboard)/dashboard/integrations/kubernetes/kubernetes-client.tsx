@@ -153,13 +153,13 @@ function SummaryCard({
   icon: React.ReactNode;
 }) {
   return (
-    <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+    <section className="min-w-0 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <p className="text-[11px] font-bold uppercase tracking-wide text-[#5f6b7a]">{label}</p>
           <p className="mt-2 truncate text-xl font-bold text-[#16191f]">{value}</p>
         </div>
-        <div className="rounded bg-[#f1f3f3] p-2 text-[#0972d3]">{icon}</div>
+        <div className="shrink-0 rounded bg-[#f1f3f3] p-2 text-[#0972d3]">{icon}</div>
       </div>
     </section>
   );

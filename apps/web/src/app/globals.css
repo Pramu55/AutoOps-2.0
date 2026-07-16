@@ -4,8 +4,8 @@
 
 @layer base {
   :root {
-    /* Cloud console palette: dark chrome, light workspace */
-    --background:   210 40% 98%;
+    color-scheme: light;
+    --background:   210 40% 97%;
     --foreground:   222 47% 11%;
 
     --card:         0 0% 100%;
@@ -34,21 +34,33 @@
     --ring:         217 91% 60%;
 
     --radius: 0.625rem;
+    --ao-ink: #111827;
+    --ao-panel: #f4f6f8;
+    --ao-line: #d9dee7;
+    --ao-blue: #0972d3;
+    --ao-orange: #ff9900;
+    --ao-navy: #16191f;
+    --ao-navy-2: #232f3e;
+    --ao-success: #067647;
+    --ao-danger: #d13212;
+    --ao-warning: #b7791f;
   }
 
   * {
     @apply border-border;
   }
 
-  html {
-    @apply antialiased;
-    color-scheme: light;
-  }
+  html { @apply antialiased; color-scheme: light; }
 
   body {
     @apply bg-background text-foreground;
     font-family: Arial, "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
     font-feature-settings: "rlig" 1, "calt" 1;
+    min-height: 100%;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.7), transparent 280px),
+      radial-gradient(circle at 72% -18%, rgba(9, 114, 211, .12), transparent 34%),
+      #eef3f8;
   }
 
   /* Scrollbar styling */
@@ -77,5 +89,44 @@
   /* Glow ring on focus-visible */
   .focus-ring {
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+
+  .ao-console-surface {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.66), transparent 280px),
+      radial-gradient(circle at 70% -20%, rgba(9,114,211,.11), transparent 32%),
+      #eef3f8;
+  }
+
+  .ao-card {
+    @apply border border-slate-200 bg-white shadow-[0_14px_34px_-24px_rgba(15,23,42,0.35)];
+  }
+
+  .ao-card-hover {
+    @apply transition-all duration-200 hover:border-blue-200 hover:shadow-[0_22px_46px_-26px_rgba(15,23,42,0.42)];
+  }
+
+  .ao-section-top {
+    box-shadow: inset 0 4px 0 #0972d3;
+  }
+
+  .ao-section-top-warning {
+    box-shadow: inset 0 4px 0 #ff9900;
+  }
+
+  .ao-section-top-danger {
+    box-shadow: inset 0 4px 0 #d13212;
+  }
+
+  .ao-section-top-success {
+    box-shadow: inset 0 4px 0 #067647;
+  }
+
+  .ao-pill {
+    @apply inline-flex min-h-7 items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700;
+  }
+
+  .ao-link {
+    @apply inline-flex items-center gap-1.5 font-semibold text-blue-700 transition hover:text-blue-800 hover:underline;
   }
 }

@@ -56,8 +56,8 @@ export default async function HomePage() {
       
       {/* 1. Header */}
       <header className="sticky top-0 z-40 border-b border-[#d5dbdb] bg-white">
-        <div className="mx-auto flex h-[72px] max-w-[1600px] items-center justify-between px-6">
-          <div className="flex items-center gap-10">
+        <div className="mx-auto flex min-h-[72px] max-w-[1600px] items-center justify-between gap-4 px-4 py-3 sm:px-6">
+          <div className="flex min-w-0 items-center gap-10">
             <Link href="/" className="flex flex-col items-start gap-0">
               <span className="text-3xl font-extrabold tracking-tight text-[#16191f] leading-none">autoops</span>
               <span className="h-1 w-12 rounded-full bg-[#ff9900] mt-0.5" />
@@ -69,14 +69,14 @@ export default async function HomePage() {
               <Link href="#resources" className="hover:text-[#0972d3]">Resources</Link>
             </nav>
           </div>
-          <div className="flex items-center gap-6 text-[15px] font-semibold">
+          <div className="flex shrink-0 items-center gap-3 text-[15px] font-semibold sm:gap-6">
             <button className="hidden sm:flex items-center gap-2 text-[#16191f] hover:text-[#0972d3]">
               <Search className="h-[18px] w-[18px]" /> Search
             </button>
             <Link href={isAuthenticated ? "/dashboard" : "/login"} className="hidden sm:block text-[#16191f] hover:text-[#0972d3]">
               Sign in to console
             </Link>
-            <Link href="/register" className="rounded-full bg-[#16191f] px-6 py-2.5 text-white hover:bg-[#232f3e] transition-colors">
+            <Link href="/register" className="rounded-full bg-[#16191f] px-4 py-2.5 text-sm text-white transition-colors hover:bg-[#232f3e] sm:px-6 sm:text-[15px]">
               Create account
             </Link>
           </div>
@@ -88,8 +88,8 @@ export default async function HomePage() {
         <div className="mx-auto max-w-[1600px] px-6 pt-6">
           
           {/* 2. Secondary navigation bar */}
-          <div className="mb-16 rounded-xl border border-[#d5dbdb] bg-white px-8 py-5 shadow-sm overflow-x-auto whitespace-nowrap">
-            <nav className="flex items-center gap-10 text-[16px] font-bold text-[#16191f]">
+          <div className="mb-16 max-w-full overflow-x-auto rounded-xl border border-[#d5dbdb] bg-white px-5 py-5 shadow-sm sm:px-8">
+            <nav className="flex w-max min-w-full items-center gap-6 whitespace-nowrap text-[16px] font-bold text-[#16191f] lg:gap-10">
               <span className="text-[#0972d3]">AutoOps Console</span>
               <Link href="#overview" className="hover:text-[#0972d3] font-semibold">Overview</Link>
               <Link href="#services" className="hover:text-[#0972d3] font-semibold">Service categories</Link>
@@ -192,7 +192,7 @@ export default async function HomePage() {
             <h2 className="text-3xl font-bold">Evaluator Demo Path</h2>
             <p className="mt-4 text-[17px] text-[#eaeded]">Follow these steps to evaluate the core mechanics of the platform.</p>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
             {demoSteps.map((step, idx) => (
               <div key={step} className="relative rounded-lg border border-white/10 bg-white/5 p-6 hover:bg-white/10 transition-colors">
                 <div className="mb-4 flex h-8 w-8 items-center justify-center rounded-full bg-[#ff9900] text-sm font-bold text-[#16191f]">

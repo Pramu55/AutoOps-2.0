@@ -1,7 +1,7 @@
 import { CloudReadinessClient } from './cloud-readiness-client';
 
 export const metadata = {
-  title: 'Cloud Readiness | AutoOps',
+  title: 'Cloud Readiness',
 };
 
 export default function CloudReadinessPage() {

@@ -90,7 +90,7 @@ export function StatusBadge({ status, className, dot = false }: StatusBadgeProps
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold whitespace-nowrap',
+        'inline-flex min-h-7 items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-bold whitespace-nowrap shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]',
         toneClass,
         className
       )}

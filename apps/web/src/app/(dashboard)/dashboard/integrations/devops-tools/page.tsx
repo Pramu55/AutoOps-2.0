@@ -1,7 +1,7 @@
 import { DevOpsToolsClient } from './devops-tools-client';
 
 export const metadata = {
-  title: 'DevOps Tools | AutoOps',
+  title: 'DevOps Tools',
 };
 
 export default function DevOpsToolsPage() {

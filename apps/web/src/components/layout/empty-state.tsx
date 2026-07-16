@@ -15,15 +15,15 @@ export function EmptyState({ title, description, icon, action, className, varian
     <div
       className={cn(
         "flex flex-col items-center justify-center text-center",
-        variant === 'card' && "rounded-lg border border-dashed border-slate-300 bg-slate-50 px-6 py-10",
+        variant === 'card' && "rounded-2xl border border-dashed border-slate-300 bg-[linear-gradient(135deg,#f8fafc,#ffffff)] px-6 py-10",
         variant === 'default' && "py-12",
-        variant === 'compact' && "rounded-md border border-dashed border-slate-200 bg-slate-50 p-6",
+        variant === 'compact' && "rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6",
         className
       )}
     >
       {icon && (
         <div className={cn(
-          "flex items-center justify-center rounded-full bg-slate-100 text-slate-500 mb-4",
+          "mb-4 flex items-center justify-center rounded-2xl border border-blue-100 bg-blue-50 text-blue-700",
           variant === 'compact' ? "h-10 w-10" : "h-12 w-12"
         )}>
           {icon}
