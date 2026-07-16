@@ -4,9 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type {
   Deployment,
-  Environment,
   Project,
   OpsObservabilityResponse,
+  OpsSummary,
   OperationActivityItem,
   OperationActivityResponse,
   SignalReadinessResponse,
@@ -56,8 +56,8 @@ const POLL_INTERVAL_MS = 60_000;
 
 export function DashboardOverviewClient() {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [environments, setEnvironments] = useState<Environment[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [environmentCount, setEnvironmentCount] = useState(0);
 
   const [observability, setObservability] = useState<OpsObservabilityResponse | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<OperationActivityItem[]>([]);
@@ -79,6 +79,7 @@ export function DashboardOverviewClient() {
       const [
         projectsRes,
         deploymentsRes,
+        summaryRes,
         obsRes,
         pendingOpsRes,
         recentOpsRes,
@@ -88,6 +89,7 @@ export function DashboardOverviewClient() {
       ] = await Promise.all([
         api.get<{ data: Project[] }>('/v1/projects'),
         api.get<{ data: Deployment[] }>('/v1/deployments'),
+        api.get<{ data: OpsSummary }>('/v1/ops/summary'),
         api.get<{ data: OpsObservabilityResponse }>('/v1/ops/observability'),
         api.get<{ data: OperationActivityResponse }>('/v1/ops/activity?status=PENDING_APPROVAL&limit=5'),
         api.get<{ data: OperationActivityResponse }>('/v1/ops/activity?limit=5'),
@@ -98,6 +100,7 @@ export function DashboardOverviewClient() {
 
       setProjects(projectsRes.data);
       setDeployments(deploymentsRes.data);
+      setEnvironmentCount(summaryRes.data.resources.environments);
       setObservability(obsRes.data);
       setPendingApprovals(pendingOpsRes.data.items || []);
       setRecentOperations(recentOpsRes.data.items || []);
@@ -118,15 +121,6 @@ export function DashboardOverviewClient() {
       });
 
       setIncidents(allActiveIncidents.slice(0, 5));
-
-      const visibleProjects = projectsRes.data.slice(0, 12);
-      const environmentResults = await Promise.allSettled(
-        visibleProjects.map((project) => api.get<{ data: Environment[] }>(`/v1/projects/${project.id}/environments`)),
-      );
-      const loadedEnvironments = environmentResults.flatMap((result) =>
-        result.status === 'fulfilled' ? result.value.data : [],
-      );
-      setEnvironments(loadedEnvironments);
 
       setLastUpdated(new Date());
     } catch (loadError) {
@@ -467,7 +461,7 @@ export function DashboardOverviewClient() {
                  </div>
                  <div className="rounded-md border border-slate-200 bg-white p-4 text-center">
                     <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Environments</p>
-                    <p className="mt-2 text-2xl font-bold text-slate-900">{environments.length}</p>
+                    <p className="mt-2 text-2xl font-bold text-slate-900">{environmentCount}</p>
                  </div>
                  <div className="rounded-md border border-slate-200 bg-white p-4 text-center">
                     <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Deployments</p>
