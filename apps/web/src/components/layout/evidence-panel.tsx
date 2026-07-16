@@ -11,12 +11,12 @@ interface EvidencePanelProps {
 
 export function EvidencePanel({ title, description, icon, children, className }: EvidencePanelProps) {
   return (
-    <section className={cn("rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden", className)}>
-      <div className="border-b border-slate-100 bg-slate-50/50 px-5 py-4">
+    <section className={cn("ao-card ao-card-hover overflow-hidden rounded-2xl bg-white", className)}>
+      <div className="border-b border-slate-100 bg-[linear-gradient(180deg,#ffffff,#f8fafc)] px-5 py-4">
         <div className="flex items-center gap-3">
-          {icon && <div className="text-slate-500">{icon}</div>}
+          {icon && <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-100 bg-blue-50 text-blue-700">{icon}</div>}
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+            <h3 className="text-sm font-extrabold text-slate-950">{title}</h3>
             {description && <p className="mt-0.5 text-xs text-slate-500">{description}</p>}
           </div>
         </div>

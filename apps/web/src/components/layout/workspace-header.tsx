@@ -27,9 +27,8 @@ export function WorkspaceHeader({
   className,
 }: WorkspaceHeaderProps) {
   return (
-    <div className={cn("flex flex-col border-b border-slate-200 bg-white pb-5 pt-6 px-4 sm:px-6 lg:px-8", className)}>
-      <div className="flex flex-col gap-4 max-w-7xl mx-auto w-full">
-        {/* Top Navigation Row */}
+    <section className={cn("ao-card ao-card-hover rounded-2xl bg-[linear-gradient(135deg,#ffffff,#f8fafc)] px-5 py-5 sm:px-6 lg:px-7", className)}>
+      <div className="flex w-full flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             {backLink && (
@@ -46,20 +45,19 @@ export function WorkspaceHeader({
           )}
         </div>
 
-        {/* Main Header Row */}
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mt-2">
           <div className="flex items-start gap-3">
             {icon && (
-              <div className="mt-1 flex shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 p-2 text-slate-600 shadow-sm">
+              <div className="mt-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-700 shadow-sm">
                 {icon}
               </div>
             )}
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900 lg:text-3xl">
+              <h1 className="text-2xl font-extrabold tracking-tight text-slate-950 lg:text-3xl">
                 {title}
               </h1>
               {purpose && (
-                <p className="mt-1.5 max-w-3xl text-sm leading-6 text-slate-600">
+                <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-600">
                   {purpose}
                 </p>
               )}
@@ -74,6 +72,6 @@ export function WorkspaceHeader({
           )}
         </div>
       </div>
-    </div>
+    </section>
   );
 }

@@ -507,15 +507,15 @@ export function ConsoleSidebar() {
   return (
     <aside
       className={cn(
-        'hidden shrink-0 border-r border-[#31465f] bg-[#16191f] transition-[width] duration-200 md:block',
-        isCollapsed ? 'w-20' : 'w-64',
+        'hidden shrink-0 border-r border-[#2b313b] bg-[radial-gradient(circle_at_18%_0%,rgba(9,114,211,.24),transparent_26%),linear-gradient(180deg,#111827,#16191f_52%,#0b1120)] text-slate-200 shadow-2xl transition-[width] duration-200 md:block',
+        isCollapsed ? 'w-20' : 'w-[17rem]',
       )}
     >
       <div className="sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto px-3 py-4">
         <button
           type="button"
           onClick={() => setIsCollapsed((value) => !value)}
-          className="mb-4 flex w-full items-center justify-center gap-2 rounded-md border border-slate-700 bg-[#16191f] px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-[#ff9900]/60 hover:bg-[#31465f]"
+          className="mb-4 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-700 bg-white/5 px-3 py-2 text-xs font-bold text-slate-200 transition hover:border-[#ff9900]/60 hover:bg-white/10"
           aria-label={isCollapsed ? 'Expand service navigation' : 'Collapse service navigation'}
           title={isCollapsed ? 'Expand navigation' : 'Collapse navigation'}
         >
@@ -525,7 +525,7 @@ export function ConsoleSidebar() {
         {navGroups.map((group) => (
           <div key={group.label} className="mb-6">
             {isCollapsed ? null : (
-              <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{group.label}</p>
+              <p className="px-3 pb-2 text-[11px] font-extrabold uppercase tracking-[0.12em] text-slate-400">{group.label}</p>
             )}
             <nav className="space-y-1">
               {group.items.map(({ href, label, icon: Icon }) => {
@@ -536,11 +536,11 @@ export function ConsoleSidebar() {
                     href={href}
                     title={label}
                     className={cn(
-                      'flex items-center gap-3 rounded-md border border-transparent px-3 py-2 text-sm transition',
+                      'relative flex min-h-10 items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-sm font-semibold transition',
                       isCollapsed && 'justify-center px-2',
                       active
-                        ? 'border-blue-400/30 bg-blue-500/15 text-white'
-                        : 'text-slate-300 hover:border-slate-700 hover:bg-[#31465f] hover:text-white',
+                        ? 'border-white/10 bg-[#232f3e] text-white shadow-[inset_4px_0_0_#ff9900]'
+                        : 'text-slate-300 hover:border-white/10 hover:bg-[#232f3e] hover:text-white',
                     )}
                   >
                     <Icon className={cn('h-4 w-4', active ? 'text-blue-300' : 'text-slate-400')} />
@@ -591,29 +591,29 @@ export function Topbar() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 border-b border-[#d5dbdb] bg-white shadow-sm">
-        <div className="flex h-14 items-center gap-3 px-3 lg:px-4">
+      <header className="sticky top-0 z-40 border-b border-[#d9dee7] bg-white/90 shadow-sm backdrop-blur">
+        <div className="flex min-h-16 items-center gap-3 px-3 lg:px-6">
           <button
             type="button"
             onClick={() => setIsServicesOpen(true)}
-            className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 transition hover:border-blue-500 hover:bg-blue-50 md:hidden"
+            className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-800 transition hover:border-blue-500 hover:bg-blue-50 md:hidden"
           >
             <Menu className="h-4 w-4" />
             Services
           </button>
           <Link href="/dashboard" className="flex w-[15.25rem] shrink-0 items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[#0972d3] text-white shadow-sm">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0972d3] text-white shadow-sm">
               <Zap className="h-4 w-4" />
             </div>
             <div className="hidden min-[430px]:block">
-              <p className="text-sm font-semibold text-slate-950">
+              <p className="text-sm font-extrabold text-slate-950">
                 {isAdminConsoleRole(consoleRole) ? 'AutoOps Admin' : 'AutoOps Console'}
               </p>
-              <p className="text-[11px] text-slate-500">{currentOrg?.name ?? 'Local runtime'}</p>
+              <p className="text-[11px] font-semibold text-slate-500">{currentOrg?.name ?? 'Local runtime'}</p>
             </div>
           </Link>
 
-          <div className="relative flex h-9 min-w-[14rem] flex-1 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm shadow-sm transition focus-within:border-[#0972d3] focus-within:ring-2 focus-within:ring-blue-100 lg:max-w-3xl">
+          <div className="relative flex h-10 min-w-[14rem] flex-1 items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm shadow-sm transition focus-within:border-[#0972d3] focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 lg:max-w-3xl">
             <Search className="h-4 w-4 shrink-0 text-slate-500" />
             <input
               ref={searchInputRef}
@@ -638,7 +638,7 @@ export function Topbar() {
                 }
               }}
               placeholder="Search services, operations, incidents, or paste UUID"
-              className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-500"
+              className="min-w-0 flex-1 bg-transparent text-sm font-medium text-slate-900 outline-none placeholder:text-slate-500"
             />
             <button
               type="button"
@@ -646,21 +646,21 @@ export function Topbar() {
                 setIsOpen(true);
                 searchInputRef.current?.focus();
               }}
-              className="hidden shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-50 sm:inline"
+              className="hidden shrink-0 rounded-md border border-slate-300 bg-white px-1.5 py-0.5 text-[11px] font-bold text-slate-500 hover:bg-slate-50 sm:inline"
             >
               Ctrl K
             </button>
           </div>
 
-          <div className="hidden items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 lg:flex">
+          <div className="hidden items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 lg:flex">
             <span className="h-2 w-2 rounded-full bg-emerald-300" />
             Runtime
           </div>
-          <div className="hidden rounded-full border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 xl:block">
+          <div className="hidden rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm xl:block">
             {isAdminConsoleRole(consoleRole) ? 'Admin control' : 'Local runtime'}
           </div>
-          <div className="hidden items-center gap-2 rounded-full border border-slate-300 bg-white py-1 pl-1 pr-3 shadow-sm sm:flex">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#232f3e] text-xs font-semibold text-white">{initials}</div>
+          <div className="hidden min-h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white py-1 pl-1 pr-3 shadow-sm sm:flex">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#232f3e] text-xs font-bold text-white">{initials}</div>
             <div className="hidden max-w-40 lg:block">
               <p className="truncate text-xs font-medium text-slate-900">{user?.name ?? 'Operator'}</p>
               <p className="truncate text-[10px] text-slate-500">{user?.email ?? 'autoops'}</p>
