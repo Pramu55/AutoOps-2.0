@@ -39,6 +39,10 @@ export interface DockerContainer {
   ports: DockerPort[];
   composeProject: string | null;
   isAutoOpsManaged: boolean;
+  monitoringScope: 'managed' | 'monitored' | 'ignored' | 'unrelated';
+  monitored: boolean;
+  desiredState: 'running' | 'stopped' | 'unknown';
+  labelsSummary: Record<string, string>;
 }
 
 export interface DockerImage {

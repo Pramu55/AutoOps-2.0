@@ -321,7 +321,10 @@ enum SignalSeverity {
 
 enum SignalStatus {
   ACTIVE
+  ACKNOWLEDGED
   RESOLVED
+  SUPPRESSED
+  EXPIRED
   ARCHIVED
 }
 

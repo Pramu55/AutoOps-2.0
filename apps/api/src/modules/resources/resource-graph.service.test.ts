@@ -228,5 +228,44 @@ describe('ResourceGraphService', () => {
     expect(readiness.totalEdges).toBe(1);
     expect(readiness.providerCounts.DOCKER).toBe(2);
   });
+
+  it('records Docker monitoring scope separately from discovery inventory', async () => {
+    resourceNodeUpsert
+      .mockResolvedValueOnce(node({ id: 'engine-node', kind: ResourceKind.DOCKER_ENGINE }))
+      .mockResolvedValueOnce(node({ id: 'container-node', name: 'cloudshield-frontend-1' }));
+    resourceNodeFindFirst
+      .mockResolvedValueOnce(node({ id: 'engine-node', kind: ResourceKind.DOCKER_ENGINE }))
+      .mockResolvedValueOnce(node({ id: 'container-node', name: 'cloudshield-frontend-1' }));
+    resourceEdgeUpsert.mockResolvedValue({ id: 'edge-docker-container' });
+
+    await resourceGraphService.registerDockerInventory('org-a', {
+      containers: [
+        {
+          id: 'cloudshield-container',
+          name: 'cloudshield-frontend-1',
+          image: 'cloudshield:test',
+          imageId: null,
+          state: 'exited',
+          status: 'Exited (137) 1 hour ago',
+          health: null,
+          monitoringScope: 'unrelated',
+          monitored: false,
+          desiredState: 'running',
+        },
+      ],
+    });
+
+    expect(resourceNodeUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          metadata: expect.objectContaining({
+            monitoringScope: 'unrelated',
+            monitored: false,
+            desiredState: 'running',
+          }),
+        }),
+      }),
+    );
+  });
 });
 

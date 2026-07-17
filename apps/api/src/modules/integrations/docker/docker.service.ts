@@ -25,6 +25,7 @@ import {
   SignalSeverity,
   SignalSource,
   SignalType,
+  type SignalIngestInput,
 } from '@autoops/types';
 import { operationService } from '../../operations/operation.service.js';
 import { signalService } from '../../signals/signal.service.js';
@@ -37,7 +38,51 @@ type DockerActionConfig = {
   confirmationLabel: 'START' | 'STOP' | 'RESTART';
 };
 
-const AUTOOPS_LABEL_PREFIX = 'com.docker.compose.';
+const AUTOOPS_MONITOR_LABEL = 'com.autoops.monitor';
+const AUTOOPS_DESIRED_STATE_LABEL = 'com.autoops.desired-state';
+const AUTOOPS_EXPECTED_STOPPED_LABEL = 'com.autoops.expected-stopped';
+const AUTOOPS_ENVIRONMENT_LABEL = 'com.autoops.environment';
+const AUTOOPS_COMPOSE_PROJECT = 'autoops';
+const AUTOOPS_CONTAINER_PREFIX = 'autoops-';
+const MONITORED_COMPOSE_PROJECTS = new Set(
+  (process.env.AUTOOPS_MONITORED_DOCKER_COMPOSE_PROJECTS ?? AUTOOPS_COMPOSE_PROJECT)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean),
+);
+
+type DockerMonitoringScope = DockerContainer['monitoringScope'];
+type DockerDesiredState = DockerContainer['desiredState'];
+
+type DockerContainerObservation = {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  status: string;
+  health: string | null;
+  labels: Record<string, string>;
+  composeProject: string | null;
+  monitoringScope: DockerMonitoringScope;
+  monitored: boolean;
+  desiredState: DockerDesiredState;
+};
+
+type DockerSignalClassification = {
+  condition: string;
+  severity: SignalSeverity;
+  title: string;
+  message: string;
+} | null;
+
+const RECOVERABLE_DOCKER_CONTAINER_CONDITIONS = [
+  'running_unhealthy',
+  'restarting',
+  'dead',
+  'paused',
+  'created_not_started',
+];
+const RECOVERABLE_DOCKER_CONTAINER_CONDITION_PREFIXES = ['unexpected_exit_'];
 
 export class DockerService {
   async getStatus(organizationId?: string): Promise<DockerStatusResponse> {
@@ -71,6 +116,12 @@ export class DockerService {
           metadata: { version: version.Version, apiVersion: version.ApiVersion },
           dedupeMode: 'DEDUPE',
         });
+        void signalService.resolveSignalsByTitles(organizationId, SignalSource.DOCKER, SignalType.PROVIDER_UNREACHABLE, [
+          'Docker Provider UNREACHABLE',
+        ]);
+        void signalService.resolveSignalsByTitles(organizationId, SignalSource.DOCKER, SignalType.PROVIDER_AUTH_FAILED, [
+          'Docker Provider AUTH_FAILED',
+        ]);
         void this._ingestContainerSignals(organizationId, containers);
       }
 
@@ -279,18 +330,16 @@ export class DockerService {
   }
 
   private _toContainer(container: DockerContainerSummary): DockerContainer {
-    const labels = container.Labels ?? {};
-    const name = container.Names?.[0]?.replace(/^\//, '') ?? container.Id?.slice(0, 12) ?? 'unknown';
-    const composeProject = labels['com.docker.compose.project'] ?? null;
+    const observation = this._toObservation(container);
 
     return {
-      id: container.Id ?? 'unknown',
-      name,
-      image: container.Image ?? 'unknown',
+      id: observation.id,
+      name: observation.name,
+      image: observation.image,
       imageId: container.ImageID ?? null,
-      state: container.State ?? 'unknown',
-      status: container.Status ?? 'unknown',
-      health: this._healthFromStatus(container.Status),
+      state: observation.state,
+      status: observation.status,
+      health: observation.health,
       createdAt: container.Created ? new Date(container.Created * 1000).toISOString() : null,
       ports:
         container.Ports?.map((port) => ({
@@ -299,12 +348,72 @@ export class DockerService {
           type: port.Type ?? 'tcp',
           ip: port.IP ?? null,
         })) ?? [],
-      composeProject,
-      isAutoOpsManaged:
-        composeProject === 'autoops' ||
-        name.startsWith('autoops-') ||
-        Object.keys(labels).some((key) => key.startsWith(AUTOOPS_LABEL_PREFIX)),
+      composeProject: observation.composeProject,
+      isAutoOpsManaged: observation.monitoringScope === 'managed',
+      monitoringScope: observation.monitoringScope,
+      monitored: observation.monitored,
+      desiredState: observation.desiredState,
+      labelsSummary: this._safeDockerLabels(observation.labels),
     };
+  }
+
+  private _toObservation(container: DockerContainerSummary): DockerContainerObservation {
+    const labels = container.Labels ?? {};
+    const name = container.Names?.[0]?.replace(/^\//, '') ?? container.Id?.slice(0, 12) ?? 'unknown';
+    const composeProject = labels['com.docker.compose.project'] ?? null;
+    const monitorLabel = labels[AUTOOPS_MONITOR_LABEL]?.toLowerCase();
+    const isExplicitlyMonitored = monitorLabel === 'true' || monitorLabel === '1' || monitorLabel === 'yes';
+    const isExplicitlyIgnored = monitorLabel === 'false' || monitorLabel === '0' || monitorLabel === 'no';
+    const isAutoOpsManaged =
+      composeProject === AUTOOPS_COMPOSE_PROJECT ||
+      name.startsWith(AUTOOPS_CONTAINER_PREFIX) ||
+      labels[AUTOOPS_ENVIRONMENT_LABEL] === 'local';
+    const isComposeMonitored = composeProject ? MONITORED_COMPOSE_PROJECTS.has(composeProject) : false;
+    const monitoringScope: DockerMonitoringScope = isExplicitlyIgnored
+      ? 'ignored'
+      : isAutoOpsManaged
+        ? 'managed'
+        : isExplicitlyMonitored || isComposeMonitored
+          ? 'monitored'
+          : 'unrelated';
+
+    return {
+      id: container.Id ?? 'unknown',
+      name,
+      image: container.Image ?? 'unknown',
+      state: container.State ?? 'unknown',
+      status: container.Status ?? 'unknown',
+      health: this._healthFromStatus(container.Status),
+      labels,
+      composeProject,
+      monitoringScope,
+      monitored: monitoringScope === 'managed' || monitoringScope === 'monitored',
+      desiredState: this._desiredState(labels),
+    };
+  }
+
+  private _desiredState(labels: Record<string, string>): DockerDesiredState {
+    const explicitDesiredState = labels[AUTOOPS_DESIRED_STATE_LABEL]?.toLowerCase();
+    if (explicitDesiredState === 'running' || explicitDesiredState === 'stopped') return explicitDesiredState;
+    const expectedStopped = labels[AUTOOPS_EXPECTED_STOPPED_LABEL]?.toLowerCase();
+    if (expectedStopped === 'true' || expectedStopped === '1' || expectedStopped === 'yes') return 'stopped';
+    return 'running';
+  }
+
+  private _safeDockerLabels(labels: Record<string, string>): Record<string, string> {
+    const allowedKeys = [
+      AUTOOPS_MONITOR_LABEL,
+      AUTOOPS_DESIRED_STATE_LABEL,
+      AUTOOPS_EXPECTED_STOPPED_LABEL,
+      AUTOOPS_ENVIRONMENT_LABEL,
+      'com.docker.compose.project',
+      'com.docker.compose.service',
+    ];
+    return Object.fromEntries(
+      allowedKeys
+        .map((key) => [key, labels[key]] as const)
+        .filter((entry): entry is readonly [string, string] => typeof entry[1] === 'string' && entry[1].length > 0),
+    );
   }
 
   private _healthFromStatus(status: string | undefined): string | null {
@@ -366,30 +475,230 @@ export class DockerService {
     organizationId: string,
     containers: DockerContainerSummary[],
   ): Promise<void> {
-    const signals = containers.flatMap((container) => {
-      const name = container.Names?.[0]?.replace(/^\//, '') ?? container.Id?.slice(0, 12) ?? 'unknown';
-      const state = container.State;
-      const status = container.Status;
+    const signals: SignalIngestInput[] = [];
+    const resolvedFingerprints: string[] = [];
+    const resolvedLegacyTitles: string[] = [];
+    const resolvedResourceConditions: Array<{ resourceIdentity: string; titles: string[] }> = [];
 
-      if (state === 'exited' || state === 'dead' || status?.toLowerCase().includes('restarting')) {
-        return [
-          {
-            source: SignalSource.DOCKER,
-            type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
-            severity: state === 'dead' ? SignalSeverity.CRITICAL : SignalSeverity.ERROR,
-            title: `Docker Container ${name} ${state}`,
-            message: `Docker container ${name} is in ${state} state (Status: ${status}).`,
-            metadata: { id: container.Id, name, state, status, image: container.Image },
-            dedupeMode: 'DEDUPE' as const,
-          },
-        ];
+    for (const container of containers) {
+      const observation = this._toObservation(container);
+      const classification = this._classifyContainerObservation(observation);
+      if (classification) {
+        signals.push(this._toContainerSignal(observation, classification));
+      } else if (observation.monitored) {
+        resolvedFingerprints.push(...this._resolutionFingerprints(organizationId, observation));
+        resolvedResourceConditions.push({
+          resourceIdentity: this._resourceIdentity(observation),
+          titles: this._legacyRecoverableContainerSignalTitles(observation),
+        });
+      } else {
+        resolvedLegacyTitles.push(...this._legacyContainerSignalTitles(observation));
       }
-      return [];
-    });
+    }
 
     if (signals.length > 0) {
       void signalService.ingestSignals(organizationId, signals);
     }
+    if (resolvedFingerprints.length > 0) {
+      void signalService.resolveSignalsByFingerprints(organizationId, resolvedFingerprints);
+    }
+    if (resolvedLegacyTitles.length > 0) {
+      void signalService.resolveSignalsByTitles(
+        organizationId,
+        SignalSource.DOCKER,
+        SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+        resolvedLegacyTitles,
+      );
+    }
+    for (const resolution of resolvedResourceConditions) {
+      void signalService.resolveSignalsByResourceConditionFamily(organizationId, {
+        source: SignalSource.DOCKER,
+        type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+        resourceIdentity: resolution.resourceIdentity,
+        conditions: RECOVERABLE_DOCKER_CONTAINER_CONDITIONS,
+        conditionPrefixes: RECOVERABLE_DOCKER_CONTAINER_CONDITION_PREFIXES,
+        titles: resolution.titles,
+      });
+    }
+  }
+
+  private _classifyContainerObservation(observation: DockerContainerObservation): DockerSignalClassification {
+    if (!observation.monitored) return null;
+
+    const normalizedState = observation.state.toLowerCase();
+    const normalizedStatus = observation.status.toLowerCase();
+    const exitCode = this._exitCode(observation.status);
+    const expectedRunning = observation.desiredState === 'running';
+    const expectedStopped = observation.desiredState === 'stopped';
+
+    if (normalizedState === 'running' && observation.health === 'unhealthy') {
+      return {
+        condition: 'running_unhealthy',
+        severity: SignalSeverity.ERROR,
+        title: `Docker Container ${observation.name} unhealthy`,
+        message: `Docker container ${observation.name} is monitored and running, but its health check is unhealthy.`,
+      };
+    }
+
+    if (normalizedStatus.includes('restarting') || normalizedState === 'restarting') {
+      return {
+        condition: 'restarting',
+        severity: expectedRunning ? SignalSeverity.ERROR : SignalSeverity.WARNING,
+        title: `Docker Container ${observation.name} restarting`,
+        message: `Docker container ${observation.name} is repeatedly restarting while desired state is ${observation.desiredState}.`,
+      };
+    }
+
+    if (normalizedState === 'dead') {
+      return {
+        condition: 'dead',
+        severity: SignalSeverity.CRITICAL,
+        title: `Docker Container ${observation.name} dead`,
+        message: `Docker container ${observation.name} is in dead state and needs operator review.`,
+      };
+    }
+
+    if (normalizedState === 'paused') {
+      return expectedRunning
+        ? {
+            condition: 'paused',
+            severity: SignalSeverity.WARNING,
+            title: `Docker Container ${observation.name} paused`,
+            message: `Docker container ${observation.name} is paused while desired state is running.`,
+          }
+        : null;
+    }
+
+    if (normalizedState === 'created') {
+      return expectedRunning
+        ? {
+            condition: 'created_not_started',
+            severity: SignalSeverity.WARNING,
+            title: `Docker Container ${observation.name} not started`,
+            message: `Docker container ${observation.name} was created but has not started, while desired state is running.`,
+          }
+        : null;
+    }
+
+    if (normalizedState === 'exited') {
+      if (expectedStopped) return null;
+      if (exitCode === 143) return null;
+      if (exitCode === 137) {
+        return {
+          condition: 'unexpected_exit_137',
+          severity: SignalSeverity.ERROR,
+          title: `Docker Container ${observation.name} exited unexpectedly`,
+          message: `Docker container ${observation.name} exited with code 137 while desired state is running; investigate OOM kill, host shutdown, or forced stop.`,
+        };
+      }
+      return {
+        condition: `unexpected_exit_${exitCode ?? 'unknown'}`,
+        severity: SignalSeverity.ERROR,
+        title: `Docker Container ${observation.name} exited unexpectedly`,
+        message: `Docker container ${observation.name} exited with code ${exitCode ?? 'unknown'} while desired state is running.`,
+      };
+    }
+
+    return null;
+  }
+
+  private _toContainerSignal(
+    observation: DockerContainerObservation,
+    classification: Exclude<DockerSignalClassification, null>,
+  ): SignalIngestInput {
+    return {
+      source: SignalSource.DOCKER,
+      type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+      severity: classification.severity,
+      title: classification.title,
+      message: classification.message,
+      metadata: {
+        id: observation.id,
+        name: observation.name,
+        image: observation.image,
+        state: observation.state,
+        status: observation.status,
+        health: observation.health,
+        composeProject: observation.composeProject,
+        monitoringScope: observation.monitoringScope,
+        desiredState: observation.desiredState,
+        condition: classification.condition,
+        resourceIdentity: this._resourceIdentity(observation),
+        exitCode: this._exitCode(observation.status),
+      },
+      labels: this._safeDockerLabels(observation.labels),
+      dedupeMode: 'DEDUPE',
+    };
+  }
+
+  private _resolutionFingerprints(organizationId: string, observation: DockerContainerObservation): string[] {
+    return [
+      this._fingerprintForCondition(organizationId, observation, 'running_unhealthy', SignalSeverity.ERROR),
+      this._fingerprintForCondition(organizationId, observation, 'restarting', SignalSeverity.ERROR),
+      this._fingerprintForCondition(organizationId, observation, 'restarting', SignalSeverity.WARNING),
+      this._fingerprintForCondition(organizationId, observation, 'dead', SignalSeverity.CRITICAL),
+      this._fingerprintForCondition(organizationId, observation, 'paused', SignalSeverity.WARNING),
+      this._fingerprintForCondition(organizationId, observation, 'created_not_started', SignalSeverity.WARNING),
+      this._fingerprintForCondition(organizationId, observation, 'unexpected_exit_137', SignalSeverity.ERROR),
+      this._fingerprintForCondition(organizationId, observation, 'unexpected_exit_unknown', SignalSeverity.ERROR),
+      this._fingerprintForCondition(
+        organizationId,
+        observation,
+        `unexpected_exit_${this._exitCode(observation.status) ?? 'unknown'}`,
+        SignalSeverity.ERROR,
+      ),
+    ];
+  }
+
+  private _legacyContainerSignalTitles(observation: DockerContainerObservation): string[] {
+    const normalizedState = observation.state.toLowerCase();
+    const normalizedStatus = observation.status.toLowerCase();
+    if (normalizedState === 'exited' || normalizedState === 'dead' || normalizedStatus.includes('restarting')) {
+      return [`Docker Container ${observation.name} ${observation.state}`];
+    }
+    return [];
+  }
+
+  private _legacyRecoverableContainerSignalTitles(observation: DockerContainerObservation): string[] {
+    return [
+      `Docker Container ${observation.name} exited`,
+      `Docker Container ${observation.name} dead`,
+      `Docker Container ${observation.name} restarting`,
+    ];
+  }
+
+  private _fingerprintForCondition(
+    organizationId: string,
+    observation: DockerContainerObservation,
+    condition: string,
+    severity: SignalSeverity,
+  ): string {
+    return signalService.buildSignalFingerprint(
+      organizationId,
+      {
+        source: SignalSource.DOCKER,
+        type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+        severity,
+        title: `Docker Container ${observation.name} ${condition}`,
+        message: condition,
+        metadata: {
+          resourceIdentity: this._resourceIdentity(observation),
+          condition,
+        },
+      },
+      'DEDUPE',
+    );
+  }
+
+  private _resourceIdentity(observation: DockerContainerObservation): string {
+    return observation.composeProject
+      ? `compose:${observation.composeProject}:container:${observation.name}`
+      : `container:${observation.id.slice(0, 12) || observation.name}`;
+  }
+
+  private _exitCode(status: string): number | null {
+    const match = status.match(/Exited \((\d+)\)/i);
+    return match ? Number(match[1]) : null;
   }
 }
 

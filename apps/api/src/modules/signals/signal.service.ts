@@ -3,6 +3,7 @@ import {
   SignalSeverity,
   SignalSource,
   SignalStatus,
+  SignalType,
   type SignalFilter,
   type SignalIngestInput,
   type SignalListResponse,
@@ -13,6 +14,15 @@ import { NotFoundError } from '@autoops/utils';
 import { Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { mapResourceSignalSummary, sanitizeSignalMetadata } from './signal.mapper.js';
+
+type ResourceConditionResolutionInput = {
+  source: SignalSource;
+  type: SignalType;
+  resourceIdentity: string;
+  conditions?: string[];
+  conditionPrefixes?: string[];
+  titles?: string[];
+};
 
 export class SignalService {
   async ingestSignal(organizationId: string, input: SignalIngestInput): Promise<SignalSummary> {
@@ -181,6 +191,110 @@ export class SignalService {
     return this.getSignal(organizationId, signalId);
   }
 
+  async resolveSignalsByFingerprints(organizationId: string, fingerprints: string[]): Promise<number> {
+    const uniqueFingerprints = [...new Set(fingerprints)].filter(Boolean);
+    if (uniqueFingerprints.length === 0) return 0;
+
+    const result = await prisma.resourceSignal.updateMany({
+      where: {
+        organizationId,
+        fingerprint: { in: uniqueFingerprints },
+        status: SignalStatus.ACTIVE,
+        archivedAt: null,
+      },
+      data: {
+        status: SignalStatus.RESOLVED,
+        archivedAt: null,
+      },
+    });
+
+    return result.count;
+  }
+
+  async resolveSignalsByTitles(
+    organizationId: string,
+    source: SignalSource,
+    type: SignalType,
+    titles: string[],
+  ): Promise<number> {
+    const uniqueTitles = [...new Set(titles)].filter(Boolean);
+    if (uniqueTitles.length === 0) return 0;
+
+    const result = await prisma.resourceSignal.updateMany({
+      where: {
+        organizationId,
+        source,
+        type,
+        title: { in: uniqueTitles },
+        status: SignalStatus.ACTIVE,
+        archivedAt: null,
+      },
+      data: {
+        status: SignalStatus.RESOLVED,
+        archivedAt: null,
+      },
+    });
+
+    return result.count;
+  }
+
+  async resolveSignalsByResourceConditionFamily(
+    organizationId: string,
+    input: ResourceConditionResolutionInput,
+  ): Promise<number> {
+    const conditions = new Set((input.conditions ?? []).filter(Boolean));
+    const conditionPrefixes = (input.conditionPrefixes ?? []).filter(Boolean);
+    const titles = new Set((input.titles ?? []).filter(Boolean));
+    if (conditions.size === 0 && conditionPrefixes.length === 0 && titles.size === 0) return 0;
+
+    const candidateSignals = await prisma.resourceSignal.findMany({
+      where: {
+        organizationId,
+        source: input.source,
+        type: input.type,
+        status: { in: [SignalStatus.ACTIVE, SignalStatus.ACKNOWLEDGED] },
+        archivedAt: null,
+        OR: [
+          { metadata: { path: ['resourceIdentity'], equals: input.resourceIdentity } },
+          ...(titles.size > 0 ? [{ title: { in: [...titles] } }] : []),
+        ],
+      },
+      select: {
+        id: true,
+        title: true,
+        metadata: true,
+      },
+    });
+
+    const signalIds = candidateSignals
+      .filter((signal) => {
+        if (titles.has(signal.title)) return true;
+        const metadata = this._jsonObject(signal.metadata);
+        const resourceIdentity = metadata?.resourceIdentity;
+        const condition = metadata?.condition;
+        if (resourceIdentity !== input.resourceIdentity || typeof condition !== 'string') return false;
+        return conditions.has(condition) || conditionPrefixes.some((prefix) => condition.startsWith(prefix));
+      })
+      .map((signal) => signal.id);
+
+    if (signalIds.length === 0) return 0;
+
+    const result = await prisma.resourceSignal.updateMany({
+      where: {
+        organizationId,
+        id: { in: signalIds },
+        status: { in: [SignalStatus.ACTIVE, SignalStatus.ACKNOWLEDGED] },
+        archivedAt: null,
+      },
+      data: {
+        status: SignalStatus.RESOLVED,
+        archivedAt: null,
+      },
+    });
+
+    return result.count;
+  }
+
   buildSignalFingerprint(organizationId: string, input: SignalIngestInput, mode: 'DEDUPE' | 'EVENT'): string {
     const parts = [
       organizationId,
@@ -201,14 +315,22 @@ export class SignalService {
         parts.push(String(bucket));
       }
     } else {
-      // For dedupe, we collapse by message/severity
+      // For dedupe, collapse one continuing condition for one stable monitored resource.
       parts.push(input.severity);
-      // Create a stable message key by taking first 100 chars and stripping variable numbers/ids if possible
-      // For now, just use the title or first part of message
-      parts.push(input.title.slice(0, 100));
+      parts.push(this._metadataString(input.metadata, 'resourceIdentity') ?? 'no-resource-identity');
+      parts.push(this._metadataString(input.metadata, 'condition') ?? input.title.slice(0, 100));
     }
 
     return crypto.createHash('sha256').update(parts.join('|')).digest('hex');
+  }
+
+  private _metadataString(metadata: Record<string, unknown> | undefined, key: string): string | null {
+    const value = metadata?.[key];
+    return typeof value === 'string' && value.trim().length > 0 ? value : null;
+  }
+
+  private _jsonObject(value: Prisma.JsonValue): Prisma.JsonObject | null {
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null;
   }
 
   private _filterWhere(organizationId: string, filters: SignalFilter): Prisma.ResourceSignalWhereInput {
