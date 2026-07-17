@@ -14,7 +14,9 @@ import { Label } from '@/components/ui/label';
 
 type RegisterResponse = { data: unknown };
 
-type RegisterErrors = Partial<Record<'name' | 'email' | 'organizationName' | 'password' | 'confirmPassword' | 'form', string>>;
+type RegisterErrors = Partial<
+  Record<'name' | 'email' | 'organizationName' | 'password' | 'confirmPassword' | 'form', string>
+>;
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -76,8 +78,10 @@ export default function RegisterPage() {
     if (!trimmedName) nextErrors.name = 'Name is required.';
     if (trimmedName.length > 120) nextErrors.name = 'Name must be 120 characters or fewer.';
     if (!isValidEmail(trimmedEmail)) nextErrors.email = 'Enter a valid email address.';
-    if (trimmedOrg && trimmedOrg.length < 2) nextErrors.organizationName = 'Organization name must be at least 2 characters.';
-    if (trimmedOrg.length > 120) nextErrors.organizationName = 'Organization name must be 120 characters or fewer.';
+    if (trimmedOrg && trimmedOrg.length < 2)
+      nextErrors.organizationName = 'Organization name must be at least 2 characters.';
+    if (trimmedOrg.length > 120)
+      nextErrors.organizationName = 'Organization name must be 120 characters or fewer.';
 
     const emailName = trimmedEmail.includes('@') ? (trimmedEmail.split('@')[0] ?? '') : '';
     const firstName = trimmedName.split(/\s+/)[0] ?? '';
@@ -149,7 +153,20 @@ export default function RegisterPage() {
 
   return (
     <main className="min-h-screen bg-[linear-gradient(120deg,#f7fff0_0%,#d9ffd9_36%,#f7fbff_72%,#ffffff_100%)] text-[#16191f]">
-      <div className="border-b border-[#d5dbdb] bg-white"><div className="mx-auto flex min-h-20 max-w-[1280px] items-center justify-between gap-4 px-4 py-4 sm:px-6"><a href="/" className="flex min-w-0 items-end gap-2 text-3xl font-bold tracking-tight text-[#111827]"><span>autoops</span><span className="mb-1.5 h-1.5 w-10 rounded-full bg-[#ff9900]" /></a><span className="hidden text-sm font-semibold text-[#5f6b7a] sm:inline">Create local workspace</span></div></div>
+      <div className="border-b border-[#d5dbdb] bg-white">
+        <div className="mx-auto flex min-h-20 max-w-[1280px] items-center justify-between gap-4 px-4 py-4 sm:px-6">
+          <Link
+            href="/"
+            className="flex min-w-0 items-end gap-2 text-3xl font-bold tracking-tight text-[#111827]"
+          >
+            <span>autoops</span>
+            <span className="mb-1.5 h-1.5 w-10 rounded-full bg-[#ff9900]" />
+          </Link>
+          <span className="hidden text-sm font-semibold text-[#5f6b7a] sm:inline">
+            Create local workspace
+          </span>
+        </div>
+      </div>
 
       <div className="mx-auto grid min-h-[calc(100vh-5rem)] w-full max-w-[1280px] grid-cols-1 gap-10 px-6 py-12 md:grid-cols-[0.9fr_1.1fr] md:items-center lg:gap-16">
         <section className="hidden md:block">
@@ -159,7 +176,9 @@ export default function RegisterPage() {
             </span>
             AutoOps
           </Link>
-          <h1 className="max-w-md text-5xl font-bold tracking-tight text-[#16191f]">Create your control-plane workspace.</h1>
+          <h1 className="max-w-md text-5xl font-bold tracking-tight text-[#16191f]">
+            Create your control-plane workspace.
+          </h1>
           <p className="mt-6 max-w-sm text-base leading-7 text-[#414d5c]">
             Register a user, create an organization workspace, and start operating projects,
             environments, and simulation deployments.
@@ -168,64 +187,124 @@ export default function RegisterPage() {
 
         <section className="w-full md:justify-self-end">
           <div className="mx-auto w-full max-w-[520px] rounded-2xl border border-[#d5dbdb] bg-white p-6 shadow-[0_4px_20px_rgba(22,25,31,0.08)] sm:p-8">
-            <Link href="/login" className="mb-6 inline-flex items-center gap-2 text-sm text-[#0972d3] hover:underline">
+            <Link
+              href="/login"
+              className="mb-6 inline-flex items-center gap-2 text-sm text-[#0972d3] hover:underline"
+            >
               <ArrowLeft className="h-4 w-4" />
               Back to login
             </Link>
-            <h2 className="text-4xl font-bold tracking-tight text-[#16191f]">Create an AutoOps account</h2>
-            <p className="mt-2 text-sm text-[#5f6b7a]">Use real registration backed by the AutoOps auth API.</p>
+            <h2 className="text-4xl font-bold tracking-tight text-[#16191f]">
+              Create an AutoOps account
+            </h2>
+            <p className="mt-2 text-sm text-[#5f6b7a]">
+              Use real registration backed by the AutoOps auth API.
+            </p>
 
             <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
               <div className="space-y-2">
                 <Label htmlFor="name">Name</Label>
-                <Input id="name" value={name} onChange={(event) => {
-                  setName(event.target.value);
-                  setErrors((current) => ({ ...current, name: undefined, form: undefined }));
-                }} placeholder="Pramod S S" className="h-11 rounded border-[#879596] bg-white text-[#16191f]" />
+                <Input
+                  id="name"
+                  value={name}
+                  onChange={(event) => {
+                    setName(event.target.value);
+                    setErrors((current) => ({ ...current, name: undefined, form: undefined }));
+                  }}
+                  placeholder="Pramod S S"
+                  className="h-11 rounded border-[#879596] bg-white text-[#16191f]"
+                />
                 {errors.name ? <p className="text-xs text-rose-700">{errors.name}</p> : null}
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="register-email">Email</Label>
-                <Input id="register-email" type="email" value={email} onChange={(event) => {
-                  setEmail(event.target.value);
-                  setErrors((current) => ({ ...current, email: undefined, form: undefined }));
-                }} placeholder="you@example.com" className="h-11 rounded border-[#879596] bg-white text-[#16191f]" />
+                <Input
+                  id="register-email"
+                  type="email"
+                  value={email}
+                  onChange={(event) => {
+                    setEmail(event.target.value);
+                    setErrors((current) => ({ ...current, email: undefined, form: undefined }));
+                  }}
+                  placeholder="you@example.com"
+                  className="h-11 rounded border-[#879596] bg-white text-[#16191f]"
+                />
                 {errors.email ? <p className="text-xs text-rose-700">{errors.email}</p> : null}
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="organization">Organization</Label>
-                <Input id="organization" value={organizationName} onChange={(event) => {
-                  setOrganizationName(event.target.value);
-                  setErrors((current) => ({ ...current, organizationName: undefined, form: undefined }));
-                }} placeholder="AutoOps Workspace" className="h-11 rounded border-[#879596] bg-white text-[#16191f]" />
-                {errors.organizationName ? <p className="text-xs text-rose-700">{errors.organizationName}</p> : null}
+                <Input
+                  id="organization"
+                  value={organizationName}
+                  onChange={(event) => {
+                    setOrganizationName(event.target.value);
+                    setErrors((current) => ({
+                      ...current,
+                      organizationName: undefined,
+                      form: undefined,
+                    }));
+                  }}
+                  placeholder="AutoOps Workspace"
+                  className="h-11 rounded border-[#879596] bg-white text-[#16191f]"
+                />
+                {errors.organizationName ? (
+                  <p className="text-xs text-rose-700">{errors.organizationName}</p>
+                ) : null}
               </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="register-password">Password</Label>
-                  <Input id="register-password" type="password" value={password} onChange={(event) => {
-                    setPassword(event.target.value);
-                    setErrors((current) => ({ ...current, password: undefined, form: undefined }));
-                  }} className="h-11 rounded border-[#879596] bg-white text-[#16191f]" />
-                  {errors.password ? <p className="text-xs text-rose-700">{errors.password}</p> : null}
+                  <Input
+                    id="register-password"
+                    type="password"
+                    value={password}
+                    onChange={(event) => {
+                      setPassword(event.target.value);
+                      setErrors((current) => ({
+                        ...current,
+                        password: undefined,
+                        form: undefined,
+                      }));
+                    }}
+                    className="h-11 rounded border-[#879596] bg-white text-[#16191f]"
+                  />
+                  {errors.password ? (
+                    <p className="text-xs text-rose-700">{errors.password}</p>
+                  ) : null}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="confirm-password">Confirm</Label>
-                  <Input id="confirm-password" type="password" value={confirmPassword} onChange={(event) => {
-                    setConfirmPassword(event.target.value);
-                    setErrors((current) => ({ ...current, confirmPassword: undefined, form: undefined }));
-                  }} className="h-11 rounded border-[#879596] bg-white text-[#16191f]" />
-                  {errors.confirmPassword ? <p className="text-xs text-rose-700">{errors.confirmPassword}</p> : null}
+                  <Input
+                    id="confirm-password"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(event) => {
+                      setConfirmPassword(event.target.value);
+                      setErrors((current) => ({
+                        ...current,
+                        confirmPassword: undefined,
+                        form: undefined,
+                      }));
+                    }}
+                    className="h-11 rounded border-[#879596] bg-white text-[#16191f]"
+                  />
+                  {errors.confirmPassword ? (
+                    <p className="text-xs text-rose-700">{errors.confirmPassword}</p>
+                  ) : null}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 {passwordChecks.map((check) => (
                   <div key={check.label} className="flex items-center gap-2 text-xs text-[#5f6b7a]">
-                    <CheckCircle2 className={check.passed ? 'h-3.5 w-3.5 text-emerald-700' : 'h-3.5 w-3.5 text-slate-300'} />
+                    <CheckCircle2
+                      className={
+                        check.passed ? 'h-3.5 w-3.5 text-emerald-700' : 'h-3.5 w-3.5 text-slate-300'
+                      }
+                    />
                     {check.label}
                   </div>
                 ))}
@@ -243,7 +322,10 @@ export default function RegisterPage() {
                 </div>
               ) : null}
 
-              <Button className="h-12 w-full rounded-full bg-[#16191f] text-base font-bold text-white hover:bg-[#31465f]" disabled={isSubmitting}>
+              <Button
+                className="h-12 w-full rounded-full bg-[#16191f] text-base font-bold text-white hover:bg-[#31465f]"
+                disabled={isSubmitting}
+              >
                 {isSubmitting ? 'Creating account...' : 'Create account'}
               </Button>
             </form>

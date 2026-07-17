@@ -95,7 +95,9 @@ export default function LoginPage() {
   const [email, setEmail] = useState('pramod.local@autoops.dev');
   const [password, setPassword] = useState('StrongPass123');
   const [error, setError] = useState<string | null>(null);
-  const [registeredUser, setRegisteredUser] = useState<{ name: string; email: string } | null>(null);
+  const [registeredUser, setRegisteredUser] = useState<{ name: string; email: string } | null>(
+    null,
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -158,7 +160,7 @@ export default function LoginPage() {
     }
   }
 
-  function useDemoAccount(account: (typeof LOCAL_DEMO_ACCOUNTS)[number]) {
+  function selectDemoAccount(account: (typeof LOCAL_DEMO_ACCOUNTS)[number]) {
     setEmail(account.email);
     setPassword(account.password);
     setError(null);
@@ -166,7 +168,20 @@ export default function LoginPage() {
 
   return (
     <main className="min-h-screen bg-[linear-gradient(120deg,#f7fff0_0%,#d9ffd9_36%,#f7fbff_72%,#ffffff_100%)] text-[#16191f]">
-      <div className="border-b border-[#d5dbdb] bg-white"><div className="mx-auto flex min-h-20 max-w-[1280px] items-center justify-between gap-4 px-4 py-4 sm:px-6"><a href="/" className="flex min-w-0 items-end gap-2 text-3xl font-bold tracking-tight text-[#111827]"><span>autoops</span><span className="mb-1.5 h-1.5 w-10 rounded-full bg-[#ff9900]" /></a><span className="hidden text-sm font-semibold text-[#5f6b7a] sm:inline">Local demo console</span></div></div>
+      <div className="border-b border-[#d5dbdb] bg-white">
+        <div className="mx-auto flex min-h-20 max-w-[1280px] items-center justify-between gap-4 px-4 py-4 sm:px-6">
+          <Link
+            href="/"
+            className="flex min-w-0 items-end gap-2 text-3xl font-bold tracking-tight text-[#111827]"
+          >
+            <span>autoops</span>
+            <span className="mb-1.5 h-1.5 w-10 rounded-full bg-[#ff9900]" />
+          </Link>
+          <span className="hidden text-sm font-semibold text-[#5f6b7a] sm:inline">
+            Local demo console
+          </span>
+        </div>
+      </div>
 
       <div className="mx-auto grid min-h-[calc(100vh-5rem)] w-full max-w-[1280px] grid-cols-1 gap-10 px-6 py-12 md:grid-cols-[0.95fr_1fr] md:items-center lg:gap-16">
         <section className="flex min-h-[280px] flex-col justify-center md:min-h-0">
@@ -181,14 +196,19 @@ export default function LoginPage() {
             <div className="mb-7 flex h-28 w-28 items-center justify-center rounded-[2rem] border border-[#d5dbdb] bg-white shadow-2xl backdrop-blur">
               <Zap className="h-16 w-16 text-[#0972d3]" />
             </div>
-            <h1 className="text-5xl font-bold tracking-tight text-[#16191f] sm:text-6xl">AUTOOPS</h1>
+            <h1 className="text-5xl font-bold tracking-tight text-[#16191f] sm:text-6xl">
+              AUTOOPS
+            </h1>
             <p className="mt-6 max-w-sm text-base leading-7 text-[#414d5c]">
               AI-native DevOps control plane for projects, environments, deployments, worker queues,
               and simulation timelines.
             </p>
             <div className="mt-8 grid max-w-sm grid-cols-1 gap-2 sm:grid-cols-2">
               {['API ready', 'Worker healthy', 'Queue-backed', 'Simulation active'].map((item) => (
-                <div key={item} className="flex items-center gap-2 rounded-md border border-[#d5dbdb] bg-white px-3 py-2 text-xs font-medium text-[#232f3e]">
+                <div
+                  key={item}
+                  className="flex items-center gap-2 rounded-md border border-[#d5dbdb] bg-white px-3 py-2 text-xs font-medium text-[#232f3e]"
+                >
                   <CheckCircle2 className="h-3.5 w-3.5 text-[#0972d3]" />
                   {item}
                 </div>
@@ -200,8 +220,13 @@ export default function LoginPage() {
         <section className="w-full md:justify-self-end">
           <div className="mx-auto w-full max-w-[460px]">
             <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <h2 className="text-4xl font-bold tracking-tight text-[#16191f]">Log in to AutoOps</h2>
-              <button type="button" className="inline-flex items-center gap-2 text-sm font-medium text-[#414d5c]">
+              <h2 className="text-4xl font-bold tracking-tight text-[#16191f]">
+                Log in to AutoOps
+              </h2>
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 text-sm font-medium text-[#414d5c]"
+              >
                 AutoOps Cloud
                 <ChevronDown className="h-4 w-4" />
               </button>
@@ -209,15 +234,19 @@ export default function LoginPage() {
 
             <div className="mb-8 flex items-center gap-4 text-sm">
               <span className="font-bold text-[#16191f]">New user?</span>
-              <Link href="/register" className="inline-flex items-center gap-2 font-semibold text-[#0972d3] hover:underline">
+              <Link
+                href="/register"
+                className="inline-flex items-center gap-2 font-semibold text-[#0972d3] hover:underline"
+              >
                 Create account <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
 
             {registeredUser ? (
               <div className="mb-5 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                <span className="font-semibold">{registeredUser.name}</span> registered successfully.
-                Please log in with <span className="font-semibold">{registeredUser.email}</span>.
+                <span className="font-semibold">{registeredUser.name}</span> registered
+                successfully. Please log in with{' '}
+                <span className="font-semibold">{registeredUser.email}</span>.
               </div>
             ) : null}
 
@@ -265,7 +294,10 @@ export default function LoginPage() {
               </Button>
             </form>
 
-            <Link href="/" className="mt-5 inline-block text-sm font-medium text-[#0972d3] hover:underline">
+            <Link
+              href="/"
+              className="mt-5 inline-block text-sm font-medium text-[#0972d3] hover:underline"
+            >
               Back to site
             </Link>
 
@@ -287,13 +319,15 @@ export default function LoginPage() {
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
                         <p className="text-sm font-bold text-[#16191f]">{account.label}</p>
-                        <p className="mt-1 text-xs leading-5 text-[#5f6b7a]">{account.description}</p>
+                        <p className="mt-1 text-xs leading-5 text-[#5f6b7a]">
+                          {account.description}
+                        </p>
                       </div>
                       <Button
                         type="button"
                         variant="secondary"
                         className="h-9 shrink-0 rounded bg-white/12 px-3 text-xs font-bold text-[#16191f] hover:bg-white/18"
-                        onClick={() => useDemoAccount(account)}
+                        onClick={() => selectDemoAccount(account)}
                       >
                         {account.buttonLabel}
                       </Button>

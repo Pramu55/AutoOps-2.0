@@ -137,11 +137,11 @@ Symptom: `@autoops/web build` fails. Likely cause: client/server rendering error
 
 ### Next ESLint plugin warning
 
-Symptom: CI logs show Next ESLint plugin warning but build passes. Likely cause: existing ESLint flat config layout. Safe fix: track as tooling polish; it is not a release blocker unless lint is made strict.
+Symptom: CI logs show Next ESLint plugin warning but build passes. Likely cause: missing or incomplete Next ESLint config in the flat config layout. Safe fix: keep `eslint-config-next` aligned with the installed Next.js version and adapt `next/core-web-vitals` through `FlatCompat`.
 
 ### MODULE_TYPELESS_PACKAGE_JSON warning
 
-Symptom: CI logs show module type warning for `apps/web/eslint.config.js`. Likely cause: ESM config without package `type: module`. Safe fix: future tooling cleanup; not a runtime failure.
+Symptom: CI logs show module type warning for `apps/web/eslint.config.js`. Likely cause: ESM config without package `type: module`. Safe fix: mark the web package as ESM after confirming its config files are ESM or TypeScript-compatible.
 
 ### git diff --check failure
 

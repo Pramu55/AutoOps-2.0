@@ -10,8 +10,13 @@
     "./node": "./node.js",
     "./nextjs": "./nextjs.js"
   },
-  "files": ["base.js", "node.js", "nextjs.js"],
+  "files": [
+    "base.js",
+    "node.js",
+    "nextjs.js"
+  ],
   "dependencies": {
+    "@eslint/eslintrc": "3.3.5",
     "@eslint/js": "^9.11.1",
     "@typescript-eslint/eslint-plugin": "^8.7.0",
     "@typescript-eslint/parser": "^8.7.0",
