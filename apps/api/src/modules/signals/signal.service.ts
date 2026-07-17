@@ -3,6 +3,7 @@ import {
   SignalSeverity,
   SignalSource,
   SignalStatus,
+  SignalType,
   type SignalFilter,
   type SignalIngestInput,
   type SignalListResponse,
@@ -181,6 +182,53 @@ export class SignalService {
     return this.getSignal(organizationId, signalId);
   }
 
+  async resolveSignalsByFingerprints(organizationId: string, fingerprints: string[]): Promise<number> {
+    const uniqueFingerprints = [...new Set(fingerprints)].filter(Boolean);
+    if (uniqueFingerprints.length === 0) return 0;
+
+    const result = await prisma.resourceSignal.updateMany({
+      where: {
+        organizationId,
+        fingerprint: { in: uniqueFingerprints },
+        status: SignalStatus.ACTIVE,
+        archivedAt: null,
+      },
+      data: {
+        status: SignalStatus.RESOLVED,
+        archivedAt: null,
+      },
+    });
+
+    return result.count;
+  }
+
+  async resolveSignalsByTitles(
+    organizationId: string,
+    source: SignalSource,
+    type: SignalType,
+    titles: string[],
+  ): Promise<number> {
+    const uniqueTitles = [...new Set(titles)].filter(Boolean);
+    if (uniqueTitles.length === 0) return 0;
+
+    const result = await prisma.resourceSignal.updateMany({
+      where: {
+        organizationId,
+        source,
+        type,
+        title: { in: uniqueTitles },
+        status: SignalStatus.ACTIVE,
+        archivedAt: null,
+      },
+      data: {
+        status: SignalStatus.RESOLVED,
+        archivedAt: null,
+      },
+    });
+
+    return result.count;
+  }
+
   buildSignalFingerprint(organizationId: string, input: SignalIngestInput, mode: 'DEDUPE' | 'EVENT'): string {
     const parts = [
       organizationId,
@@ -201,14 +249,18 @@ export class SignalService {
         parts.push(String(bucket));
       }
     } else {
-      // For dedupe, we collapse by message/severity
+      // For dedupe, collapse one continuing condition for one stable monitored resource.
       parts.push(input.severity);
-      // Create a stable message key by taking first 100 chars and stripping variable numbers/ids if possible
-      // For now, just use the title or first part of message
-      parts.push(input.title.slice(0, 100));
+      parts.push(this._metadataString(input.metadata, 'resourceIdentity') ?? 'no-resource-identity');
+      parts.push(this._metadataString(input.metadata, 'condition') ?? input.title.slice(0, 100));
     }
 
     return crypto.createHash('sha256').update(parts.join('|')).digest('hex');
+  }
+
+  private _metadataString(metadata: Record<string, unknown> | undefined, key: string): string | null {
+    const value = metadata?.[key];
+    return typeof value === 'string' && value.trim().length > 0 ? value : null;
   }
 
   private _filterWhere(organizationId: string, filters: SignalFilter): Prisma.ResourceSignalWhereInput {

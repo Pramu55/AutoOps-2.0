@@ -166,7 +166,10 @@ export type SignalSeverity = (typeof SignalSeverity)[keyof typeof SignalSeverity
 
 export const SignalStatus = {
   ACTIVE: 'ACTIVE',
+  ACKNOWLEDGED: 'ACKNOWLEDGED',
   RESOLVED: 'RESOLVED',
+  SUPPRESSED: 'SUPPRESSED',
+  EXPIRED: 'EXPIRED',
   ARCHIVED: 'ARCHIVED',
 } as const;
 export type SignalStatus = (typeof SignalStatus)[keyof typeof SignalStatus];

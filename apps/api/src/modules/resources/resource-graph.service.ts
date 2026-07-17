@@ -423,7 +423,18 @@ export class ResourceGraphService {
     organizationId: string,
     input: {
       engineSlug?: string;
-      containers?: Array<{ id: string; name: string; image: string; imageId: string | null; state: string; status: string; health: string | null }>;
+      containers?: Array<{
+        id: string;
+        name: string;
+        image: string;
+        imageId: string | null;
+        state: string;
+        status: string;
+        health: string | null;
+        monitoringScope?: string;
+        monitored?: boolean;
+        desiredState?: string;
+      }>;
       images?: Array<{ id: string; repoTags: string[]; size: number; createdAt: string | null }>;
       networks?: Array<{ id: string; name: string; driver: string; scope: string }>;
       volumes?: Array<{ name: string; driver: string; createdAt: string | null }>;
@@ -464,7 +475,14 @@ export class ResourceGraphService {
         displayName: container.name || container.id,
         externalId: container.id,
         healthStatus: container.health ?? container.state,
-        metadata: { state: container.state, status: container.status, imageName: container.image },
+        metadata: {
+          state: container.state,
+          status: container.status,
+          imageName: container.image,
+          monitoringScope: container.monitoringScope ?? 'unknown',
+          monitored: container.monitored ?? false,
+          desiredState: container.desiredState ?? 'unknown',
+        },
         discoverySource: 'docker.containers',
       });
       await this.upsertResourceEdge(organizationId, { sourceNodeId: engine.id, targetNodeId: containerNode.id, type: ResourceEdgeType.CONTAINS, discoverySource: 'docker.containers' });

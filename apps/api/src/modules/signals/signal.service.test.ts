@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { SignalSeverity, SignalSource, SignalType } from '@autoops/types';
+import { SignalSeverity, SignalSource, SignalStatus, SignalType } from '@autoops/types';
 
 const upsert = vi.fn();
 const findFirst = vi.fn();
@@ -146,6 +146,94 @@ describe('SignalService', () => {
           where: { id: 'sig-1', organizationId: ORG_ID },
         }),
       );
+    });
+  });
+
+  describe('deduplication and lifecycle', () => {
+    it('uses stable resource identity and normalized condition for dedupe fingerprints', () => {
+      const first = signalService.buildSignalFingerprint(
+        ORG_ID,
+        {
+          source: SignalSource.DOCKER,
+          type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+          severity: SignalSeverity.ERROR,
+          title: 'Docker Container autoops-api-1 exited unexpectedly',
+          message: 'Observed 1 minute ago',
+          metadata: {
+            resourceIdentity: 'compose:autoops:container:autoops-api-1',
+            condition: 'unexpected_exit_137',
+          },
+        },
+        'DEDUPE',
+      );
+      const second = signalService.buildSignalFingerprint(
+        ORG_ID,
+        {
+          source: SignalSource.DOCKER,
+          type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+          severity: SignalSeverity.ERROR,
+          title: 'Docker Container autoops-api-1 exited unexpectedly',
+          message: 'Observed 5 minutes ago',
+          metadata: {
+            resourceIdentity: 'compose:autoops:container:autoops-api-1',
+            condition: 'unexpected_exit_137',
+          },
+        },
+        'DEDUPE',
+      );
+
+      expect(first).toBe(second);
+    });
+
+    it('resolves only active signals for the current tenant and requested fingerprints', async () => {
+      updateMany.mockResolvedValue({ count: 1 });
+
+      const countResolved = await signalService.resolveSignalsByFingerprints(ORG_ID, [
+        'fingerprint-a',
+        'fingerprint-a',
+        'fingerprint-b',
+      ]);
+
+      expect(countResolved).toBe(1);
+      expect(updateMany).toHaveBeenCalledWith({
+        where: {
+          organizationId: ORG_ID,
+          fingerprint: { in: ['fingerprint-a', 'fingerprint-b'] },
+          status: SignalStatus.ACTIVE,
+          archivedAt: null,
+        },
+        data: {
+          status: SignalStatus.RESOLVED,
+          archivedAt: null,
+        },
+      });
+    });
+
+    it('resolves only active signals for the current tenant, source, type and requested titles', async () => {
+      updateMany.mockResolvedValue({ count: 2 });
+
+      const countResolved = await signalService.resolveSignalsByTitles(
+        ORG_ID,
+        SignalSource.DOCKER,
+        SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+        ['Docker Container cloudshield-frontend-1 exited', 'Docker Container cloudshield-frontend-1 exited'],
+      );
+
+      expect(countResolved).toBe(2);
+      expect(updateMany).toHaveBeenCalledWith({
+        where: {
+          organizationId: ORG_ID,
+          source: SignalSource.DOCKER,
+          type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+          title: { in: ['Docker Container cloudshield-frontend-1 exited'] },
+          status: SignalStatus.ACTIVE,
+          archivedAt: null,
+        },
+        data: {
+          status: SignalStatus.RESOLVED,
+          archivedAt: null,
+        },
+      });
     });
   });
 });

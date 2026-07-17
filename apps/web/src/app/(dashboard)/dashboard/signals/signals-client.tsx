@@ -134,7 +134,7 @@ export function SignalsClient() {
   const readiness = readinessData?.data;
 
   const highPrioritySignals = useMemo(
-    () => signals.filter(s => ['CRITICAL', 'ERROR', 'WARNING'].includes(s.severity)),
+    () => signals.filter(s => s.status === SignalStatus.ACTIVE && ['CRITICAL', 'ERROR', 'WARNING'].includes(s.severity)),
     [signals]
   );
 
@@ -180,7 +180,7 @@ export function SignalsClient() {
           {highPrioritySignals.length > 0 && (
             <WorkQueue
               title="Needs Review"
-              description="High priority signals requiring attention."
+              description="Unique active warning, error, and critical conditions requiring attention."
               count={highPrioritySignals.length}
               isEmpty={false}
               emptyState={null}
@@ -214,7 +214,7 @@ export function SignalsClient() {
 
           <WorkQueue
             title="Signal Evidence"
-            description="All normalized observations."
+            description="Historical and active normalized observations. Occurrences count repeated sightings of the same condition."
             isEmpty={signals.length === 0}
             className="flex-1 min-h-[500px]"
             emptyState={
