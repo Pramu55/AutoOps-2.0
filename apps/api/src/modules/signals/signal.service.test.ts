@@ -235,5 +235,86 @@ describe('SignalService', () => {
         },
       });
     });
+
+    it('resolves active or acknowledged matching resource condition families without touching unrelated signals', async () => {
+      findMany.mockResolvedValue([
+        {
+          id: 'sig-exit-1',
+          title: 'Docker Container autoops-api-1 exited unexpectedly',
+          metadata: {
+            resourceIdentity: 'compose:autoops:container:autoops-api-1',
+            condition: 'unexpected_exit_1',
+          },
+        },
+        {
+          id: 'sig-legacy',
+          title: 'Docker Container autoops-api-1 exited',
+          metadata: {},
+        },
+        {
+          id: 'sig-other-condition',
+          title: 'Docker Container autoops-api-1 changed',
+          metadata: {
+            resourceIdentity: 'compose:autoops:container:autoops-api-1',
+            condition: 'unrelated_inventory_state',
+          },
+        },
+        {
+          id: 'sig-other-resource',
+          title: 'Docker Container other exited unexpectedly',
+          metadata: {
+            resourceIdentity: 'compose:autoops:container:other',
+            condition: 'unexpected_exit_1',
+          },
+        },
+      ]);
+      updateMany.mockResolvedValue({ count: 2 });
+
+      const countResolved = await signalService.resolveSignalsByResourceConditionFamily(ORG_ID, {
+        source: SignalSource.DOCKER,
+        type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+        resourceIdentity: 'compose:autoops:container:autoops-api-1',
+        conditions: ['running_unhealthy'],
+        conditionPrefixes: ['unexpected_exit_'],
+        titles: ['Docker Container autoops-api-1 exited'],
+      });
+
+      expect(countResolved).toBe(2);
+      expect(findMany).toHaveBeenCalledWith({
+        where: {
+          organizationId: ORG_ID,
+          source: SignalSource.DOCKER,
+          type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+          status: { in: [SignalStatus.ACTIVE, SignalStatus.ACKNOWLEDGED] },
+          archivedAt: null,
+          OR: [
+            {
+              metadata: {
+                path: ['resourceIdentity'],
+                equals: 'compose:autoops:container:autoops-api-1',
+              },
+            },
+            { title: { in: ['Docker Container autoops-api-1 exited'] } },
+          ],
+        },
+        select: {
+          id: true,
+          title: true,
+          metadata: true,
+        },
+      });
+      expect(updateMany).toHaveBeenCalledWith({
+        where: {
+          organizationId: ORG_ID,
+          id: { in: ['sig-exit-1', 'sig-legacy'] },
+          status: { in: [SignalStatus.ACTIVE, SignalStatus.ACKNOWLEDGED] },
+          archivedAt: null,
+        },
+        data: {
+          status: SignalStatus.RESOLVED,
+          archivedAt: null,
+        },
+      });
+    });
   });
 });

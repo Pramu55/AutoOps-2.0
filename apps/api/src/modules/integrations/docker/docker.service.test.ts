@@ -4,6 +4,7 @@ import type { DockerContainerSummary } from '@autoops/utils';
 
 const ingestSignals = vi.fn();
 const resolveSignalsByFingerprints = vi.fn();
+const resolveSignalsByResourceConditionFamily = vi.fn();
 const resolveSignalsByTitles = vi.fn();
 const buildSignalFingerprint = vi.fn();
 
@@ -11,6 +12,7 @@ vi.mock('../../signals/signal.service.js', () => ({
   signalService: {
     ingestSignals,
     resolveSignalsByFingerprints,
+    resolveSignalsByResourceConditionFamily,
     resolveSignalsByTitles,
     buildSignalFingerprint,
   },
@@ -54,6 +56,7 @@ describe('DockerService signal scope and classification', () => {
     vi.clearAllMocks();
     ingestSignals.mockResolvedValue([]);
     resolveSignalsByFingerprints.mockResolvedValue(0);
+    resolveSignalsByResourceConditionFamily.mockResolvedValue(0);
     resolveSignalsByTitles.mockResolvedValue(0);
     buildSignalFingerprint.mockImplementation((_organizationId, input) => {
       const metadata = input.metadata ?? {};
@@ -77,6 +80,7 @@ describe('DockerService signal scope and classification', () => {
     expect(dto.monitored).toBe(false);
     expect(ingestSignals).not.toHaveBeenCalled();
     expect(resolveSignalsByFingerprints).not.toHaveBeenCalled();
+    expect(resolveSignalsByResourceConditionFamily).not.toHaveBeenCalled();
     expect(resolveSignalsByTitles).toHaveBeenCalledWith(
       'org-a',
       SignalSource.DOCKER,
@@ -201,5 +205,17 @@ describe('DockerService signal scope and classification', () => {
         'compose:autoops:container:autoops-api-1:unexpected_exit_137:ERROR',
       ]),
     );
+    expect(resolveSignalsByResourceConditionFamily).toHaveBeenCalledWith('org-a', {
+      source: SignalSource.DOCKER,
+      type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+      resourceIdentity: 'compose:autoops:container:autoops-api-1',
+      conditions: ['running_unhealthy', 'restarting', 'dead', 'paused', 'created_not_started'],
+      conditionPrefixes: ['unexpected_exit_'],
+      titles: [
+        'Docker Container autoops-api-1 exited',
+        'Docker Container autoops-api-1 dead',
+        'Docker Container autoops-api-1 restarting',
+      ],
+    });
   });
 });

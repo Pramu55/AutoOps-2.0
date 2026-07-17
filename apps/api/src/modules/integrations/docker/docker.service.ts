@@ -75,6 +75,15 @@ type DockerSignalClassification = {
   message: string;
 } | null;
 
+const RECOVERABLE_DOCKER_CONTAINER_CONDITIONS = [
+  'running_unhealthy',
+  'restarting',
+  'dead',
+  'paused',
+  'created_not_started',
+];
+const RECOVERABLE_DOCKER_CONTAINER_CONDITION_PREFIXES = ['unexpected_exit_'];
+
 export class DockerService {
   async getStatus(organizationId?: string): Promise<DockerStatusResponse> {
     const checkedAt = new Date().toISOString();
@@ -469,6 +478,7 @@ export class DockerService {
     const signals: SignalIngestInput[] = [];
     const resolvedFingerprints: string[] = [];
     const resolvedLegacyTitles: string[] = [];
+    const resolvedResourceConditions: Array<{ resourceIdentity: string; titles: string[] }> = [];
 
     for (const container of containers) {
       const observation = this._toObservation(container);
@@ -477,6 +487,10 @@ export class DockerService {
         signals.push(this._toContainerSignal(observation, classification));
       } else if (observation.monitored) {
         resolvedFingerprints.push(...this._resolutionFingerprints(organizationId, observation));
+        resolvedResourceConditions.push({
+          resourceIdentity: this._resourceIdentity(observation),
+          titles: this._legacyRecoverableContainerSignalTitles(observation),
+        });
       } else {
         resolvedLegacyTitles.push(...this._legacyContainerSignalTitles(observation));
       }
@@ -495,6 +509,16 @@ export class DockerService {
         SignalType.DOCKER_CONTAINER_STATE_CHANGED,
         resolvedLegacyTitles,
       );
+    }
+    for (const resolution of resolvedResourceConditions) {
+      void signalService.resolveSignalsByResourceConditionFamily(organizationId, {
+        source: SignalSource.DOCKER,
+        type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+        resourceIdentity: resolution.resourceIdentity,
+        conditions: RECOVERABLE_DOCKER_CONTAINER_CONDITIONS,
+        conditionPrefixes: RECOVERABLE_DOCKER_CONTAINER_CONDITION_PREFIXES,
+        titles: resolution.titles,
+      });
     }
   }
 
@@ -633,6 +657,14 @@ export class DockerService {
       return [`Docker Container ${observation.name} ${observation.state}`];
     }
     return [];
+  }
+
+  private _legacyRecoverableContainerSignalTitles(observation: DockerContainerObservation): string[] {
+    return [
+      `Docker Container ${observation.name} exited`,
+      `Docker Container ${observation.name} dead`,
+      `Docker Container ${observation.name} restarting`,
+    ];
   }
 
   private _fingerprintForCondition(
