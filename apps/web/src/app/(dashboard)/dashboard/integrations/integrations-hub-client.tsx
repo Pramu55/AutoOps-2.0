@@ -6,17 +6,7 @@ import { api, ApiError } from '@/lib/api';
 import { WorkspaceHeader } from '@/components/layout/workspace-header';
 import { ProviderStateCard } from '@/components/layout/provider-state-card';
 import { Button } from '@/components/ui/button';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function getString(value: unknown, key: string): string | undefined {
-  if (isRecord(value) && typeof value[key] === 'string') {
-    return value[key];
-  }
-  return undefined;
-}
+import { providerCardStatusFromResponse } from './integrations-hub-status';
 
 interface ProviderStatus {
   id: string;
@@ -163,28 +153,7 @@ export function IntegrationsHubClient() {
         try {
           const res = await api.get<unknown>(provider.endpoint);
 
-          let status = 'UNKNOWN';
-          let statusDetail: string | undefined;
-          if (isRecord(res)) {
-            const dataObj = res.data;
-            if (isRecord(dataObj)) {
-              const dataStatus = getString(dataObj, 'status');
-              statusDetail = dataStatus;
-              if (dataStatus) {
-                status = dataStatus;
-              }
-              const readiness = dataObj.readiness;
-              if (isRecord(readiness)) {
-                status = getString(readiness, 'state') ?? status;
-              }
-            } else {
-              const resStatus = getString(res, 'status');
-              statusDetail = resStatus;
-              if (resStatus) {
-                status = resStatus;
-              }
-            }
-          }
+          const { status, statusDetail } = providerCardStatusFromResponse(res);
 
           newStatuses[provider.id] = status;
           if (statusDetail) newStatusDetails[provider.id] = statusDetail;
@@ -196,12 +165,16 @@ export function IntegrationsHubClient() {
           }
 
           let extractedStatus: string | undefined;
-          if (isRecord(error)) {
-            const errData = error.data;
-            if (isRecord(errData)) {
-              extractedStatus = getString(errData, 'status');
+          if (typeof error === 'object' && error !== null && !Array.isArray(error)) {
+            const errorRecord = error as Record<string, unknown>;
+            const errData = errorRecord.data;
+            if (typeof errData === 'object' && errData !== null && !Array.isArray(errData)) {
+              const errDataRecord = errData as Record<string, unknown>;
+              extractedStatus =
+                typeof errDataRecord.status === 'string' ? errDataRecord.status : undefined;
             } else {
-              extractedStatus = getString(error, 'status');
+              extractedStatus =
+                typeof errorRecord.status === 'string' ? errorRecord.status : undefined;
             }
           }
 
