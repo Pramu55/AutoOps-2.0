@@ -1,19 +1,20 @@
 /**
  * Core service for enforcing enterprise data boundaries.
- * 
+ *
  * Centralizes data classification and access policy enforcement for all integrations.
- * 
+ *
  * Rules:
  * - TENANT_DATA is always organization-scoped.
  * - PROVIDER_STATUS must never expose secrets or credentials.
  * - PROVIDER_INVENTORY is restricted to OWNER/ADMIN roles.
- * 
+ *
  * All enforcement happens at the API layer. UI hiding is not security.
  */
 
 import { prisma } from '@autoops/database';
 import { UnauthorizedError } from '@autoops/utils';
-import { INVENTORY_ACCESS_ROLES, type IntegrationProviderType } from '@autoops/types';
+import { INVENTORY_ACCESS_ROLES, type IntegrationProviderType, type ProviderReadiness } from '@autoops/types';
+import { providerReadiness } from './provider-readiness.js';
 
 /** Roles that may view provider inventory data. */
 const ALLOWED_INVENTORY_ROLES: readonly string[] = INVENTORY_ACCESS_ROLES;
@@ -45,6 +46,7 @@ export type ProviderOrgPolicyBlockedStatus = {
   providerInventoryEnabled: false;
   message: string;
   remediation: string[];
+  readiness: ProviderReadiness;
   checkedAt: string;
 };
 
@@ -109,13 +111,22 @@ export async function getProviderInventoryBlockedStatus(
 }
 
 export function providerInventoryBlockedStatus(): ProviderOrgPolicyBlockedStatus {
+  const checkedAt = new Date().toISOString();
   return {
     status: 'BLOCKED_BY_ORG_POLICY',
     configured: false,
     providerInventoryEnabled: false,
     message: PROVIDER_ORG_POLICY_MESSAGE,
     remediation: [...PROVIDER_ORG_POLICY_REMEDIATION],
-    checkedAt: new Date().toISOString(),
+    readiness: providerReadiness({
+      status: 'BLOCKED_BY_ORG_POLICY',
+      configured: false,
+      checkedAt: null,
+      message: PROVIDER_ORG_POLICY_MESSAGE,
+      remediation: PROVIDER_ORG_POLICY_REMEDIATION,
+      reasonCode: 'BLOCKED_BY_ORG_POLICY',
+    }),
+    checkedAt,
   };
 }
 

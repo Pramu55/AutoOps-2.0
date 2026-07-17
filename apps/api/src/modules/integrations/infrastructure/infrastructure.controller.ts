@@ -10,15 +10,37 @@ import {
 } from '@autoops/types';
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { infrastructureService } from './infrastructure.service.js';
-import { requireProviderInventoryAccess } from '../integration-access.service.js';
+import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
+import { withProviderReadiness } from '../provider-readiness.js';
 
 type TerraformParams = { workspaceSlug: string };
 type AnsibleParams = { playbookSlug: string };
 type ConfirmationBody = { confirmationToken: string };
 
 export class InfrastructureController {
-  status = async (_req: Request, res: Response<{ data: InfrastructureProviderStatus }>): Promise<void> => {
-    res.json({ data: await infrastructureService.getStatus() });
+  status = async (req: Request, res: Response<{ data: InfrastructureProviderStatus }>): Promise<void> => {
+    const blocked = await getProviderInventoryBlockedStatus(req.auth);
+    if (blocked) {
+      const tool = {
+        status: 'BLOCKED_BY_ORG_POLICY' as const,
+        configured: false,
+        tool: null,
+        version: null,
+        checkedAt: blocked.checkedAt,
+        message: blocked.message,
+        readiness: blocked.readiness,
+      };
+      res.json({ data: { terraform: tool, ansible: tool } });
+      return;
+    }
+
+    const status = await infrastructureService.getStatus();
+    res.json({
+      data: {
+        terraform: withProviderReadiness(status.terraform),
+        ansible: withProviderReadiness(status.ansible),
+      },
+    });
   };
 
   summary = async (req: Request, res: Response<{ data: InfrastructureAutomationSummaryResponse }>): Promise<void> => {

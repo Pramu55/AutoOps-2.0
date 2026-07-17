@@ -1,3 +1,5 @@
+import type { ProviderReadiness } from './provider.js';
+
 export const DevOpsToolStatus = {
   BLOCKED_BY_ORG_POLICY: 'BLOCKED_BY_ORG_POLICY',
   CONNECTED: 'CONNECTED',
@@ -22,6 +24,7 @@ export interface DevOpsToolsStatusResponse {
   providerInventoryEnabled?: boolean;
   message?: string;
   remediation?: string[];
+  readiness?: ProviderReadiness;
   tools: DevOpsToolSummary[];
   generatedAt: string;
 }

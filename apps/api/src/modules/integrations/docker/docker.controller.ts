@@ -17,6 +17,7 @@ import {
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { dockerService } from './docker.service.js';
 import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
+import { withProviderReadiness } from '../provider-readiness.js';
 import { resourceGraphService } from '../../resources/resource-graph.service.js';
 
 type ContainerParams = {
@@ -33,7 +34,7 @@ export class DockerController {
     }
 
     const raw = await dockerService.getStatus(orgId);
-    const safeStatus = {
+    const safeStatus = withProviderReadiness({
       status: raw.status,
       configured: raw.configured,
       version: raw.version,
@@ -42,7 +43,7 @@ export class DockerController {
       architecture: raw.architecture,
       checkedAt: raw.checkedAt,
       message: raw.message,
-    };
+    });
     res.json({ data: safeStatus as unknown as DockerStatusResponse });
   };
 

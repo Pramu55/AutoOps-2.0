@@ -29,6 +29,7 @@ interface ProviderStatus {
   safetyMode: string;
   endpoint: string;
   status: string;
+  statusDetail?: string;
 }
 
 const PROVIDERS: Omit<ProviderStatus, 'status'>[] = [
@@ -146,6 +147,7 @@ const PROVIDERS: Omit<ProviderStatus, 'status'>[] = [
 
 export function IntegrationsHubClient() {
   const [statuses, setStatuses] = useState<Record<string, string>>({});
+  const [statusDetails, setStatusDetails] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -154,6 +156,7 @@ export function IntegrationsHubClient() {
     else setIsRefreshing(true);
 
     const newStatuses: Record<string, string> = {};
+    const newStatusDetails: Record<string, string> = {};
 
     await Promise.allSettled(
       PROVIDERS.map(async (provider) => {
@@ -161,15 +164,22 @@ export function IntegrationsHubClient() {
           const res = await api.get<unknown>(provider.endpoint);
 
           let status = 'UNKNOWN';
+          let statusDetail: string | undefined;
           if (isRecord(res)) {
             const dataObj = res.data;
             if (isRecord(dataObj)) {
               const dataStatus = getString(dataObj, 'status');
+              statusDetail = dataStatus;
               if (dataStatus) {
                 status = dataStatus;
               }
+              const readiness = dataObj.readiness;
+              if (isRecord(readiness)) {
+                status = getString(readiness, 'state') ?? status;
+              }
             } else {
               const resStatus = getString(res, 'status');
+              statusDetail = resStatus;
               if (resStatus) {
                 status = resStatus;
               }
@@ -177,9 +187,11 @@ export function IntegrationsHubClient() {
           }
 
           newStatuses[provider.id] = status;
+          if (statusDetail) newStatusDetails[provider.id] = statusDetail;
         } catch (error: unknown) {
           if (error instanceof ApiError && error.status === 403) {
-            newStatuses[provider.id] = 'BLOCKED_BY_ORG_POLICY';
+            newStatuses[provider.id] = 'DISABLED';
+            newStatusDetails[provider.id] = 'BLOCKED_BY_ORG_POLICY';
             return;
           }
 
@@ -193,12 +205,16 @@ export function IntegrationsHubClient() {
             }
           }
 
-          newStatuses[provider.id] = extractedStatus ?? 'NOT_CONFIGURED';
+          const fallbackStatus = extractedStatus ?? 'NOT_CONFIGURED';
+          newStatuses[provider.id] =
+            fallbackStatus === 'BLOCKED_BY_ORG_POLICY' ? 'DISABLED' : fallbackStatus;
+          if (extractedStatus) newStatusDetails[provider.id] = extractedStatus;
         }
       })
     );
 
     setStatuses(newStatuses);
+    setStatusDetails(newStatusDetails);
     setIsLoading(false);
     setIsRefreshing(false);
   };
@@ -266,6 +282,7 @@ export function IntegrationsHubClient() {
                       name={provider.name}
                       category={provider.category}
                       status={statuses[provider.id] || 'NOT_CONFIGURED'}
+                      statusDetail={statusDetails[provider.id]}
                       safetyMode={provider.safetyMode}
                       purpose={provider.purpose}
                       setupGuidance={provider.setupGuidance}

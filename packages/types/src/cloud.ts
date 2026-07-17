@@ -1,3 +1,5 @@
+import type { ProviderReadiness } from './provider.js';
+
 export const CloudReadinessStatus = {
   BLOCKED_BY_ORG_POLICY: 'BLOCKED_BY_ORG_POLICY',
   CONNECTED: 'CONNECTED',
@@ -20,6 +22,7 @@ export interface CloudProviderReadiness {
   region?: string | null;
   safeReadChecks: string[];
   writeModel: string;
+  readiness?: ProviderReadiness;
 }
 
 export interface CloudReadinessStatusResponse {

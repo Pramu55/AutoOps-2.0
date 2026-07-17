@@ -8,6 +8,7 @@ interface ProviderStateCardProps {
   name: string;
   category: string;
   status: string;
+  statusDetail?: string;
   safetyMode: string;
   purpose: string;
   setupGuidance: string;
@@ -20,6 +21,7 @@ export function ProviderStateCard({
   name,
   category,
   status,
+  statusDetail,
   safetyMode,
   purpose,
   setupGuidance,
@@ -41,7 +43,12 @@ export function ProviderStateCard({
             <h3 className="text-base font-bold text-slate-900">{name}</h3>
           </div>
         </div>
-        <StatusBadge status={status} />
+        <div className="flex flex-col items-end gap-1">
+          <StatusBadge status={status} />
+          {statusDetail && statusDetail !== status && (
+            <span className="text-[10px] font-medium text-slate-500">{statusDetail}</span>
+          )}
+        </div>
       </div>
 
       <div className="mt-4 flex-1">

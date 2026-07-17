@@ -1,4 +1,4 @@
-import type { ProviderConnectionStatus } from './provider.js';
+import type { ProviderConnectionStatus, ProviderReadiness } from './provider.js';
 import { z } from 'zod';
 
 export enum AwsIntegrationStatus {
@@ -37,6 +37,7 @@ export interface AwsStatusResponse {
   message: string;
   providerInventoryEnabled?: boolean;
   remediation?: string[];
+  readiness?: ProviderReadiness;
   checkedAt: string;
 }
 

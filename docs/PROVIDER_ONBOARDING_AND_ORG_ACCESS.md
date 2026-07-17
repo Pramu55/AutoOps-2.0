@@ -2,7 +2,16 @@
 
 AutoOps separates tenant-owned data from shared local provider inventory. New organizations are blocked from shared Jenkins, Docker, Kubernetes, AWS, GitHub Actions, and other provider inventory by design.
 
-## Status Meanings
+## Readiness States
+
+Provider responses now include a canonical `readiness` object alongside the existing backward-compatible `status` field. `status` keeps provider-specific diagnostic strings such as `AUTH_FAILED`, `FORBIDDEN`, or `BLOCKED_BY_ORG_POLICY`; `readiness.state` normalizes provider availability into four UI/API states:
+
+- `DISABLED`: provider access is intentionally blocked by tenant policy, feature policy, or explicit provider disablement. This must not expose restricted provider configuration or inventory.
+- `NOT_CONFIGURED`: provider use is allowed, but required configuration is incomplete.
+- `UNREACHABLE`: required configuration exists, but a safe read-only validation failed, timed out, was forbidden, failed authentication, or produced a sanitized provider error.
+- `CONNECTED`: required configuration exists and an actual provider-specific, non-mutating read-only validation passed. Configuration presence alone is not enough.
+
+## Legacy Status Meanings
 
 - `BLOCKED_BY_ORG_POLICY`: the organization is not explicitly enabled for shared provider inventory. This is expected for new users and protects tenant isolation.
 - `NOT_CONFIGURED`: the organization is enabled, but required connector configuration is missing.

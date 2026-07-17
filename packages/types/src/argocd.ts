@@ -1,3 +1,5 @@
+import type { ProviderReadiness } from './provider.js';
+
 export const ArgoCdConnectionStatus = {
   BLOCKED_BY_ORG_POLICY: 'BLOCKED_BY_ORG_POLICY',
   CONNECTED: 'CONNECTED',
@@ -28,6 +30,7 @@ export interface ArgoCdStatusResponse {
   message: string;
   providerInventoryEnabled?: boolean;
   remediation?: string[];
+  readiness?: ProviderReadiness;
 }
 
 export interface ArgoCdApplicationSummary {

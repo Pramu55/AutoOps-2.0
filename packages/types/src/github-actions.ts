@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ProviderReadiness } from './provider.js';
 
 export const githubActionsRunParamsSchema = z.object({
   runId: z.string().trim().regex(/^\d+$/),
@@ -24,6 +25,7 @@ export interface GitHubActionsStatusResponse {
   message: string;
   providerInventoryEnabled?: boolean;
   remediation?: string[];
+  readiness?: ProviderReadiness;
 }
 
 export interface GitHubWorkflowSummary {

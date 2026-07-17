@@ -10,6 +10,26 @@ export const ProviderConnectionStatus = {
 export type ProviderConnectionStatus =
   (typeof ProviderConnectionStatus)[keyof typeof ProviderConnectionStatus];
 
+export const ProviderReadinessState = {
+  DISABLED: 'DISABLED',
+  NOT_CONFIGURED: 'NOT_CONFIGURED',
+  UNREACHABLE: 'UNREACHABLE',
+  CONNECTED: 'CONNECTED',
+} as const;
+export type ProviderReadinessState =
+  (typeof ProviderReadinessState)[keyof typeof ProviderReadinessState];
+
+export interface ProviderReadiness {
+  state: ProviderReadinessState;
+  enabled: boolean;
+  configured: boolean;
+  reachable: boolean | null;
+  checkedAt: string | null;
+  reasonCode: string;
+  message: string;
+  remediation: string[] | null;
+}
+
 export const ProviderKey = {
   KUBERNETES: 'kubernetes',
   AWS: 'aws',
@@ -34,6 +54,7 @@ export interface IntegrationProvider {
   displayName: string;
   category: ProviderCategory;
   status: ProviderConnectionStatus;
+  readiness: ProviderReadiness;
   configured: boolean;
   capabilities: string[];
   readCapabilities: string[];
