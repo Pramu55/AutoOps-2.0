@@ -1,3 +1,5 @@
+import type { ProviderReadiness } from './provider.js';
+
 export const ObservabilityIntegrationStatus = {
   BLOCKED_BY_ORG_POLICY: 'BLOCKED_BY_ORG_POLICY',
   CONNECTED: 'CONNECTED',
@@ -24,6 +26,7 @@ export interface PrometheusIntegrationStatus {
     expression: string;
     resultCount: number;
   };
+  readiness?: ProviderReadiness;
 }
 
 export interface GrafanaIntegrationStatus {
@@ -34,6 +37,7 @@ export interface GrafanaIntegrationStatus {
   checkedAt: string;
   message: string;
   version?: string | null;
+  readiness?: ProviderReadiness;
 }
 
 export interface ObservabilityIntegrationStatusResponse {

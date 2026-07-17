@@ -2,6 +2,7 @@ import { cn } from '@/lib/cn';
 
 export type StatusToneType =
   | 'CONNECTED'
+  | 'DISABLED'
   | 'NOT_CONFIGURED'
   | 'BLOCKED_BY_ORG_POLICY'
   | 'UNREACHABLE'
@@ -81,7 +82,7 @@ export function StatusBadge({ status, className, dot = false }: StatusBadgeProps
   }
   // Slate/Neutral
   else if (
-    ['BLOCKED_BY_ORG_POLICY', 'NOT_CONNECTED', 'UNKNOWN', 'EMPTY'].includes(normStatus)
+    ['DISABLED', 'BLOCKED_BY_ORG_POLICY', 'NOT_CONNECTED', 'UNKNOWN', 'EMPTY'].includes(normStatus)
   ) {
     toneClass = 'border-slate-300/60 bg-slate-100/50 text-slate-600';
     dotClass = 'bg-slate-400';

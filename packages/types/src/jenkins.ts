@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { idSchema } from './common.js';
 import { OperationStatus, OperationType } from './operation.js';
 import type { OperationRiskLevel } from './ops.js';
-import type { ProviderConnectionStatus } from './provider.js';
+import type { ProviderConnectionStatus, ProviderReadiness } from './provider.js';
 
 export type JenkinsConnectionStatus =
   | 'NOT_CONFIGURED'
@@ -28,6 +28,7 @@ export interface JenkinsStatusResponse {
   message: string;
   providerInventoryEnabled?: boolean;
   remediation?: string[];
+  readiness?: ProviderReadiness;
   checkedAt: string;
 }
 

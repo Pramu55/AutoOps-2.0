@@ -6,17 +6,7 @@ import { api, ApiError } from '@/lib/api';
 import { WorkspaceHeader } from '@/components/layout/workspace-header';
 import { ProviderStateCard } from '@/components/layout/provider-state-card';
 import { Button } from '@/components/ui/button';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function getString(value: unknown, key: string): string | undefined {
-  if (isRecord(value) && typeof value[key] === 'string') {
-    return value[key];
-  }
-  return undefined;
-}
+import { providerCardStatusFromResponse } from './integrations-hub-status';
 
 interface ProviderStatus {
   id: string;
@@ -29,6 +19,7 @@ interface ProviderStatus {
   safetyMode: string;
   endpoint: string;
   status: string;
+  statusDetail?: string;
 }
 
 const PROVIDERS: Omit<ProviderStatus, 'status'>[] = [
@@ -146,6 +137,7 @@ const PROVIDERS: Omit<ProviderStatus, 'status'>[] = [
 
 export function IntegrationsHubClient() {
   const [statuses, setStatuses] = useState<Record<string, string>>({});
+  const [statusDetails, setStatusDetails] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -154,51 +146,48 @@ export function IntegrationsHubClient() {
     else setIsRefreshing(true);
 
     const newStatuses: Record<string, string> = {};
+    const newStatusDetails: Record<string, string> = {};
 
     await Promise.allSettled(
       PROVIDERS.map(async (provider) => {
         try {
           const res = await api.get<unknown>(provider.endpoint);
 
-          let status = 'UNKNOWN';
-          if (isRecord(res)) {
-            const dataObj = res.data;
-            if (isRecord(dataObj)) {
-              const dataStatus = getString(dataObj, 'status');
-              if (dataStatus) {
-                status = dataStatus;
-              }
-            } else {
-              const resStatus = getString(res, 'status');
-              if (resStatus) {
-                status = resStatus;
-              }
-            }
-          }
+          const { status, statusDetail } = providerCardStatusFromResponse(res);
 
           newStatuses[provider.id] = status;
+          if (statusDetail) newStatusDetails[provider.id] = statusDetail;
         } catch (error: unknown) {
           if (error instanceof ApiError && error.status === 403) {
-            newStatuses[provider.id] = 'BLOCKED_BY_ORG_POLICY';
+            newStatuses[provider.id] = 'DISABLED';
+            newStatusDetails[provider.id] = 'BLOCKED_BY_ORG_POLICY';
             return;
           }
 
           let extractedStatus: string | undefined;
-          if (isRecord(error)) {
-            const errData = error.data;
-            if (isRecord(errData)) {
-              extractedStatus = getString(errData, 'status');
+          if (typeof error === 'object' && error !== null && !Array.isArray(error)) {
+            const errorRecord = error as Record<string, unknown>;
+            const errData = errorRecord.data;
+            if (typeof errData === 'object' && errData !== null && !Array.isArray(errData)) {
+              const errDataRecord = errData as Record<string, unknown>;
+              extractedStatus =
+                typeof errDataRecord.status === 'string' ? errDataRecord.status : undefined;
             } else {
-              extractedStatus = getString(error, 'status');
+              extractedStatus =
+                typeof errorRecord.status === 'string' ? errorRecord.status : undefined;
             }
           }
 
-          newStatuses[provider.id] = extractedStatus ?? 'NOT_CONFIGURED';
+          const fallbackStatus = extractedStatus ?? 'NOT_CONFIGURED';
+          newStatuses[provider.id] =
+            fallbackStatus === 'BLOCKED_BY_ORG_POLICY' ? 'DISABLED' : fallbackStatus;
+          if (extractedStatus) newStatusDetails[provider.id] = extractedStatus;
         }
       })
     );
 
     setStatuses(newStatuses);
+    setStatusDetails(newStatusDetails);
     setIsLoading(false);
     setIsRefreshing(false);
   };
@@ -266,6 +255,7 @@ export function IntegrationsHubClient() {
                       name={provider.name}
                       category={provider.category}
                       status={statuses[provider.id] || 'NOT_CONFIGURED'}
+                      statusDetail={statusDetails[provider.id]}
                       safetyMode={provider.safetyMode}
                       purpose={provider.purpose}
                       setupGuidance={provider.setupGuidance}

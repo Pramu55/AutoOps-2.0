@@ -8,6 +8,7 @@ import type {
 } from '@autoops/types';
 import { githubActionsService } from './github-actions.service.js';
 import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
+import { withProviderReadiness } from '../provider-readiness.js';
 
 export class GitHubActionsController {
   status = async (req: Request, res: Response<{ data: GitHubActionsStatusResponse }>): Promise<void> => {
@@ -18,12 +19,12 @@ export class GitHubActionsController {
     }
 
     const raw = await githubActionsService.getStatus();
-    const safeStatus = {
+    const safeStatus = withProviderReadiness({
       status: raw.status,
       configured: raw.configured,
       checkedAt: raw.checkedAt,
       message: raw.message,
-    };
+    });
     res.json({ data: safeStatus as unknown as GitHubActionsStatusResponse });
   };
 

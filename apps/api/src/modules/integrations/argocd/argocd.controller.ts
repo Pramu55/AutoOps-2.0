@@ -5,6 +5,7 @@ import type {
   ArgoCdSummaryResponse,
 } from '@autoops/types';
 import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
+import { withProviderReadiness } from '../provider-readiness.js';
 import { argocdService } from './argocd.service.js';
 
 export class ArgoCdController {
@@ -37,7 +38,7 @@ export class ArgoCdController {
 }
 
 function sanitizeStatus(status: ArgoCdStatusResponse): ArgoCdStatusResponse {
-  return {
+  return withProviderReadiness({
     status: status.status,
     configured: status.configured,
     serverUrl: status.serverUrl,
@@ -47,7 +48,7 @@ function sanitizeStatus(status: ArgoCdStatusResponse): ArgoCdStatusResponse {
     message: status.message,
     providerInventoryEnabled: status.providerInventoryEnabled,
     remediation: status.remediation,
-  };
+  });
 }
 
 export const argocdController = new ArgoCdController();

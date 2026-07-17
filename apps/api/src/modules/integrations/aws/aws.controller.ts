@@ -37,6 +37,7 @@ import {
 } from '@autoops/types';
 import { awsService } from './aws.service.js';
 import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
+import { withProviderReadiness } from '../provider-readiness.js';
 
 export class AwsController {
   status = async (req: Request, res: Response<{ data: AwsStatusResponse }>): Promise<void> => {
@@ -47,12 +48,12 @@ export class AwsController {
     }
 
     const raw = await awsService.getStatus();
-    const safeStatus = {
+    const safeStatus = withProviderReadiness({
       status: raw.status,
       configured: raw.configured,
       message: raw.message,
       checkedAt: raw.checkedAt,
-    };
+    });
     res.json({ data: safeStatus as AwsStatusResponse });
   };
 

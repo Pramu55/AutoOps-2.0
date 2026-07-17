@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { idSchema } from './common.js';
 import type { OperationRiskLevel } from './ops.js';
+import type { ProviderReadiness } from './provider.js';
 
 export const KubernetesConnectionStatus = {
   BLOCKED_BY_ORG_POLICY: 'BLOCKED_BY_ORG_POLICY',
@@ -41,6 +42,7 @@ export interface KubernetesStatus {
   configured?: boolean;
   providerInventoryEnabled?: boolean;
   remediation?: string[];
+  readiness?: ProviderReadiness;
 }
 
 export interface KubernetesNamespace {

@@ -13,6 +13,7 @@ import {
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { jenkinsService } from './jenkins.service.js';
 import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
+import { withProviderReadiness } from '../provider-readiness.js';
 import { resourceGraphService } from '../../resources/resource-graph.service.js';
 
 type BuildParams = { jobName: string };
@@ -28,14 +29,14 @@ export class JenkinsController {
 
     const raw = await jenkinsService.getStatus(orgId);
     // PROVIDER_STATUS: strict sanitization for zero-trust (no secrets, URLs, or inventory details)
-    const safeStatus = {
+    const safeStatus = withProviderReadiness({
       status: raw.status,
       configured: raw.configured,
       version: raw.version,
       triggerEnabled: raw.triggerEnabled,
       message: raw.message,
       checkedAt: raw.checkedAt,
-    };
+    });
     res.json({ data: safeStatus as unknown as JenkinsStatusResponse });
   };
 

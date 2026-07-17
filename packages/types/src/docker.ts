@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { OperationStatus } from './operation.js';
 import type { OperationRiskLevel } from './ops.js';
-import type { ProviderConnectionStatus } from './provider.js';
+import type { ProviderConnectionStatus, ProviderReadiness } from './provider.js';
 
 export type DockerConnectionStatus = ProviderConnectionStatus;
 
@@ -18,6 +18,7 @@ export interface DockerStatusResponse {
   message: string;
   providerInventoryEnabled?: boolean;
   remediation?: string[];
+  readiness?: ProviderReadiness;
 }
 
 export interface DockerPort {

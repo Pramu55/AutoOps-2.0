@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { OperationStatus } from './operation.js';
 import { OperationRiskLevel } from './ops.js';
+import type { ProviderReadiness } from './provider.js';
 
 export const InfrastructureToolConnectionStatus = {
+  BLOCKED_BY_ORG_POLICY: 'BLOCKED_BY_ORG_POLICY',
   CONNECTED: 'CONNECTED',
   NOT_INSTALLED: 'NOT_INSTALLED',
   NOT_CONFIGURED: 'NOT_CONFIGURED',
@@ -47,6 +49,7 @@ export interface InfrastructureToolStatus {
   version: string | null;
   checkedAt: string;
   message: string;
+  readiness?: ProviderReadiness;
 }
 
 export interface InfrastructureProviderStatus {

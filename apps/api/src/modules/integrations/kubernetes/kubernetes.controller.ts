@@ -20,12 +20,17 @@ import type {
 import { UnauthenticatedError, UnauthorizedError } from '@autoops/utils';
 import { kubernetesService } from './kubernetes.service.js';
 import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
+import { withProviderReadiness } from '../provider-readiness.js';
 import { resourceGraphService } from '../../resources/resource-graph.service.js';
 
 type WorkloadParams = {
   namespace: string;
   name: string;
 };
+
+function configuredFromKubernetesStatus(status: string): boolean {
+  return ['CONNECTED', 'UNREACHABLE', 'AUTH_FAILED', 'FORBIDDEN'].includes(status);
+}
 
 export class KubernetesController {
   status = async (req: Request, res: Response<{ data: KubernetesStatus }>): Promise<void> => {
@@ -37,13 +42,14 @@ export class KubernetesController {
     }
 
     const raw = await kubernetesService.getStatus(orgId);
-    const safeStatus = {
+    const safeStatus = withProviderReadiness({
       status: raw.status,
+      configured: raw.configured ?? configuredFromKubernetesStatus(raw.status),
       version: raw.version,
       readOnly: raw.readOnly,
       checkedAt: raw.checkedAt,
       message: raw.message,
-    };
+    });
     res.json({ data: safeStatus as unknown as KubernetesStatus });
   };
 

@@ -3,12 +3,13 @@ import type { CloudProviderReadiness, CloudReadinessStatusResponse } from '@auto
 import { cloudReadinessService } from './cloud-readiness.service.js';
 
 import { getProviderInventoryBlockedStatus, requireProviderInventoryAccess } from '../integration-access.service.js';
+import { withProviderReadiness } from '../provider-readiness.js';
 
 export class CloudReadinessController {
   status = async (req: Request, res: Response<{ data: CloudReadinessStatusResponse }>): Promise<void> => {
     const blocked = await getProviderInventoryBlockedStatus(req.auth);
     if (blocked) {
-      const provider = (providerKey: 'aws' | 'azure' | 'gcp', displayName: string): CloudProviderReadiness => ({
+      const provider = (providerKey: 'aws' | 'azure' | 'gcp', displayName: string): CloudProviderReadiness => withProviderReadiness({
         provider: providerKey,
         displayName,
         status: 'BLOCKED_BY_ORG_POLICY' as CloudProviderReadiness['status'],
@@ -28,7 +29,7 @@ export class CloudReadinessController {
     }
 
     const raw = await cloudReadinessService.getStatus();
-    const safeProviders = raw.providers.map(p => ({
+    const safeProviders = raw.providers.map(p => withProviderReadiness({
       provider: p.provider,
       displayName: p.displayName,
       status: p.status,

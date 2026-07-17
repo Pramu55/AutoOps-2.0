@@ -7,12 +7,29 @@ import {
 import { argocdService } from '../argocd/argocd.service.js';
 import { awsService, mapAwsToProviderStatus } from '../aws/aws.service.js';
 import { dockerService } from '../docker/docker.service.js';
+import type { ProviderOrgPolicyBlockedStatus } from '../integration-access.service.js';
 import { jenkinsService } from '../jenkins/jenkins.service.js';
 import { kubernetesService } from '../kubernetes/kubernetes.service.js';
+import { providerReadiness } from '../provider-readiness.js';
 
 const now = () => new Date().toISOString();
 
+function configuredFromKubernetesStatus(status: string): boolean {
+  return ['CONNECTED', 'UNREACHABLE', 'AUTH_FAILED', 'FORBIDDEN'].includes(status);
+}
+
 export class ProviderRegistryService {
+  listBlockedProviders(blocked: ProviderOrgPolicyBlockedStatus): IntegrationProvider[] {
+    return [
+      this._blocked(ProviderKey.KUBERNETES, 'Kubernetes', ProviderCategory.ORCHESTRATION, blocked),
+      this._blocked(ProviderKey.AWS, 'AWS', ProviderCategory.CLOUD, blocked),
+      this._blocked(ProviderKey.JENKINS, 'Jenkins', ProviderCategory.CI_CD, blocked),
+      this._blocked(ProviderKey.GITHUB, 'GitHub', ProviderCategory.CI_CD, blocked),
+      this._blocked(ProviderKey.ARGOCD, 'Argo CD', ProviderCategory.GITOPS, blocked),
+      this._blocked(ProviderKey.DOCKER, 'Docker', ProviderCategory.CONTAINER, blocked),
+    ];
+  }
+
   async listProviders(): Promise<IntegrationProvider[]> {
     const [kubernetesStatus, awsStatus, jenkinsStatus, dockerStatus, argocdStatus] = await Promise.all([
       kubernetesService.getStatus(),
@@ -30,7 +47,13 @@ export class ProviderRegistryService {
         displayName: 'Kubernetes',
         category: ProviderCategory.ORCHESTRATION,
         status: kubernetesStatus.status,
-        configured: kubernetesStatus.status !== ProviderConnectionStatus.NOT_CONFIGURED,
+        readiness: providerReadiness({
+          status: kubernetesStatus.status,
+          configured: kubernetesStatus.configured ?? configuredFromKubernetesStatus(kubernetesStatus.status),
+          checkedAt: kubernetesStatus.checkedAt,
+          message: kubernetesStatus.message,
+        }),
+        configured: kubernetesStatus.configured ?? configuredFromKubernetesStatus(kubernetesStatus.status),
         capabilities: [
           'kubernetes.read.cluster',
           'kubernetes.read.workloads',
@@ -57,6 +80,12 @@ export class ProviderRegistryService {
         displayName: 'AWS',
         category: ProviderCategory.CLOUD,
         status: awsMappedStatus,
+        readiness: providerReadiness({
+          status: awsMappedStatus,
+          configured: awsStatus.configured,
+          checkedAt: awsStatus.checkedAt,
+          message: awsStatus.message,
+        }),
         configured: awsStatus.configured,
         capabilities: [
           'aws.read.account',
@@ -86,6 +115,12 @@ export class ProviderRegistryService {
         displayName: 'Jenkins',
         category: ProviderCategory.CI_CD,
         status: jenkinsStatus.status,
+        readiness: providerReadiness({
+          status: jenkinsStatus.status,
+          configured: jenkinsStatus.configured,
+          checkedAt: jenkinsStatus.checkedAt,
+          message: jenkinsStatus.message,
+        }),
         configured: jenkinsStatus.configured,
         capabilities: ['jenkins.read.status', 'jenkins.read.jobs', 'jenkins.read.builds', 'jenkins.trigger.build'],
         readCapabilities: ['jenkins.read.status', 'jenkins.read.jobs', 'jenkins.read.builds'],
@@ -104,6 +139,13 @@ export class ProviderRegistryService {
         displayName: 'Argo CD',
         category: ProviderCategory.GITOPS,
         status: argocdStatus.status,
+        readiness: providerReadiness({
+          status: argocdStatus.status,
+          configured: argocdStatus.configured,
+          checkedAt: argocdStatus.checkedAt,
+          message: argocdStatus.message,
+          remediation: argocdStatus.remediation,
+        }),
         configured: argocdStatus.configured,
         capabilities: [
           'argocd.read.status',
@@ -132,6 +174,12 @@ export class ProviderRegistryService {
         displayName: 'Docker',
         category: ProviderCategory.CONTAINER,
         status: dockerStatus.status,
+        readiness: providerReadiness({
+          status: dockerStatus.status,
+          configured: dockerStatus.configured,
+          checkedAt: dockerStatus.checkedAt,
+          message: dockerStatus.message,
+        }),
         configured: dockerStatus.configured,
         capabilities: [
           'docker.read.status',
@@ -177,6 +225,13 @@ export class ProviderRegistryService {
       displayName,
       category,
       status: ProviderConnectionStatus.NOT_CONFIGURED,
+      readiness: providerReadiness({
+        status: ProviderConnectionStatus.NOT_CONFIGURED,
+        configured: false,
+        checkedAt: null,
+        message: `${displayName} connector is not implemented in this foundation milestone.`,
+        reasonCode: 'CONNECTOR_NOT_IMPLEMENTED',
+      }),
       configured: false,
       capabilities: [],
       readCapabilities: [],
@@ -185,6 +240,37 @@ export class ProviderRegistryService {
       requiredEnvironment,
       lastCheckedAt: now(),
       message: `${displayName} connector is not implemented in this foundation milestone.`,
+      source: 'environment',
+    };
+  }
+
+  private _blocked(
+    key: ProviderKey,
+    displayName: string,
+    category: ProviderCategory,
+    blocked: ProviderOrgPolicyBlockedStatus,
+  ): IntegrationProvider {
+    return {
+      key,
+      displayName,
+      category,
+      status: ProviderConnectionStatus.BLOCKED_BY_ORG_POLICY,
+      readiness: providerReadiness({
+        status: ProviderConnectionStatus.BLOCKED_BY_ORG_POLICY,
+        configured: false,
+        checkedAt: null,
+        message: blocked.message,
+        remediation: blocked.remediation,
+        reasonCode: ProviderConnectionStatus.BLOCKED_BY_ORG_POLICY,
+      }),
+      configured: false,
+      capabilities: [],
+      readCapabilities: [],
+      writeCapabilities: [],
+      dangerousCapabilities: [],
+      requiredEnvironment: [],
+      lastCheckedAt: blocked.checkedAt,
+      message: blocked.message,
       source: 'environment',
     };
   }
