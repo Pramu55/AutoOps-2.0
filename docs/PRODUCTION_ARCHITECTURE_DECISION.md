@@ -77,7 +77,7 @@ Use a provider-neutral production topology with separately deployable services.
 - Docker socket access remains disabled in production.
 - Kubernetes credentials and provider tokens must come from an approved secret store.
 - CORS contains only the exact production Web origin.
-- WebSocket origins match the production Web origin.
+- Realtime browser connectivity is governed by the same public API/CORS boundary unless a future WebSocket-specific variable is implemented.
 
 ## Secret Boundary
 
@@ -115,11 +115,12 @@ Production must set explicit values for:
 - API_PUBLIC_URL
 - CORS_ORIGINS
 - NEXT_PUBLIC_API_URL
-- NEXT_PUBLIC_WS_URL
 - production log level
 - approved provider allowlists
 
-Localhost fallbacks must not be accepted by the production validation flow.
+Production requires `STRICT_ENV_VALIDATION=true`; false or missing strict validation fails startup. Public API and CORS values must be explicit HTTPS URLs/origins and must not use localhost, loopback, wildcard origins, internal-only hostnames, credentials, paths, query strings, or fragments. `API_INTERNAL_URL` is internal-only server-side routing and may remain an internal Docker URL such as `http://api:4000`.
+
+Localhost fallbacks must not be accepted by the production validation flow. Production Compose must fail before building when `NEXT_PUBLIC_API_URL` is absent.
 
 ## Database Migration Strategy
 
@@ -255,19 +256,18 @@ Production deployment is blocked unless all of the following pass:
 
 ## Current Blocking Gaps
 
-1. Production URLs still permit localhost defaults.
-2. Public HTTPS and domain configuration are not implemented or verified.
-3. Secret-manager integration is not selected.
-4. Managed/private PostgreSQL and Redis are not provisioned.
-5. Off-host encrypted backup is not configured.
-6. Restore testing is not proven.
-7. External alert delivery is not configured.
-8. Production observability topology is not deployed.
-9. Automated production deployment workflow is not implemented.
-10. Production container hardening is incomplete.
-11. Production admin bootstrap is not proven.
-12. Two frontend React hook warnings remain.
-13. Production smoke and rollback evidence do not exist.
+1. Public HTTPS and domain configuration are not fully deployed or verified.
+2. Secret-manager integration is not selected.
+3. Managed/private PostgreSQL and Redis are not provisioned.
+4. Off-host encrypted backup is not configured.
+5. Restore testing is not proven.
+6. External alert delivery is not configured.
+7. Production observability topology is not deployed.
+8. Automated production deployment workflow is not implemented.
+9. Production container hardening is incomplete.
+10. Production admin bootstrap is not proven.
+11. Two frontend React hook warnings remain.
+12. Production smoke and rollback evidence do not exist.
 
 ## Implementation Order
 
