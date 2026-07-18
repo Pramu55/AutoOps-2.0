@@ -1,19 +1,35 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SignalSeverity, SignalSource, SignalType } from '@autoops/types';
+import { ProviderConnectionStatus, SignalSeverity, SignalSource, SignalType } from '@autoops/types';
 import type { DockerContainerSummary } from '@autoops/utils';
 
+const dockerClientState = vi.hoisted(() => ({
+  client: null as any,
+}));
+
+vi.mock('@autoops/utils', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@autoops/utils')>();
+  return {
+    ...actual,
+    DockerEngineClient: vi.fn(() => dockerClientState.client),
+  };
+});
+
+const ingestSignal = vi.fn();
 const ingestSignals = vi.fn();
 const resolveSignalsByFingerprints = vi.fn();
 const resolveSignalsByResourceConditionFamily = vi.fn();
 const resolveSignalsByTitles = vi.fn();
+const reconcileHistoricalSignals = vi.fn();
 const buildSignalFingerprint = vi.fn();
 
 vi.mock('../../signals/signal.service.js', () => ({
   signalService: {
+    ingestSignal,
     ingestSignals,
     resolveSignalsByFingerprints,
     resolveSignalsByResourceConditionFamily,
     resolveSignalsByTitles,
+    reconcileHistoricalSignals,
     buildSignalFingerprint,
   },
 }));
@@ -28,7 +44,11 @@ const { dockerService } = await import('./docker.service.js');
 
 type DockerServiceInternals = {
   _toContainer(container: DockerContainerSummary): unknown;
-  _ingestContainerSignals(organizationId: string, containers: DockerContainerSummary[]): Promise<void>;
+  _ingestContainerSignals(organizationId: string, containers: DockerContainerSummary[], observedAt?: Date): Promise<void>;
+  _withCompleteDockerObservation<T>(
+    organizationId: string | undefined,
+    load: () => Promise<{ containers: DockerContainerSummary[]; value: T }>,
+  ): Promise<T>;
 };
 
 const service = dockerService as unknown as DockerServiceInternals;
@@ -54,10 +74,25 @@ function container(overrides: Partial<DockerContainerSummary> = {}): DockerConta
 describe('DockerService signal scope and classification', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    ingestSignals.mockResolvedValue([]);
+    vi.useRealTimers();
+    dockerClientState.client = {
+      isConfigured: vi.fn(() => true),
+      notConfiguredMessage: vi.fn(() => 'Docker connector is configured.'),
+      version: vi.fn().mockResolvedValue({
+        Version: '26.0.0',
+        ApiVersion: '1.45',
+        Os: 'linux',
+        Arch: 'x86_64',
+      }),
+      listContainers: vi.fn().mockResolvedValue([]),
+      listImages: vi.fn().mockResolvedValue([]),
+    };
+    ingestSignal.mockResolvedValue({});
+    ingestSignals.mockImplementation(async (_organizationId, signals) => signals.map(() => ({})));
     resolveSignalsByFingerprints.mockResolvedValue(0);
     resolveSignalsByResourceConditionFamily.mockResolvedValue(0);
     resolveSignalsByTitles.mockResolvedValue(0);
+    reconcileHistoricalSignals.mockResolvedValue({ scanned: 0, observed: 0, resolved: 0, skipped: false });
     buildSignalFingerprint.mockImplementation((_organizationId, input) => {
       const metadata = input.metadata ?? {};
       return `${metadata.resourceIdentity ?? 'unknown'}:${metadata.condition ?? input.title}:${input.severity}`;
@@ -217,5 +252,210 @@ describe('DockerService signal scope and classification', () => {
         'Docker Container autoops-api-1 restarting',
       ],
     });
+    expect(reconcileHistoricalSignals).toHaveBeenCalledWith('org-a', {
+      source: SignalSource.DOCKER,
+      type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+      observedFingerprints: [],
+      scope: {
+        metadata: { monitoringScope: 'managed' },
+      },
+      scanCompleted: true,
+      observedAt: expect.any(Date),
+    });
+  });
+
+  it('captures the reconciliation cutoff before Docker observation starts', async () => {
+    const cycleStartedAt = new Date('2026-07-18T10:00:00.000Z');
+    const listCompletedAt = new Date('2026-07-18T10:00:05.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(cycleStartedAt);
+    ingestSignals.mockImplementation(async (_organizationId, signals) => signals.map(() => ({})));
+    buildSignalFingerprint.mockReturnValue('canonical-fingerprint');
+
+    await service._withCompleteDockerObservation('org-a', async () => {
+      vi.setSystemTime(listCompletedAt);
+      return {
+        containers: [
+          container({
+            State: 'exited',
+            Status: 'Exited (137) 1 minute ago',
+          }),
+        ],
+        value: 'complete',
+      };
+    });
+
+    expect(ingestSignals.mock.calls[0]![1][0].observedAt).toEqual(cycleStartedAt);
+    expect(reconcileHistoricalSignals).toHaveBeenCalledWith(
+      'org-a',
+      expect.objectContaining({ observedAt: cycleStartedAt }),
+    );
+  });
+
+  it('Docker API failure causes no reconciliation', async () => {
+    await expect(
+      service._withCompleteDockerObservation('org-a', async () => {
+        throw new Error('Docker list failed');
+      }),
+    ).rejects.toThrow('Docker list failed');
+
+    expect(reconcileHistoricalSignals).not.toHaveBeenCalled();
+  });
+
+  it('ingestion failure causes no unsafe reconciliation', async () => {
+    ingestSignals.mockResolvedValue([]);
+
+    await expect(
+      service._withCompleteDockerObservation('org-a', async () => ({
+        containers: [
+          container({
+            State: 'exited',
+            Status: 'Exited (137) 1 minute ago',
+          }),
+        ],
+        value: 'complete',
+      })),
+    ).rejects.toThrow('Docker signal ingestion was incomplete');
+
+    expect(reconcileHistoricalSignals).not.toHaveBeenCalled();
+  });
+
+  it('passes the exact canonical ingestion fingerprint to reconciliation', async () => {
+    ingestSignals.mockImplementation(async (_organizationId, signals) => signals.map(() => ({})));
+    buildSignalFingerprint.mockReturnValue('canonical-ingest-fingerprint');
+
+    await service._withCompleteDockerObservation('org-a', async () => ({
+      containers: [
+        container({
+          State: 'exited',
+          Status: 'Exited (137) 1 minute ago',
+        }),
+      ],
+      value: 'complete',
+    }));
+
+    const ingestedSignal = ingestSignals.mock.calls[0]![1][0];
+    expect(buildSignalFingerprint).toHaveBeenCalledWith('org-a', ingestedSignal, 'DEDUPE');
+    expect(reconcileHistoricalSignals).toHaveBeenCalledWith(
+      'org-a',
+      expect.objectContaining({
+        observedFingerprints: ['canonical-ingest-fingerprint'],
+      }),
+    );
+  });
+
+  it('getStatus does not reconcile after a partial Docker status inventory failure', async () => {
+    dockerClientState.client.listContainers.mockResolvedValue([
+      container({
+        State: 'exited',
+        Status: 'Exited (137) 1 minute ago',
+      }),
+    ]);
+    dockerClientState.client.listImages.mockRejectedValue(new Error('image list failed'));
+    ingestSignals.mockImplementation(async (_organizationId, signals) => signals.map(() => ({})));
+
+    const status = await dockerService.getStatus('org-a');
+
+    expect(status.status).toBe(ProviderConnectionStatus.UNKNOWN_ERROR);
+    expect(reconcileHistoricalSignals).not.toHaveBeenCalled();
+  });
+
+  it('getStatus performs one complete container reconciliation cycle', async () => {
+    dockerClientState.client.listContainers.mockResolvedValue([
+      container({
+        State: 'exited',
+        Status: 'Exited (137) 1 minute ago',
+      }),
+    ]);
+    ingestSignals.mockImplementation(async (_organizationId, signals) => signals.map(() => ({})));
+    buildSignalFingerprint.mockReturnValue('managed-fingerprint');
+
+    const status = await dockerService.getStatus('org-a');
+
+    expect(status.status).toBe(ProviderConnectionStatus.CONNECTED);
+    expect(dockerClientState.client.listContainers).toHaveBeenCalledTimes(1);
+    expect(reconcileHistoricalSignals).toHaveBeenCalledTimes(2);
+    expect(reconcileHistoricalSignals).toHaveBeenCalledWith(
+      'org-a',
+      expect.objectContaining({
+        scope: { metadata: { monitoringScope: 'managed' } },
+        observedFingerprints: ['managed-fingerprint'],
+      }),
+    );
+  });
+
+  it('keeps managed and monitored reconciliation scopes isolated', async () => {
+    ingestSignals.mockImplementation(async (_organizationId, signals) => signals.map(() => ({})));
+    buildSignalFingerprint.mockImplementation((_organizationId, input) => `${input.metadata.monitoringScope}:${input.metadata.name}`);
+
+    await service._withCompleteDockerObservation('org-a', async () => ({
+      containers: [
+        container({
+          Names: ['/autoops-api-1'],
+          State: 'exited',
+          Status: 'Exited (137) 1 minute ago',
+        }),
+        container({
+          Names: ['/third-party-worker'],
+          State: 'exited',
+          Status: 'Exited (137) 1 minute ago',
+          Labels: {
+            'com.autoops.monitor': 'true',
+          },
+        }),
+        container({
+          Names: ['/unrelated-worker'],
+          State: 'exited',
+          Status: 'Exited (137) 1 minute ago',
+          Labels: {},
+        }),
+      ],
+      value: 'complete',
+    }));
+
+    expect(reconcileHistoricalSignals).toHaveBeenCalledWith(
+      'org-a',
+      expect.objectContaining({
+        observedFingerprints: ['managed:autoops-api-1'],
+        scope: { metadata: { monitoringScope: 'managed' } },
+      }),
+    );
+    expect(reconcileHistoricalSignals).toHaveBeenCalledWith(
+      'org-a',
+      expect.objectContaining({
+        observedFingerprints: ['monitored:third-party-worker'],
+        scope: { metadata: { monitoringScope: 'monitored' } },
+      }),
+    );
+    expect(reconcileHistoricalSignals).not.toHaveBeenCalledWith(
+      'org-a',
+      expect.objectContaining({
+        scope: { metadata: { monitoringScope: 'unrelated' } },
+      }),
+    );
+  });
+
+  it('empty successful scan reconciles stale managed and monitored scopes with empty observed sets', async () => {
+    await service._withCompleteDockerObservation('org-a', async () => ({
+      containers: [],
+      value: 'complete',
+    }));
+
+    expect(reconcileHistoricalSignals).toHaveBeenCalledWith(
+      'org-a',
+      expect.objectContaining({
+        observedFingerprints: [],
+        scope: { metadata: { monitoringScope: 'managed' } },
+        scanCompleted: true,
+      }),
+    );
+    expect(reconcileHistoricalSignals).toHaveBeenCalledWith(
+      'org-a',
+      expect.objectContaining({
+        observedFingerprints: [],
+        scope: { metadata: { monitoringScope: 'monitored' } },
+        scanCompleted: true,
+      }),
+    );
   });
 });
