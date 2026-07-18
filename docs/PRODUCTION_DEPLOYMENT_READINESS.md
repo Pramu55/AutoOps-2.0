@@ -1,4 +1,4 @@
-# AutoOps Production Deployment Readiness
+﻿# AutoOps Production Deployment Readiness
 
 ## Purpose
 
@@ -10,15 +10,15 @@ AutoOps runs as a Next.js web console, Express API, BullMQ worker, PostgreSQL da
 
 ## Service Map
 
-| Service | Purpose | Local URL |
-| --- | --- | --- |
-| web | AutoOps console | http://localhost:3000 |
-| api | REST API, auth, health, readiness | http://localhost:4000 |
-| worker | BullMQ operation execution and heartbeat | http://localhost:4001/healthz |
-| postgres | Durable data store | internal or localhost:5432 in local compose |
-| redis | Queue/cache/rate-limit store | internal or localhost:6379 in local compose |
-| prometheus | Metrics scrape | http://localhost:9090 |
-| grafana | Dashboards | http://localhost:3001 |
+| Service    | Purpose                                  | Local URL                                   |
+| ---------- | ---------------------------------------- | ------------------------------------------- |
+| web        | AutoOps console                          | http://localhost:3000                       |
+| api        | REST API, auth, health, readiness        | http://localhost:4000                       |
+| worker     | BullMQ operation execution and heartbeat | http://localhost:4001/healthz               |
+| postgres   | Durable data store                       | internal or localhost:5432 in local compose |
+| redis      | Queue/cache/rate-limit store             | internal or localhost:6379 in local compose |
+| prometheus | Metrics scrape                           | http://localhost:9090                       |
+| grafana    | Dashboards                               | http://localhost:3001                       |
 
 ## Required Runtime Services
 
@@ -48,6 +48,7 @@ notepad .env
 Required core variables:
 
 - `NODE_ENV`
+- `STRICT_ENV_VALIDATION=true` for production
 - `API_PORT`
 - `API_HOST`
 - `API_PUBLIC_URL`
@@ -58,9 +59,10 @@ Required core variables:
 - `JWT_SECRET`
 - `JWT_REFRESH_SECRET`
 - `CORS_ORIGINS`
-- `STRICT_ENV_VALIDATION=true` for production/company-pilot secret checks
 
-With `STRICT_ENV_VALIDATION=true`, production rejects placeholder JWT secrets and requires access and refresh secrets to differ. Keep this disabled only for the default local demo compose unless local secrets have been rotated.
+Production requires `STRICT_ENV_VALIDATION=true`; missing or false strict validation fails startup. Production also requires explicit public HTTPS values for `API_PUBLIC_URL`, `NEXT_PUBLIC_API_URL`, and `CORS_ORIGINS`. Public API/CORS values must not use localhost, loopback, wildcard origins, paths, credentials, or internal-only hostnames. `API_INTERNAL_URL` is server-side routing inside the Docker network and may remain an internal URL such as `http://api:4000`.
+
+With production strict validation, AutoOps rejects placeholder JWT secrets and requires access and refresh secrets to differ. Keep strict validation disabled only for the default local demo compose unless local secrets have been rotated.
 
 ## Optional Integration Environment Variables
 
@@ -112,10 +114,11 @@ docker compose -f docker-compose.yml -f docker-compose.k8s.yml up -d --build
 Production-like company pilot:
 
 ```powershell
+$env:NEXT_PUBLIC_API_URL="https://api.example.invalid"
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-The production compose file does not mount Docker socket or kubeconfig by default.
+The production compose file does not mount Docker socket or kubeconfig by default. It intentionally has no `http://localhost:4000` fallback for `NEXT_PUBLIC_API_URL`; Compose should fail before building when that public HTTPS API URL is absent. The web service can still use the internal default `API_INTERNAL_URL=http://api:4000` for server-side API rewrites on the private Docker network.
 
 ## Migration Flow
 
