@@ -8,9 +8,11 @@ const count = vi.fn();
 const groupBy = vi.fn();
 const updateMany = vi.fn();
 const findFirstNode = vi.fn();
+const $transaction = vi.fn(async (operations: Array<Promise<unknown>>) => Promise.all(operations));
 
 vi.mock('@autoops/database', () => ({
   prisma: {
+    $transaction,
     resourceSignal: {
       upsert,
       findFirst,
@@ -32,6 +34,7 @@ describe('SignalService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    $transaction.mockImplementation(async (operations: Array<Promise<unknown>>) => Promise.all(operations));
   });
 
   describe('ingestSignal', () => {
@@ -309,6 +312,333 @@ describe('SignalService', () => {
           id: { in: ['sig-exit-1', 'sig-legacy'] },
           status: { in: [SignalStatus.ACTIVE, SignalStatus.ACKNOWLEDGED] },
           archivedAt: null,
+        },
+        data: {
+          status: SignalStatus.RESOLVED,
+          archivedAt: null,
+        },
+      });
+    });
+  });
+
+  describe('historical signal reconciliation', () => {
+    const observedAt = new Date('2026-07-18T10:00:00.000Z');
+    const baseInput = {
+      source: SignalSource.DOCKER,
+      type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+      observedFingerprints: ['fp-current'],
+      scope: {
+        resourceNodeId: 'node-123',
+        projectId: 'project-123',
+        environmentId: 'env-123',
+        metadata: {
+          resourceIdentity: 'compose:autoops:container:api',
+          condition: 'running_unhealthy',
+        },
+      },
+      scanCompleted: true,
+      observedAt,
+    };
+
+    beforeEach(() => {
+      count.mockResolvedValue(2);
+      updateMany.mockResolvedValue({ count: 1 });
+    });
+
+    it('scanCompleted false resolves zero signals', async () => {
+      const result = await signalService.reconcileHistoricalSignals(ORG_ID, {
+        ...baseInput,
+        scanCompleted: false,
+      });
+
+      expect(result).toEqual({
+        scanned: 0,
+        observed: 1,
+        resolved: 0,
+        skipped: true,
+        reason: 'scan_not_completed',
+      });
+      expect(updateMany).not.toHaveBeenCalled();
+      expect($transaction).not.toHaveBeenCalled();
+    });
+
+    it('another tenant is untouched', async () => {
+      await signalService.reconcileHistoricalSignals(ORG_ID, baseInput);
+
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ organizationId: ORG_ID }),
+        }),
+      );
+    });
+
+    it('another source is untouched', async () => {
+      await signalService.reconcileHistoricalSignals(ORG_ID, baseInput);
+
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ source: SignalSource.DOCKER }),
+        }),
+      );
+    });
+
+    it('another signal type is untouched', async () => {
+      await signalService.reconcileHistoricalSignals(ORG_ID, baseInput);
+
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ type: SignalType.DOCKER_CONTAINER_STATE_CHANGED }),
+        }),
+      );
+    });
+
+    it('matching observed fingerprints remain ACTIVE', async () => {
+      await signalService.reconcileHistoricalSignals(ORG_ID, baseInput);
+
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ fingerprint: { notIn: ['fp-current'] } }),
+        }),
+      );
+    });
+
+    it('absent ACTIVE matching signal becomes RESOLVED', async () => {
+      const result = await signalService.reconcileHistoricalSignals(ORG_ID, baseInput);
+
+      expect(result.resolved).toBe(1);
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: { in: [SignalStatus.ACTIVE, SignalStatus.ACKNOWLEDGED] },
+          }),
+          data: {
+            status: SignalStatus.RESOLVED,
+            archivedAt: null,
+          },
+        }),
+      );
+    });
+
+    it('absent ACKNOWLEDGED matching signal becomes RESOLVED', async () => {
+      await signalService.reconcileHistoricalSignals(ORG_ID, baseInput);
+
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: { in: [SignalStatus.ACTIVE, SignalStatus.ACKNOWLEDGED] },
+          }),
+        }),
+      );
+    });
+
+    it('RESOLVED signal remains unchanged', async () => {
+      await signalService.reconcileHistoricalSignals(ORG_ID, baseInput);
+
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: { in: [SignalStatus.ACTIVE, SignalStatus.ACKNOWLEDGED] },
+          }),
+        }),
+      );
+    });
+
+    it('ARCHIVED signal remains unchanged', async () => {
+      await signalService.reconcileHistoricalSignals(ORG_ID, baseInput);
+
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ archivedAt: null }),
+        }),
+      );
+    });
+
+    it('empty completed scan resolves matching stale signals', async () => {
+      await signalService.reconcileHistoricalSignals(ORG_ID, {
+        ...baseInput,
+        observedFingerprints: [],
+      });
+
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.not.objectContaining({ fingerprint: expect.anything() }),
+        }),
+      );
+    });
+
+    it('duplicate and blank observed fingerprints are normalized', async () => {
+      const result = await signalService.reconcileHistoricalSignals(ORG_ID, {
+        ...baseInput,
+        observedFingerprints: [' fp-current ', '', 'fp-current', '   ', 'fp-other'],
+      });
+
+      expect(result.observed).toBe(2);
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ fingerprint: { notIn: ['fp-current', 'fp-other'] } }),
+        }),
+      );
+    });
+
+    it('delayed reconciliation does not resolve a signal with lastSeenAt later than observedAt', async () => {
+      await signalService.reconcileHistoricalSignals(ORG_ID, baseInput);
+
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ lastSeenAt: { lte: observedAt } }),
+        }),
+      );
+    });
+
+    it('undefined scope fields are omitted', async () => {
+      await signalService.reconcileHistoricalSignals(ORG_ID, {
+        ...baseInput,
+        scope: {
+          resourceNodeId: undefined,
+          projectId: 'project-123',
+          metadata: {
+            monitoringScope: undefined,
+            resourceIdentity: 'compose:autoops:container:api',
+          },
+        },
+      });
+
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.not.objectContaining({
+            resourceNodeId: expect.anything(),
+          }),
+        }),
+      );
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            projectId: 'project-123',
+            AND: [
+              {
+                metadata: {
+                  path: ['resourceIdentity'],
+                  equals: 'compose:autoops:container:api',
+                },
+              },
+            ],
+          }),
+        }),
+      );
+    });
+
+    it('explicit null scope fields are applied intentionally', async () => {
+      await signalService.reconcileHistoricalSignals(ORG_ID, {
+        ...baseInput,
+        scope: {
+          resourceNodeId: null,
+          metadata: {
+            resourceIdentity: null,
+          },
+        },
+      });
+
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            resourceNodeId: null,
+          }),
+        }),
+      );
+      const where = updateMany.mock.calls[0]![0].where;
+      expect(where.AND[0].metadata.path).toEqual(['resourceIdentity']);
+      expect(where.AND[0].metadata.equals).toBeDefined();
+    });
+
+    it('invalid metadata scope is rejected', async () => {
+      await expect(
+        signalService.reconcileHistoricalSignals(ORG_ID, {
+          ...baseInput,
+          scope: {
+            metadata: {
+              arbitraryPrismaClause: 'nope',
+            } as any,
+          },
+        }),
+      ).rejects.toThrow('Unsupported signal reconciliation metadata scope');
+
+      expect(count).not.toHaveBeenCalled();
+      expect(updateMany).not.toHaveBeenCalled();
+      expect($transaction).not.toHaveBeenCalled();
+    });
+
+    it('repeated reconciliation is idempotent', async () => {
+      updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+
+      const first = await signalService.reconcileHistoricalSignals(ORG_ID, baseInput);
+      const second = await signalService.reconcileHistoricalSignals(ORG_ID, baseInput);
+
+      expect(first.resolved).toBe(1);
+      expect(second.resolved).toBe(0);
+    });
+
+    it('resource or condition-family scope does not affect unrelated signals', async () => {
+      await signalService.reconcileHistoricalSignals(ORG_ID, baseInput);
+
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            resourceNodeId: 'node-123',
+            projectId: 'project-123',
+            environmentId: 'env-123',
+            AND: [
+              {
+                metadata: {
+                  path: ['resourceIdentity'],
+                  equals: 'compose:autoops:container:api',
+                },
+              },
+              {
+                metadata: {
+                  path: ['condition'],
+                  equals: 'running_unhealthy',
+                },
+              },
+            ],
+          }),
+        }),
+      );
+    });
+
+    it('Prisma where clause contains all tenant, lifecycle, scope, and time guards', async () => {
+      await signalService.reconcileHistoricalSignals(ORG_ID, baseInput);
+
+      const expectedWhere = {
+        organizationId: ORG_ID,
+        source: SignalSource.DOCKER,
+        type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+        status: { in: [SignalStatus.ACTIVE, SignalStatus.ACKNOWLEDGED] },
+        archivedAt: null,
+        lastSeenAt: { lte: observedAt },
+        resourceNodeId: 'node-123',
+        projectId: 'project-123',
+        environmentId: 'env-123',
+        AND: [
+          {
+            metadata: {
+              path: ['resourceIdentity'],
+              equals: 'compose:autoops:container:api',
+            },
+          },
+          {
+            metadata: {
+              path: ['condition'],
+              equals: 'running_unhealthy',
+            },
+          },
+        ],
+      };
+
+      expect(count).toHaveBeenCalledWith({ where: expectedWhere });
+      expect(updateMany).toHaveBeenCalledWith({
+        where: {
+          ...expectedWhere,
+          fingerprint: { notIn: ['fp-current'] },
         },
         data: {
           status: SignalStatus.RESOLVED,

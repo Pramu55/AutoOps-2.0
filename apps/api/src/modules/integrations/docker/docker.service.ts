@@ -100,11 +100,14 @@ export class DockerService {
     }
 
     try {
-      const [version, containers, images] = await Promise.all([
-        client.version(),
-        client.listContainers(),
-        client.listImages(),
-      ]);
+      const { version, containers, images } = await this._withCompleteDockerObservation(organizationId, async () => {
+        const [version, containers, images] = await Promise.all([
+          client.version(),
+          client.listContainers(),
+          client.listImages(),
+        ]);
+        return { containers, value: { version, containers, images } };
+      });
 
       if (organizationId) {
         void signalService.ingestSignal(organizationId, {
@@ -122,7 +125,6 @@ export class DockerService {
         void signalService.resolveSignalsByTitles(organizationId, SignalSource.DOCKER, SignalType.PROVIDER_AUTH_FAILED, [
           'Docker Provider AUTH_FAILED',
         ]);
-        void this._ingestContainerSignals(organizationId, containers);
       }
 
       return {
@@ -158,11 +160,13 @@ export class DockerService {
 
   async listContainers(organizationId?: string): Promise<DockerListResponse<DockerContainer>> {
     return this._list(async (client) => {
-      const containers = await client.listContainers();
-      if (organizationId) {
-        void this._ingestContainerSignals(organizationId, containers);
-      }
-      return containers.map((container) => this._toContainer(container));
+      return this._withCompleteDockerObservation(organizationId, async () => {
+        const containers = await client.listContainers();
+        return {
+          containers,
+          value: containers.map((container) => this._toContainer(container)),
+        };
+      });
     });
   }
 
@@ -297,7 +301,9 @@ export class DockerService {
     return container;
   }
 
-  private async _list<T>(loader: (client: DockerEngineClient) => Promise<T[]>): Promise<DockerListResponse<T>> {
+  private async _list<T>(
+    loader: (client: DockerEngineClient) => Promise<T[]>,
+  ): Promise<DockerListResponse<T>> {
     const checkedAt = new Date().toISOString();
     const client = new DockerEngineClient();
     if (!client.isConfigured()) {
@@ -454,6 +460,18 @@ export class DockerService {
     };
   }
 
+  private async _withCompleteDockerObservation<T>(
+    organizationId: string | undefined,
+    load: () => Promise<{ containers: DockerContainerSummary[]; value: T }>,
+  ): Promise<T> {
+    const cycleStartedAt = new Date();
+    const result = await load();
+    if (organizationId) {
+      await this._ingestContainerSignals(organizationId, result.containers, cycleStartedAt);
+    }
+    return result.value;
+  }
+
   private _toRecord(value: unknown): Record<string, unknown> {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       return value as Record<string, unknown>;
@@ -474,6 +492,7 @@ export class DockerService {
   private async _ingestContainerSignals(
     organizationId: string,
     containers: DockerContainerSummary[],
+    observedAt = new Date(),
   ): Promise<void> {
     const signals: SignalIngestInput[] = [];
     const resolvedFingerprints: string[] = [];
@@ -484,7 +503,7 @@ export class DockerService {
       const observation = this._toObservation(container);
       const classification = this._classifyContainerObservation(observation);
       if (classification) {
-        signals.push(this._toContainerSignal(observation, classification));
+        signals.push(this._toContainerSignal(observation, classification, observedAt));
       } else if (observation.monitored) {
         resolvedFingerprints.push(...this._resolutionFingerprints(organizationId, observation));
         resolvedResourceConditions.push({
@@ -497,13 +516,16 @@ export class DockerService {
     }
 
     if (signals.length > 0) {
-      void signalService.ingestSignals(organizationId, signals);
+      const ingestedSignals = await signalService.ingestSignals(organizationId, signals);
+      if (ingestedSignals.length !== signals.length) {
+        throw new Error('Docker signal ingestion was incomplete; historical reconciliation skipped.');
+      }
     }
     if (resolvedFingerprints.length > 0) {
-      void signalService.resolveSignalsByFingerprints(organizationId, resolvedFingerprints);
+      await signalService.resolveSignalsByFingerprints(organizationId, resolvedFingerprints);
     }
     if (resolvedLegacyTitles.length > 0) {
-      void signalService.resolveSignalsByTitles(
+      await signalService.resolveSignalsByTitles(
         organizationId,
         SignalSource.DOCKER,
         SignalType.DOCKER_CONTAINER_STATE_CHANGED,
@@ -511,13 +533,38 @@ export class DockerService {
       );
     }
     for (const resolution of resolvedResourceConditions) {
-      void signalService.resolveSignalsByResourceConditionFamily(organizationId, {
+      await signalService.resolveSignalsByResourceConditionFamily(organizationId, {
         source: SignalSource.DOCKER,
         type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
         resourceIdentity: resolution.resourceIdentity,
         conditions: RECOVERABLE_DOCKER_CONTAINER_CONDITIONS,
         conditionPrefixes: RECOVERABLE_DOCKER_CONTAINER_CONDITION_PREFIXES,
         titles: resolution.titles,
+      });
+    }
+
+    const observedByMonitoringScope = new Map<DockerMonitoringScope, string[]>(
+      ['managed', 'monitored'].map((scope) => [scope as DockerMonitoringScope, []]),
+    );
+    for (const signal of signals) {
+      const monitoringScope = signal.metadata?.monitoringScope;
+      if (monitoringScope === 'managed' || monitoringScope === 'monitored') {
+        observedByMonitoringScope
+          .get(monitoringScope)
+          ?.push(signalService.buildSignalFingerprint(organizationId, signal, 'DEDUPE'));
+      }
+    }
+
+    for (const [monitoringScope, observedFingerprints] of observedByMonitoringScope.entries()) {
+      await signalService.reconcileHistoricalSignals(organizationId, {
+        source: SignalSource.DOCKER,
+        type: SignalType.DOCKER_CONTAINER_STATE_CHANGED,
+        observedFingerprints,
+        scope: {
+          metadata: { monitoringScope },
+        },
+        scanCompleted: true,
+        observedAt,
       });
     }
   }
@@ -605,6 +652,7 @@ export class DockerService {
   private _toContainerSignal(
     observation: DockerContainerObservation,
     classification: Exclude<DockerSignalClassification, null>,
+    observedAt: Date,
   ): SignalIngestInput {
     return {
       source: SignalSource.DOCKER,
@@ -612,6 +660,7 @@ export class DockerService {
       severity: classification.severity,
       title: classification.title,
       message: classification.message,
+      observedAt,
       metadata: {
         id: observation.id,
         name: observation.name,

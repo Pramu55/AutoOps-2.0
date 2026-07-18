@@ -10,7 +10,7 @@ import {
   type SignalReadinessResponse,
   type SignalSummary,
 } from '@autoops/types';
-import { NotFoundError } from '@autoops/utils';
+import { BadRequestError, NotFoundError } from '@autoops/utils';
 import { Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { mapResourceSignalSummary, sanitizeSignalMetadata } from './signal.mapper.js';
@@ -23,6 +23,40 @@ type ResourceConditionResolutionInput = {
   conditionPrefixes?: string[];
   titles?: string[];
 };
+
+type SignalReconciliationMetadataScopeKey = 'condition' | 'monitoringScope' | 'resourceIdentity';
+
+type SignalReconciliationScope = {
+  resourceNodeId?: string | null;
+  operationId?: string | null;
+  deploymentId?: string | null;
+  projectId?: string | null;
+  environmentId?: string | null;
+  metadata?: Partial<Record<SignalReconciliationMetadataScopeKey, string | number | boolean | null>>;
+};
+
+type HistoricalSignalReconciliationInput = {
+  source: SignalSource;
+  type: SignalType;
+  observedFingerprints: string[];
+  scope?: SignalReconciliationScope;
+  scanCompleted: boolean;
+  observedAt: Date;
+};
+
+type HistoricalSignalReconciliationResult = {
+  scanned: number;
+  observed: number;
+  resolved: number;
+  skipped: boolean;
+  reason?: string;
+};
+
+const SIGNAL_RECONCILIATION_METADATA_SCOPE_KEYS = new Set<string>([
+  'condition',
+  'monitoringScope',
+  'resourceIdentity',
+]);
 
 export class SignalService {
   async ingestSignal(organizationId: string, input: SignalIngestInput): Promise<SignalSummary> {
@@ -295,6 +329,49 @@ export class SignalService {
     return result.count;
   }
 
+  async reconcileHistoricalSignals(
+    organizationId: string,
+    input: HistoricalSignalReconciliationInput,
+  ): Promise<HistoricalSignalReconciliationResult> {
+    const observedFingerprints = [
+      ...new Set(input.observedFingerprints.map((fingerprint) => fingerprint.trim()).filter(Boolean)),
+    ];
+
+    if (!input.scanCompleted) {
+      return {
+        scanned: 0,
+        observed: observedFingerprints.length,
+        resolved: 0,
+        skipped: true,
+        reason: 'scan_not_completed',
+      };
+    }
+
+    const where = this._historicalReconciliationWhere(organizationId, input);
+    const staleWhere: Prisma.ResourceSignalWhereInput = {
+      ...where,
+      ...(observedFingerprints.length > 0 ? { fingerprint: { notIn: observedFingerprints } } : {}),
+    };
+
+    const [scanned, resolved] = await prisma.$transaction([
+      prisma.resourceSignal.count({ where }),
+      prisma.resourceSignal.updateMany({
+        where: staleWhere,
+        data: {
+          status: SignalStatus.RESOLVED,
+          archivedAt: null,
+        },
+      }),
+    ]);
+
+    return {
+      scanned,
+      observed: observedFingerprints.length,
+      resolved: resolved.count,
+      skipped: false,
+    };
+  }
+
   buildSignalFingerprint(organizationId: string, input: SignalIngestInput, mode: 'DEDUPE' | 'EVENT'): string {
     const parts = [
       organizationId,
@@ -331,6 +408,46 @@ export class SignalService {
 
   private _jsonObject(value: Prisma.JsonValue): Prisma.JsonObject | null {
     return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  }
+
+  private _historicalReconciliationWhere(
+    organizationId: string,
+    input: HistoricalSignalReconciliationInput,
+  ): Prisma.ResourceSignalWhereInput {
+    const scope = input.scope ?? {};
+    const where: Prisma.ResourceSignalWhereInput = {
+      organizationId,
+      source: input.source,
+      type: input.type,
+      status: { in: [SignalStatus.ACTIVE, SignalStatus.ACKNOWLEDGED] },
+      archivedAt: null,
+      lastSeenAt: { lte: input.observedAt },
+    };
+
+    if (scope.resourceNodeId !== undefined) where.resourceNodeId = scope.resourceNodeId;
+    if (scope.operationId !== undefined) where.operationId = scope.operationId;
+    if (scope.deploymentId !== undefined) where.deploymentId = scope.deploymentId;
+    if (scope.projectId !== undefined) where.projectId = scope.projectId;
+    if (scope.environmentId !== undefined) where.environmentId = scope.environmentId;
+
+    const metadataScope = Object.entries(scope.metadata ?? {}).filter((entry): entry is [string, string | number | boolean | null] => {
+      const [key, value] = entry;
+      if (!SIGNAL_RECONCILIATION_METADATA_SCOPE_KEYS.has(key)) {
+        throw new BadRequestError(`Unsupported signal reconciliation metadata scope: ${key}`);
+      }
+      return value !== undefined;
+    });
+    if (metadataScope.length > 0) {
+      const metadataFilters: Prisma.ResourceSignalWhereInput[] = metadataScope.map(([key, value]) => ({
+        metadata: {
+          path: [key],
+          equals: value === null ? Prisma.JsonNull : value,
+        } as Prisma.JsonFilter<'ResourceSignal'>,
+      }));
+      where.AND = metadataFilters;
+    }
+
+    return where;
   }
 
   private _filterWhere(organizationId: string, filters: SignalFilter): Prisma.ResourceSignalWhereInput {
