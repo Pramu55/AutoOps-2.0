@@ -227,6 +227,29 @@ Production services should evaluate and apply, where compatible:
 
 Exceptions must be documented.
 
+Gate 2 Slice 2 sets the production Compose baseline for the API, worker, and web
+containers:
+
+- final runtime processes run as the image-defined non-root `autoops` user;
+- `no-new-privileges:true` is enabled;
+- all Linux capabilities are dropped with `cap_drop: ALL`;
+- root filesystems are read-only;
+- `/tmp` is the only approved writable tmpfs path by default;
+- Docker socket and kubeconfig mounts are absent;
+- PostgreSQL and Redis remain private with no host-published ports;
+- bounded `json-file` logging uses `max-size=10m` and `max-file=3`;
+- CPU, memory, memory-reservation, and PID limits are set as pilot baselines.
+
+PostgreSQL and Redis are treated as stateful exceptions. Their official image
+users, writable data paths, initialization behavior, and PID/temp-file
+expectations are preserved. They receive `no-new-privileges`, bounded logging,
+resource limits, and PID limits, but do not receive read-only root filesystems,
+custom users, or blanket capability changes in this slice.
+
+The baseline limits are intentionally conservative company-pilot values, not a
+capacity guarantee. They must be tuned from production metrics before broader
+adoption.
+
 ## Production Admin Safety
 
 - Demo users must not be deployed as production administrators.
@@ -264,7 +287,7 @@ Production deployment is blocked unless all of the following pass:
 6. External alert delivery is not configured.
 7. Production observability topology is not deployed.
 8. Automated production deployment workflow is not implemented.
-9. Production container hardening is incomplete.
+9. Production container hardening has a Compose baseline, but full production deployment evidence is not complete.
 10. Production admin bootstrap is not proven.
 11. Two frontend React hook warnings remain.
 12. Production smoke and rollback evidence do not exist.

@@ -115,6 +115,8 @@ COPY --from=builder /repo/packages/database/prisma ./packages/database/prisma
 COPY --from=builder /repo/apps/api/package.json ./apps/api/package.json
 COPY --from=builder /repo/apps/api/dist ./apps/api/dist
 
+RUN chown -R autoops:autoops /app
+
 USER autoops
 
 EXPOSE 4000

@@ -120,6 +120,46 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 The production compose file does not mount Docker socket or kubeconfig by default. It intentionally has no `http://localhost:4000` fallback for `NEXT_PUBLIC_API_URL`; Compose should fail before building when that public HTTPS API URL is absent. The web service can still use the internal default `API_INTERNAL_URL=http://api:4000` for server-side API rewrites on the private Docker network.
 
+Production container hardening baseline:
+
+- API, worker, and web run as non-root image users.
+- API, worker, and web use `no-new-privileges:true`, `cap_drop: ALL`, and read-only root filesystems.
+- API, worker, and web have only `/tmp` as an approved writable tmpfs path by default.
+- PostgreSQL and Redis remain private and have no host-published ports.
+- Worker has no public port.
+- Docker socket and kubeconfig mounts are absent from production Compose.
+- All production services use bounded `json-file` logging with `max-size=10m` and `max-file=3`.
+- CPU, memory, memory-reservation, and PID limits are set as initial pilot baselines and require metrics-based tuning.
+
+Stateful-service exception: PostgreSQL and Redis keep their official image users
+and writable data paths. Do not apply read-only root filesystems or custom users
+to these services without separate compatibility proof for initialization, data,
+PID, and temporary-file behavior.
+
+Static container hardening validation:
+
+```powershell
+pnpm.cmd run check:container-hardening -- --env-file C:\tmp\autoops-prod-proof.env
+```
+
+Use only disposable values in the temporary env file. Do not use or print the
+repository `.env`.
+
+Isolated runtime proof procedure:
+
+1. Create a unique proof project name such as `autoops-prod-hardening-proof-<timestamp>`.
+2. Create a temporary env file outside the repository with disposable values.
+3. Use `docker compose --env-file <temp-env> -p <proof-project> -f docker-compose.prod.yml config` to verify the rendered production Compose.
+4. Build and run only under the proof project name, with proof-only volumes and no development host-port conflicts.
+5. Verify health checks and inspect only targeted safe fields: user, read-only root filesystem, capabilities, `no-new-privileges`, tmpfs mounts, resource limits, PID limits, logging options, ports, networks, and mount sources.
+6. Confirm no Docker socket, kubeconfig, host network, privileged mode, protected volume, or unexpected public port is present.
+7. Stop and remove only proof containers and network. Remove only exact proof volume names after verifying they do not match protected development volumes.
+8. Delete the temporary env and override files.
+
+This procedure is production-hardening evidence only. It is not a claim that a
+public production deployment, managed secrets, managed databases, HTTPS ingress,
+or external alerting have been completed.
+
 ## Migration Flow
 
 Do not run `prisma migrate reset`.
