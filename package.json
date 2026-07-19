@@ -1,4 +1,3 @@
-
 {
   "name": "autoops",
   "version": "3.0.0",
@@ -27,6 +26,7 @@
     "check:release:linux": "bash scripts/check-release.sh",
     "check:secrets": "powershell -ExecutionPolicy Bypass -File scripts/scan-secrets.ps1",
     "check:secrets:linux": "bash scripts/scan-secrets.sh",
+    "check:container-hardening": "node scripts/validate-container-hardening.mjs",
     "docker:dev": "docker compose up --build",
     "docker:dev:detached": "docker compose up --build -d",
     "docker:down": "docker compose down",
