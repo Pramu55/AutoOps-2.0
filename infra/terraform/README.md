@@ -328,3 +328,17 @@ That validator is static and offline. It checks the approval document, wrapper
 guardrails, generated-artifact absence, approved lock-file immutability, the
 existing ten-resource proof scope, and the package script. It does not run
 Terraform, Docker, AWS CLI, provider downloads, or network commands.
+
+## Gate 3 Slice 5E Terraform Plan Readiness
+
+Slice 5E is offline preparation only. The plan wrapper and validator are
+prepared, but Terraform was not executed, plan was not executed, credentials
+were not accessed, STS was not called, AWS API was not accessed, no state or
+plan exists, no resources were created, and AWS spend remains USD 0. A separate
+runtime approval is still required before any Terraform plan command may run.
+
+Static validation:
+
+```powershell
+pnpm.cmd run check:terraform-plan-readiness
+```
