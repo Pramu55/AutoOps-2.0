@@ -27,7 +27,7 @@ Any future AWS action requires the approval gates in this document. No AWS resou
 
 - Prove a disposable EC2 Docker Compose deployment model in `ap-south-1`.
 - Preserve Gate 2 production container hardening.
-- Use `docker-compose.prod.yml` as the runtime baseline.
+- Use `docker-compose.prod.yml` as the hardened runtime base.
 - Validate SSM-only administration with no inbound SSH.
 - Validate trusted HTTPS through an approved user-owned domain and Let's Encrypt DNS-01 certificate.
 - Validate private Postgres, Redis, Prometheus, and Grafana exposure boundaries.
@@ -106,14 +106,16 @@ All eight services run during the proof.
 
 Prometheus and Grafana are deployed privately. They have no public ingress and are accessed only through SSM port forwarding. Grafana is never publicly exposed during this proof.
 
-The Compose baseline is `docker-compose.prod.yml`. `docker-compose.yml` is explicitly rejected for this proof because it exposes development ports and mounts development-sensitive resources, including public database and Redis ports and Docker socket access.
+The Compose hardened base is `docker-compose.prod.yml`. It currently defines only `postgres`, `redis`, `api`, `worker`, and `web`, so it cannot alone start the required eight-service EC2 proof. A future Slice 5 production-safe overlay named `docker-compose.ec2-proof.yml` is mandatory and must add `nginx`, `prometheus`, and `grafana` while preserving private-only observability and hardened service settings.
+
+`docker-compose.yml` is explicitly rejected for this proof because it exposes development ports and mounts development-sensitive resources, including public database and Redis ports and Docker socket access.
 
 ## 7. EC2 Instance Decision
 
-Selected instance type: `t3.medium`
+Selected instance type: `t3.large`
 
 - vCPU: 2
-- Memory: 4 GiB RAM
+- Memory: 8 GiB RAM
 - CPU architecture: x86_64
 - CPU model: burstable CPU
 - Maximum runtime: 8 hours
@@ -124,6 +126,7 @@ Confirmed repository limits:
 
 - `docker-compose.prod.yml` sets CPU, memory, PID, bounded logging, read-only app root filesystem, no-new-privileges, dropped Linux capabilities, private Postgres and Redis, no Docker socket, and no kubeconfig.
 - The production Compose baseline does not expose Postgres or Redis host ports.
+- `docker-compose.prod.yml` currently includes only `postgres`, `redis`, `api`, `worker`, and `web`; the required `nginx`, `prometheus`, and `grafana` services must be added later through the mandatory `docker-compose.ec2-proof.yml` overlay.
 
 Estimated memory model:
 
@@ -139,9 +142,11 @@ Estimated memory model:
 | prometheus      |         200 MiB |       400 MiB |
 | grafana         |         200 MiB |       400 MiB |
 
-Expected normal memory use is approximately 2.7-3.5 GiB. Peak usage can approach the 4 GiB instance limit during image builds, migration, or simultaneous checks. The 2 GiB swap file is allowed only to avoid an emergency out-of-memory failure; it is not capacity planning.
+Expected normal memory use is approximately 2.7-3.5 GiB. The full eight-service peak estimate is approximately 4.8-5.8 GiB before Docker build cache, image build, migration, package installation, and simultaneous verification overhead. That peak exceeds a 4 GiB `t3.medium` before the riskiest operational overhead is included.
 
-`t3.small` is rejected because 2 GiB RAM is too tight for the full proof stack plus Docker build cache, migration, Postgres, Redis, Prometheus, and Grafana. Building images on-instance is feasible on `t3.medium`, but build time and T3 CPU burst credits must be treated as proof risks. CPU credit depletion can slow builds and health checks; the hard 8-hour runtime boundary limits exposure.
+The 2 GiB swap file is allowed only to avoid an emergency out-of-memory failure. Swap cannot justify undersized memory for the approved proof host because sustained swap use would distort runtime evidence and can mask a design that is too small for the eight-service stack.
+
+`t3.small` is rejected because 2 GiB RAM is too tight for the full proof stack plus Docker build cache, migration, Postgres, Redis, Prometheus, and Grafana. `t3.medium` is also rejected for the first proof because 4 GiB RAM is below the estimated peak eight-service need before build and migration overhead. `t3.medium` remains only a future optimization candidate after measured memory evidence, prebuilt images, and tuned container limits show that the proof can run safely without relying on swap. Building images on-instance is feasible on `t3.large`, but build time and T3 CPU burst credits must still be treated as proof risks. CPU credit depletion can slow builds and health checks; the hard 8-hour runtime boundary limits exposure.
 
 ## 8. OS and Architecture
 
@@ -312,7 +317,9 @@ User data must never contain:
 
 Application source or deployment bundle is transferred only after explicit approval through SSM. Secrets are transferred through a separately approved secure process. The deployment directory is `/opt/autoops-proof`.
 
-The runtime baseline is `docker-compose.prod.yml`. Application deployment, migration, and Compose startup occur only after later apply approval. Migrations use:
+The runtime hardened base is `docker-compose.prod.yml`, which currently starts only `postgres`, `redis`, `api`, `worker`, and `web`. It cannot alone start the required eight-service proof. Slice 5 must add a production-safe `docker-compose.ec2-proof.yml` overlay for `nginx`, `prometheus`, and `grafana` before the proof can run.
+
+Application deployment, migration, and Compose startup occur only after later apply approval. Migrations use:
 
 ```text
 prisma migrate deploy
@@ -412,12 +419,14 @@ Pricing-check date: 2026-07-20
 
 These figures are estimates and not billing guarantees. Compute and gp3 prices must be revalidated immediately before any Slice 5 plan or apply. No Free Tier is assumed.
 
+Official price source for compute: AWS EC2 On-Demand Instance Pricing and the AWS Price List Bulk API regional AmazonEC2 price list for `ap-south-1` (`https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-south-1/index.json`). The selected Linux On-Demand `t3.large` price used here is USD 0.0896/hour.
+
 Assumptions:
 
-- `t3.medium` compute estimate: USD 0.0448/hour
+- `t3.large` compute estimate: USD 0.0896/hour
 - Public IPv4: USD 0.005/hour
 - 40 GiB gp3 estimate: approximately USD 0.005/hour
-- Estimated combined hourly cost: approximately USD 0.0548
+- Estimated combined hourly cost: approximately USD 0.0996
 - Conversion assumption: USD 1 = INR 86
 - No snapshot
 - Negligible proof data transfer assumption
@@ -428,19 +437,20 @@ Assumptions:
 
 | Runtime  | Approximate USD | Approximate INR |
 | -------- | --------------: | --------------: |
-| 1 hour   |            0.05 |               5 |
-| 4 hours  |            0.22 |              19 |
-| 8 hours  |            0.44 |              38 |
-| 12 hours |            0.66 |              57 |
-| 24 hours |            1.32 |             113 |
-| 7 days   |            9.21 |             792 |
-| 30 days  |           39.45 |           3,393 |
+| 1 hour   |            0.10 |               9 |
+| 4 hours  |            0.40 |              34 |
+| 8 hours  |            0.80 |              69 |
+| 12 hours |            1.20 |             103 |
+| 24 hours |            2.39 |             206 |
+| 7 days   |           16.73 |           1,439 |
+| 30 days  |           71.71 |           6,167 |
 
 Public IPv4 is billed at USD 0.005 per address-hour. AWS Budgets alerts are not automatic hard caps and do not terminate resources.
 
 ## 21. Cost-Safety Controls
 
 - Maximum approved direct infrastructure cost per proof run: USD 2.
+- The USD 2 run ceiling remains conservative after the `t3.large` recalculation: the eight-hour direct estimate is approximately USD 0.80, leaving roughly USD 1.20 of contingency for estimate drift within the approved runtime.
 - Investigate immediately when forecast exceeds USD 5.
 - Stop when idle or blocked at four hours.
 - Terminate no later than eight hours.
@@ -493,7 +503,7 @@ All resources require deterministic tags including `Project`, `Environment`, `Ow
 | `owner`                 | string | required             | non-empty safe tag value                     | reject blank owner                                  | false     | accountability                      |
 | `proof_expires_at`      | string | required             | approved teardown timestamp                  | reject missing value                                | false     | teardown evidence                   |
 | `max_proof_hours`       | number | default `8`          | 1 through 8                                  | reject values outside 1-8                           | false     | runtime ceiling                     |
-| `instance_type`         | string | default `t3.medium`  | `t3.medium` only                             | reject all other types                              | false     | compute guardrail                   |
+| `instance_type`         | string | default `t3.large`   | `t3.large` only                              | reject all other types                              | false     | compute guardrail                   |
 | `ami_id`                | string | required             | manually approved Ubuntu 24.04 x86_64 AMI ID | reject blank or malformed AMI ID                    | false     | deterministic OS image              |
 | `root_volume_size_gib`  | number | default `40`         | exactly 40 or bounded no higher than 40      | reject values above 40                              | false     | storage ceiling                     |
 | `allowed_https_cidr`    | string | required             | valid IPv4 `/32`                             | reject non-`/32` CIDR                               | false     | HTTPS ingress scope                 |
@@ -540,21 +550,21 @@ No backend block is currently implemented or approved by Slice 4.
 
 ## 26. Approval Gates A Through M
 
-| Gate | Name                                              | Evidence                                         | Approver | Prohibited next action until approved    |
-| ---- | ------------------------------------------------- | ------------------------------------------------ | -------- | ---------------------------------------- |
-| A    | Design approved                                   | Accepted design document                         | User     | Terraform resource code                  |
-| B    | Terraform resource code reviewed                  | Full diff and static review                      | User     | Static validation                        |
-| C    | Static validation passed                          | Formatter and local validators                   | User     | AWS identity/account/region verification |
-| D    | AWS identity/account/region verification approved | Explicit approval for identity/region check      | User     | Temporary credential use                 |
-| E    | Temporary least-privileged credentials approved   | Credential scope, expiry, and policy review      | User     | Terraform init                           |
-| F    | Terraform init approved                           | Local state and backend-disabled command review  | User     | Terraform plan                           |
-| G    | Terraform plan reviewed                           | Complete plan output, no unexpected resources    | User     | Cost approval                            |
-| H    | Cost reviewed                                     | Forecast within USD 2 and no hidden services     | User     | Terraform apply                          |
-| I    | Explicit Terraform apply approval                 | Direct approval for one apply                    | User     | Resource runtime verification            |
-| J    | Runtime verification                              | Health, HTTPS, SSM, migration, smoke evidence    | User     | Extended runtime                         |
-| K    | Stop and termination deadlines confirmed          | Exact stop and termination timestamps            | User     | Continued operation past boundary        |
-| L    | Terraform destroy and cleanup verified            | Destroy output and independent cleanup checklist | User     | State deletion                           |
-| M    | Billing follow-up completed                       | Delayed billing check and final cost evidence    | User     | Slice closure                            |
+| Gate | Name                                              | Evidence                                                                     | Approver | Prohibited next action until approved    |
+| ---- | ------------------------------------------------- | ---------------------------------------------------------------------------- | -------- | ---------------------------------------- |
+| A    | Design approved                                   | Accepted design document                                                     | User     | Terraform resource code                  |
+| B    | Terraform resource code reviewed                  | Full diff and static review                                                  | User     | Static validation                        |
+| C    | Static validation passed                          | Formatter and local validators                                               | User     | AWS identity/account/region verification |
+| D    | AWS identity/account/region verification approved | Explicit approval for identity/region check                                  | User     | Temporary credential use                 |
+| E    | Temporary least-privileged credentials approved   | Credential scope, expiry, and policy review                                  | User     | Terraform init                           |
+| F    | Terraform init approved                           | Local state and backend-disabled command review                              | User     | Terraform plan                           |
+| G    | Terraform plan reviewed                           | Complete plan output, no unexpected resources                                | User     | Cost approval                            |
+| H    | Cost reviewed                                     | Forecast within USD 2 using the `t3.large` cost model and no hidden services | User     | Terraform apply                          |
+| I    | Explicit Terraform apply approval                 | Direct approval for one apply                                                | User     | Resource runtime verification            |
+| J    | Runtime verification                              | Health, HTTPS, SSM, migration, smoke evidence                                | User     | Extended runtime                         |
+| K    | Stop and termination deadlines confirmed          | Exact stop and termination timestamps                                        | User     | Continued operation past boundary        |
+| L    | Terraform destroy and cleanup verified            | Destroy output and independent cleanup checklist                             | User     | State deletion                           |
+| M    | Billing follow-up completed                       | Delayed billing check and final cost evidence                                | User     | Slice closure                            |
 
 Approval of Slice 4 documentation does not authorize AWS identity lookup, credential use, Terraform init, Terraform plan, Terraform apply, resource creation, Terraform destroy, or AWS API access.
 
@@ -618,6 +628,7 @@ Verify:
 - AWS account and region verification approval for a later gate
 - Temporary least-privileged credential approval for a later gate
 - Final cost revalidation before plan or apply
+- Future optimization evidence before any `t3.medium` reconsideration
 - Exact proof expiry timestamp
 - Disposable data approval
 - Secure certificate/key transfer process
@@ -639,7 +650,8 @@ Slice 4 is complete when:
 ## 31. Final Decision Summary
 
 - Selected region: `ap-south-1`
-- Instance type: `t3.medium`
+- Instance type: `t3.large`
+- Instance size: 2 vCPU, 8 GiB RAM, x86_64
 - OS: Ubuntu Server 24.04 LTS
 - Architecture: x86_64
 - Root volume: 40 GiB encrypted gp3, delete on termination
@@ -661,7 +673,8 @@ Slice 4 is complete when:
 - Maximum approved direct infrastructure cost per run: USD 2
 - Investigate forecast above: USD 5
 - Future Terraform resource count: 10
-- Compose baseline: `docker-compose.prod.yml`
+- Compose base: `docker-compose.prod.yml`
+- Mandatory future overlay: `docker-compose.ec2-proof.yml`
 - Documentation approval authorizes deployment: no
 
 Decision: proceed only to documentation review. Block AWS identity lookup, credential use, Terraform init, Terraform plan, Terraform apply, Terraform destroy, AWS API access, and resource creation until the required future gates are approved.
