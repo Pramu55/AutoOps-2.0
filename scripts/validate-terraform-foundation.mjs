@@ -378,14 +378,17 @@ function validateOutputs(env) {
   const relativePath = terraformFile(env, 'outputs.tf');
   const text = read(relativePath);
 
-  for (const output of requiredOutputs) {
-    assertContains(text, new RegExp(`output\\s+"${output}"`), `${relativePath} missing output ${output}`);
+  if (env === 'production') {
+    for (const output of requiredOutputs) {
+      assertContains(text, new RegExp(`output\\s+"${output}"`), `${relativePath} missing output ${output}`);
+    }
   }
 
+  const outputCount = [...text.matchAll(/^\s*output\s+"[^"]+"\s*{/gm)].length;
   const sensitiveFalseCount = [...text.matchAll(/sensitive\s*=\s*false/g)].length;
   assert(
-    sensitiveFalseCount === requiredOutputs.length,
-    `${relativePath} must mark all outputs sensitive = false`,
+    outputCount > 0 && sensitiveFalseCount === outputCount,
+    `${relativePath} must mark every output sensitive = false`,
   );
 }
 

@@ -151,3 +151,64 @@ lock files, remove `.terraform` directories, and commit only the approved lock
 file changes and documentation evidence. Do not run plan, apply, destroy,
 refresh, import, state, console, test, or AWS CLI commands as part of this
 foundation validation.
+
+## Gate 3 Slice 5A Offline EC2 Proof Source
+
+Slice 5A adds offline source for the disposable EC2 Docker Compose proof under
+`infra/terraform/environments/proof` and `docker-compose.ec2-proof.yml`. The
+source code exists but has not been initialized or planned. No AWS identity has
+been queried, no credentials have been accessed, no Terraform provider has been
+downloaded by this slice, no AWS API has been called, no resources have been
+created, and AWS spend remains USD 0.
+
+The proof root still uses local Terraform state. No backend block is configured.
+State, state backups, `.terraform` directories, plans, provider caches, and real
+tfvars files must remain uncommitted.
+
+The offline proof implementation is limited to the approved ten resource
+addresses from the Slice 4 design:
+
+- `aws_vpc.proof`
+- `aws_subnet.public`
+- `aws_internet_gateway.proof`
+- `aws_route_table.public`
+- `aws_route_table_association.public`
+- `aws_security_group.proof_instance`
+- `aws_iam_role.ssm_instance`
+- `aws_iam_role_policy_attachment.ssm_core`
+- `aws_iam_instance_profile.ssm`
+- `aws_instance.proof`
+
+The Compose overlay has not been deployed. It is designed for a later approved
+EC2 proof with:
+
+```powershell
+docker compose -f docker-compose.prod.yml -f docker-compose.ec2-proof.yml config
+docker compose -f docker-compose.prod.yml -f docker-compose.ec2-proof.yml up -d
+```
+
+Do not run those commands until the later runtime approval gate allows them.
+`docker-compose.prod.yml` remains the hardened base for `postgres`, `redis`,
+`api`, `worker`, and `web`; `docker-compose.ec2-proof.yml` adds `nginx`,
+`prometheus`, and `grafana` for the eight-service proof. Only TCP 443 is intended
+for public host publication. Prometheus and Grafana remain private and are
+accessed through SSM port forwarding only.
+
+The overlay requires a Docker Compose implementation that supports the Compose
+`!reset []` tag so inherited `api` and `web` host-port publications from the
+hardened base can be explicitly cleared before the EC2 proof overlay publishes
+only `443:443`. Validate this capability in the later runtime gate before any
+deployment command is approved.
+
+Offline validation:
+
+```powershell
+pnpm.cmd run check:terraform-foundation
+pnpm.cmd run check:aws-proof-infrastructure
+```
+
+Later Terraform init requires separate approval. Later Terraform plan requires
+separate approval. Later Terraform apply requires separate explicit approval.
+Terraform destroy also requires the approved cleanup gate. AWS CLI commands,
+credential inspection, AWS API access, Docker runtime operations, and cloud
+resource creation are outside Slice 5A.
