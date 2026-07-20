@@ -1,12 +1,29 @@
-# Non-secret example values for local proof validation.
-# Copy locally only when needed.
+# Non-secret documentation-only example for the disposable EC2 proof.
+# Copy to an ignored local .tfvars file only after the future init gate is approved.
+# Replace every placeholder deliberately; this file is not directly usable for apply.
 # Real .tfvars files must remain uncommitted.
-# Never place credentials, passwords, tokens, or account secrets in tfvars.
+# Never place AWS credentials, profiles, account IDs, passwords, tokens, DNS secrets,
+# certificates, private keys, or credential file paths in tfvars.
 
 project_name        = "autoops"
 environment         = "proof"
 aws_region          = "ap-south-1"
-owner               = "platform-engineering"
-cost_center         = "portfolio"
+owner               = "replace-with-approved-non-secret-owner"
+cost_center         = "replace-with-approved-non-secret-cost-center"
 managed_by          = "terraform"
 data_classification = "disposable"
+
+proof_expires_at        = "replace-with-approved-rfc3339-utc-expiry"
+approved_domain         = "replace-with-approved-domain.invalid"
+approved_ingress_cidr   = "replace-with-approved-tester-ipv4-32"
+ami_id                  = "replace-with-approved-ubuntu-2404-x86-64-ami-id"
+cost_approval_reference = "replace-with-approved-cost-reference"
+
+max_proof_hours       = 8
+instance_type         = "t3.large"
+root_volume_size_gib  = 40
+enable_public_https   = true
+associate_public_ip   = true
+enable_ssm            = true
+detailed_monitoring   = false
+expected_max_cost_usd = 2
