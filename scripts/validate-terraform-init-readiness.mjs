@@ -12,6 +12,13 @@ const approvedLockFiles = [
   'infra/terraform/environments/production/.terraform.lock.hcl',
   'infra/terraform/environments/proof/.terraform.lock.hcl',
 ];
+const allowProofTerraformDirectoryFlag = '--allow-proof-terraform-directory';
+const suppliedArguments = process.argv.slice(2);
+const unexpectedArguments = suppliedArguments.filter(
+  (argument) => argument !== allowProofTerraformDirectoryFlag,
+);
+const allowProofTerraformDirectory = suppliedArguments.includes(allowProofTerraformDirectoryFlag);
+const approvedProofTerraformDirectory = 'infra/terraform/environments/proof/.terraform';
 
 const expectedResources = [
   'aws_vpc.proof',
@@ -248,7 +255,12 @@ function validateGeneratedArtifacts() {
   for (const dir of listDirectories(terraformRoot)) {
     const relativePath = relPath(dir);
     const name = path.basename(dir);
-    assert(name !== '.terraform', `Unexpected .terraform directory: ${relativePath}`);
+    const isApprovedProofDirectory =
+      allowProofTerraformDirectory && relativePath === approvedProofTerraformDirectory;
+    assert(
+      name !== '.terraform' || isApprovedProofDirectory,
+      `Unexpected .terraform directory: ${relativePath}`,
+    );
     assert(name !== '.terraform.d', `Unexpected Terraform CLI config/cache directory: ${relativePath}`);
     assert(name !== 'terraform-plugin-cache', `Unexpected Terraform plugin cache directory: ${relativePath}`);
   }
@@ -375,6 +387,9 @@ function validatePackageScript() {
 }
 
 validateTfvarsExample();
+for (const argument of unexpectedArguments) {
+  assert(false, `Unknown argument: ${argument}`);
+}
 validateGitignore();
 validateGeneratedArtifacts();
 validateTerraformSource();

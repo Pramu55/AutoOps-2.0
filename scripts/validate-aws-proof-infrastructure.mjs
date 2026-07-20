@@ -6,6 +6,13 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..');
 const proofRoot = path.join(repoRoot, 'infra', 'terraform', 'environments', 'proof');
 const errors = [];
+const allowProofTerraformDirectoryFlag = '--allow-proof-terraform-directory';
+const suppliedArguments = process.argv.slice(2);
+const unexpectedArguments = suppliedArguments.filter(
+  (argument) => argument !== allowProofTerraformDirectoryFlag,
+);
+const allowProofTerraformDirectory = suppliedArguments.includes(allowProofTerraformDirectoryFlag);
+const approvedProofTerraformDirectory = 'infra/terraform/environments/proof/.terraform';
 
 const expectedResources = [
   'aws_vpc.proof',
@@ -176,12 +183,22 @@ function validateSafeContent(relativePath) {
 
 function validateGeneratedArtifacts() {
   for (const dir of listDirectories(path.join(repoRoot, 'infra', 'terraform'))) {
-    assert(path.basename(dir) !== '.terraform', `Unexpected .terraform directory: ${relPath(dir)}`);
+    const relativePath = relPath(dir);
+    const name = path.basename(dir);
+    const isApprovedProofDirectory =
+      allowProofTerraformDirectory && relativePath === approvedProofTerraformDirectory;
+    assert(
+      name !== '.terraform' || isApprovedProofDirectory,
+      `Unexpected .terraform directory: ${relativePath}`,
+    );
+    assert(name !== '.terraform.d', `Unexpected Terraform CLI config/cache directory: ${relativePath}`);
+    assert(name !== 'terraform-plugin-cache', `Unexpected Terraform plugin cache directory: ${relativePath}`);
   }
 
   for (const file of listFiles(path.join(repoRoot, 'infra', 'terraform'))) {
     const name = path.basename(file);
     assert(!/^terraform\.tfstate(\.backup)?$/.test(name) && !name.includes('.tfstate.'), `Unexpected Terraform state file: ${relPath(file)}`);
+    assert(!/\.(tfplan|plan)$/.test(name), `Unexpected Terraform plan artifact: ${relPath(file)}`);
     assert(!/^crash(\..*)?\.log$/.test(name), `Unexpected Terraform crash log: ${relPath(file)}`);
   }
 }
@@ -346,6 +363,9 @@ function validateDocsAndPackage() {
   }
 }
 
+for (const argument of unexpectedArguments) {
+  assert(false, `Unknown argument: ${argument}`);
+}
 validateGeneratedArtifacts();
 validateTerraform();
 validateCompose();

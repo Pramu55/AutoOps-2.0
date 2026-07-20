@@ -16,6 +16,7 @@ const approvedLockFiles = [
   'infra/terraform/environments/proof/.terraform.lock.hcl',
   'infra/terraform/environments/production/.terraform.lock.hcl',
 ];
+const approvedProofTerraformDirectory = 'infra/terraform/environments/proof/.terraform';
 const expectedResources = [
   'aws_vpc.proof',
   'aws_subnet.public',
@@ -255,10 +256,46 @@ function validateRuntimeScript() {
     assertContains(text, pattern, `${runtimeScript} is missing required fail-closed check ${pattern}`);
   }
 
+  assertNoPattern(text, /\(Invoke-Git[\s\S]*?\)\s*\[0\]/, `${runtimeScript} must not index Invoke-Git scalar output directly`);
+  assertContains(text, /function\s+Get-ExactlyOneGitLine\b/, `${runtimeScript} must use explicit one-line Git result validation`);
+  assertContains(text, /\$lines\s*=\s*@\(Invoke-Git\s+\$Arguments\)/, `${runtimeScript} must force Invoke-Git output into an array`);
+  assertContains(text, /\$lines\.Count\s+-ne\s+1/, `${runtimeScript} must fail unless Git returns exactly one line`);
+  assertContains(text, /\(\[string\]\$lines\[0\]\)\.Trim\(\)/, `${runtimeScript} must trim the single Git result after cardinality validation`);
+  assertContains(text, /IsNullOrWhiteSpace\(\$value\)/, `${runtimeScript} must reject blank Git scalar values`);
+  assertContains(text, /\$branch\s*=\s*Get-ExactlyOneGitLine\s+@\('branch',\s*'--show-current'\)\s+'current branch'/, `${runtimeScript} must use safe branch capture`);
+  assertContains(text, /\$commit\s*=\s*Get-ExactlyOneGitLine\s+@\('rev-parse',\s*'HEAD'\)\s+'HEAD commit'/, `${runtimeScript} must use safe commit capture`);
+  assertContains(text, /\$tree\s*=\s*Get-ExactlyOneGitLine\s+@\('rev-parse',\s*'HEAD\^\{tree\}'\)\s+'HEAD tree'/, `${runtimeScript} must use safe tree capture`);
+  assertNoPattern(text, /\[System\.IO\.Path\]::GetRelativePath/, `${runtimeScript} must remain compatible with Windows PowerShell 5.1`);
+  assertContains(text, /\[System\.IO\.Path\]::GetFullPath\(\$repoRoot\)/, `${runtimeScript} must normalize the repository root`);
+  assertContains(text, /\[System\.IO\.Path\]::GetFullPath\(\$PathValue\)/, `${runtimeScript} must normalize generated artifact paths`);
+  assertContains(text, /StartsWith\([\s\S]*?\$rootPrefix[\s\S]*?\[System\.StringComparison\]::OrdinalIgnoreCase/, `${runtimeScript} must reject paths outside the repository root`);
+  assertContains(text, /Substring\(\$rootPrefix\.Length\)/, `${runtimeScript} must derive relative paths without Path.GetRelativePath`);
+
   assert(text.includes(exactInitCommand), `${runtimeScript} must print the exact approved init command`);
   assertContains(text, /\$initArgs\s*=\s*@\("-chdir=\$proofRootRelative",\s*'init',\s*'-backend=false'\)/, `${runtimeScript} must construct only the approved init arguments`);
   assertContains(text, /&\s+\$resolvedTerraform\s+@initArgs/, `${runtimeScript} must execute Terraform only through the approved init argument list`);
   assertContains(text, /&\s+\$resolvedTerraform\s+version/, `${runtimeScript} must run only a Terraform version check before init`);
+  assertContains(
+    text,
+    /Invoke-CheckedCommand\s+'node'\s+@\(\s*'scripts\/validate-terraform-foundation\.mjs',\s*'--allow-proof-terraform-directory'\s*\)/,
+    `${runtimeScript} must pass the exact proof .terraform opt-in flag only to the post-init foundation validator`,
+  );
+  assertContains(
+    text,
+    /Invoke-CheckedCommand\s+'node'\s+@\(\s*'scripts\/validate-aws-proof-infrastructure\.mjs',\s*'--allow-proof-terraform-directory'\s*\)/,
+    `${runtimeScript} must pass the exact proof .terraform opt-in flag only to the post-init AWS proof validator`,
+  );
+  assertContains(
+    text,
+    /Invoke-CheckedCommand\s+'node'\s+@\(\s*'scripts\/validate-terraform-init-readiness\.mjs',\s*'--allow-proof-terraform-directory'\s*\)/,
+    `${runtimeScript} must pass the exact proof .terraform opt-in flag only to the post-init readiness validator`,
+  );
+  assertNoPattern(
+    text,
+    /Invoke-CheckedCommand\s+'node'\s+@\(\s*'scripts\/validate-terraform-runtime-approval\.mjs',\s*'--allow-proof-terraform-directory'/,
+    `${runtimeScript} must not pass the proof .terraform opt-in flag to the runtime approval validator`,
+  );
+  assertNoPattern(text, /allow-proof-terraform-directory[\s\S]{0,120}(Environment|env:|SetEnvironmentVariable)/i, `${runtimeScript} must not use an environment-based .terraform bypass`);
   const initArgsLine = text.match(/\$initArgs\s*=\s*@\([^\n]+\)/)?.[0] ?? '';
   assertNoPattern(initArgsLine, /-upgrade/, `${runtimeScript} must not include -upgrade in init arguments`);
 
@@ -329,8 +366,12 @@ function validateGeneratedArtifacts() {
   }
 
   for (const dir of listDirectories(terraformRoot)) {
+    const relativePath = relPath(dir);
     const name = path.basename(dir);
-    assert(name !== '.terraform', `Unexpected .terraform directory: ${relPath(dir)}`);
+    assert(
+      name !== '.terraform' || relativePath === approvedProofTerraformDirectory,
+      `Unexpected .terraform directory: ${relativePath}`,
+    );
     assert(name !== '.terraform.d', `Unexpected Terraform CLI config/cache directory: ${relPath(dir)}`);
     assert(name !== 'terraform-plugin-cache', `Unexpected Terraform plugin cache directory: ${relPath(dir)}`);
   }

@@ -49,7 +49,32 @@ function Invoke-Git([string[]]$Arguments) {
 }
 
 function Get-RelativePath([string]$PathValue) {
-  return [System.IO.Path]::GetRelativePath($repoRoot, $PathValue).Replace('\', '/')
+  $normalizedRoot = [System.IO.Path]::GetFullPath($repoRoot).TrimEnd(
+    [char[]]@('\', '/')
+  )
+  $normalizedPath = [System.IO.Path]::GetFullPath($PathValue)
+
+  if (
+    $normalizedPath.Equals(
+      $normalizedRoot,
+      [System.StringComparison]::OrdinalIgnoreCase
+    )
+  ) {
+    return '.'
+  }
+
+  $rootPrefix = $normalizedRoot + [System.IO.Path]::DirectorySeparatorChar
+
+  if (
+    -not $normalizedPath.StartsWith(
+      $rootPrefix,
+      [System.StringComparison]::OrdinalIgnoreCase
+    )
+  ) {
+    Fail "path must remain inside repository root: $normalizedPath"
+  }
+
+  return $normalizedPath.Substring($rootPrefix.Length).Replace('\', '/')
 }
 
 function Get-LockHashes {
@@ -74,6 +99,20 @@ function Assert-ExactLines([string[]]$Actual, [string[]]$Expected, [string]$Labe
       Fail "$Label mismatch at entry $index"
     }
   }
+}
+
+function Get-ExactlyOneGitLine([string[]]$Arguments, [string]$Label) {
+  $lines = @(Invoke-Git $Arguments)
+  if ($lines.Count -ne 1) {
+    Fail "expected exactly one $Label result, got $($lines.Count)"
+  }
+
+  $value = ([string]$lines[0]).Trim()
+  if ([string]::IsNullOrWhiteSpace($value)) {
+    Fail "$Label result must not be blank"
+  }
+
+  return $value
 }
 
 function Assert-CleanGitState {
@@ -164,17 +203,17 @@ if ($repoRoot -ne $expectedRepoRoot) {
   Fail "repository root must be $expectedRepoRoot, got $repoRoot"
 }
 
-$branch = (Invoke-Git @('branch', '--show-current'))[0]
+$branch = Get-ExactlyOneGitLine @('branch', '--show-current') 'current branch'
 if ($branch -ne $ExpectedBranch) {
   Fail "branch mismatch: expected $ExpectedBranch, got $branch"
 }
 
-$commit = (Invoke-Git @('rev-parse', 'HEAD'))[0]
+$commit = Get-ExactlyOneGitLine @('rev-parse', 'HEAD') 'HEAD commit'
 if ($commit -ne $ExpectedCommit) {
   Fail "commit mismatch: expected $ExpectedCommit, got $commit"
 }
 
-$tree = (Invoke-Git @('rev-parse', 'HEAD^{tree}'))[0]
+$tree = Get-ExactlyOneGitLine @('rev-parse', 'HEAD^{tree}') 'HEAD tree'
 if ($tree -ne $ExpectedTree) {
   Fail "tree mismatch: expected $ExpectedTree, got $tree"
 }
@@ -223,9 +262,18 @@ foreach ($lockFile in $approvedLockFiles) {
 Assert-ApprovedLockState
 Assert-GeneratedArtifacts 'after init' -AllowProofTerraformDirectory
 
-Invoke-CheckedCommand 'node' @('scripts/validate-terraform-foundation.mjs')
-Invoke-CheckedCommand 'node' @('scripts/validate-aws-proof-infrastructure.mjs')
-Invoke-CheckedCommand 'node' @('scripts/validate-terraform-init-readiness.mjs')
+Invoke-CheckedCommand 'node' @(
+  'scripts/validate-terraform-foundation.mjs',
+  '--allow-proof-terraform-directory'
+)
+Invoke-CheckedCommand 'node' @(
+  'scripts/validate-aws-proof-infrastructure.mjs',
+  '--allow-proof-terraform-directory'
+)
+Invoke-CheckedCommand 'node' @(
+  'scripts/validate-terraform-init-readiness.mjs',
+  '--allow-proof-terraform-directory'
+)
 Invoke-CheckedCommand 'node' @('scripts/validate-terraform-runtime-approval.mjs')
 Invoke-CheckedCommand 'powershell' @('-ExecutionPolicy', 'Bypass', '-File', 'scripts/scan-secrets.ps1')
 
