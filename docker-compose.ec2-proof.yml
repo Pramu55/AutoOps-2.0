@@ -1,0 +1,179 @@
+name: autoops-ec2-proof
+
+networks:
+  autoops:
+    driver: bridge
+    internal: false
+
+volumes:
+  prometheus_proof_data:
+  grafana_proof_data:
+
+x-bounded-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+x-proof-hardening: &proof-hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  logging: *bounded-logging
+
+services:
+  api:
+    ports: !reset []
+
+  web:
+    ports: !reset []
+
+  nginx:
+    <<: *proof-hardening
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    networks:
+      - autoops
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    ports:
+      - '443:443'
+    volumes:
+      - ${AUTOOPS_PROOF_TLS_CERT_PATH:?approved certificate path required}:/run/autoops-proof/tls/tls.crt:ro
+      - ${AUTOOPS_PROOF_TLS_KEY_PATH:?approved certificate key path required}:/run/autoops-proof/tls/tls.key:ro
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/cache/nginx:size=32m,mode=0755
+      - /var/run:size=8m,mode=0755
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        cat >/tmp/nginx.conf <<'NGINX'
+        worker_processes auto;
+        pid /var/run/nginx.pid;
+        events { worker_connections 1024; }
+        http {
+          include /etc/nginx/mime.types;
+          default_type application/octet-stream;
+          server_tokens off;
+          upstream web_upstream { server web:3000; }
+          upstream api_upstream { server api:4000; }
+          server {
+            listen 443 ssl;
+            server_name _;
+            ssl_certificate /run/autoops-proof/tls/tls.crt;
+            ssl_certificate_key /run/autoops-proof/tls/tls.key;
+            add_header X-Frame-Options SAMEORIGIN always;
+            add_header X-Content-Type-Options nosniff always;
+            add_header Referrer-Policy strict-origin-when-cross-origin always;
+            location /api/socket.io/ {
+              proxy_pass http://api_upstream;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $$http_upgrade;
+              proxy_set_header Connection "upgrade";
+              proxy_set_header Host $$host;
+              proxy_set_header X-Real-IP $$remote_addr;
+              proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto https;
+              proxy_read_timeout 300s;
+            }
+            location /api/ {
+              proxy_pass http://api_upstream;
+              proxy_http_version 1.1;
+              proxy_set_header Host $$host;
+              proxy_set_header X-Real-IP $$remote_addr;
+              proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto https;
+            }
+            location / {
+              proxy_pass http://web_upstream;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $$http_upgrade;
+              proxy_set_header Connection "upgrade";
+              proxy_set_header Host $$host;
+              proxy_set_header X-Real-IP $$remote_addr;
+              proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto https;
+            }
+          }
+        }
+        NGINX
+        nginx -g 'daemon off;' -c /tmp/nginx.conf
+    cpus: 0.5
+    mem_limit: 256m
+    mem_reservation: 64m
+    pids_limit: 100
+    healthcheck:
+      test: ['CMD-SHELL', 'nginx -t -c /tmp/nginx.conf']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  prometheus:
+    <<: *proof-hardening
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    networks:
+      - autoops
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_proof_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=8h
+      - --web.listen-address=127.0.0.1:9090
+    ports:
+      - '127.0.0.1:9090:9090'
+    cpus: 0.5
+    mem_limit: 512m
+    mem_reservation: 128m
+    pids_limit: 100
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:9090/-/ready >/dev/null']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  grafana:
+    <<: *proof-hardening
+    image: grafana/grafana:11.2.0
+    restart: unless-stopped
+    networks:
+      - autoops
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    volumes:
+      - grafana_proof_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      GF_SERVER_HTTP_ADDR: 127.0.0.1
+      GF_SERVER_HTTP_PORT: '3000'
+      GF_SERVER_ROOT_URL: http://127.0.0.1:3000
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_LOG_LEVEL: warn
+    cpus: 0.5
+    mem_limit: 512m
+    mem_reservation: 128m
+    pids_limit: 150
+    ports:
+      - '127.0.0.1:3001:3000'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/api/health | grep -q ok']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

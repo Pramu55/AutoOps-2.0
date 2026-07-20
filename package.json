@@ -28,6 +28,7 @@
     "check:secrets:linux": "bash scripts/scan-secrets.sh",
     "check:container-hardening": "node scripts/validate-container-hardening.mjs",
     "check:terraform-foundation": "node scripts/validate-terraform-foundation.mjs",
+    "check:aws-proof-infrastructure": "node scripts/validate-aws-proof-infrastructure.mjs",
     "docker:dev": "docker compose up --build",
     "docker:dev:detached": "docker compose up --build -d",
     "docker:down": "docker compose down",
