@@ -31,6 +31,7 @@
     "check:aws-proof-infrastructure": "node scripts/validate-aws-proof-infrastructure.mjs",
     "check:terraform-init-readiness": "node scripts/validate-terraform-init-readiness.mjs",
     "check:terraform-runtime-approval": "node scripts/validate-terraform-runtime-approval.mjs",
+    "check:terraform-plan-readiness": "node scripts/validate-terraform-plan-readiness.mjs",
     "docker:dev": "docker compose up --build",
     "docker:dev:detached": "docker compose up --build -d",
     "docker:down": "docker compose down",
