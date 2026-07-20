@@ -255,6 +255,16 @@ function validateRuntimeScript() {
     assertContains(text, pattern, `${runtimeScript} is missing required fail-closed check ${pattern}`);
   }
 
+  assertNoPattern(text, /\(Invoke-Git[\s\S]*?\)\s*\[0\]/, `${runtimeScript} must not index Invoke-Git scalar output directly`);
+  assertContains(text, /function\s+Get-ExactlyOneGitLine\b/, `${runtimeScript} must use explicit one-line Git result validation`);
+  assertContains(text, /\$lines\s*=\s*@\(Invoke-Git\s+\$Arguments\)/, `${runtimeScript} must force Invoke-Git output into an array`);
+  assertContains(text, /\$lines\.Count\s+-ne\s+1/, `${runtimeScript} must fail unless Git returns exactly one line`);
+  assertContains(text, /\(\[string\]\$lines\[0\]\)\.Trim\(\)/, `${runtimeScript} must trim the single Git result after cardinality validation`);
+  assertContains(text, /IsNullOrWhiteSpace\(\$value\)/, `${runtimeScript} must reject blank Git scalar values`);
+  assertContains(text, /\$branch\s*=\s*Get-ExactlyOneGitLine\s+@\('branch',\s*'--show-current'\)\s+'current branch'/, `${runtimeScript} must use safe branch capture`);
+  assertContains(text, /\$commit\s*=\s*Get-ExactlyOneGitLine\s+@\('rev-parse',\s*'HEAD'\)\s+'HEAD commit'/, `${runtimeScript} must use safe commit capture`);
+  assertContains(text, /\$tree\s*=\s*Get-ExactlyOneGitLine\s+@\('rev-parse',\s*'HEAD\^\{tree\}'\)\s+'HEAD tree'/, `${runtimeScript} must use safe tree capture`);
+
   assert(text.includes(exactInitCommand), `${runtimeScript} must print the exact approved init command`);
   assertContains(text, /\$initArgs\s*=\s*@\("-chdir=\$proofRootRelative",\s*'init',\s*'-backend=false'\)/, `${runtimeScript} must construct only the approved init arguments`);
   assertContains(text, /&\s+\$resolvedTerraform\s+@initArgs/, `${runtimeScript} must execute Terraform only through the approved init argument list`);
