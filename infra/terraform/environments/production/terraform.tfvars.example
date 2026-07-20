@@ -1,0 +1,12 @@
+# Non-secret example values for local production validation.
+# Copy locally only when needed.
+# Real .tfvars files must remain uncommitted.
+# Never place credentials, passwords, tokens, or account secrets in tfvars.
+
+project_name        = "autoops"
+environment         = "production"
+aws_region          = "ap-south-1"
+owner               = "platform-engineering"
+cost_center         = "portfolio"
+managed_by          = "terraform"
+data_classification = "internal"

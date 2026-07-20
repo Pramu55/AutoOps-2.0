@@ -64,8 +64,18 @@ volumes
 # infrastructure automation local state
 .terraform/
 **/.terraform/
+**/.terraform/*
 *.tfstate
 *.tfstate.*
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
 crash.log
 crash.*.log
 .terraform.lock.hcl
