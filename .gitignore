@@ -79,6 +79,8 @@ terraform.rc
 crash.log
 crash.*.log
 .terraform.lock.hcl
+!infra/terraform/environments/proof/.terraform.lock.hcl
+!infra/terraform/environments/production/.terraform.lock.hcl
 *.retry
 
 # misc
