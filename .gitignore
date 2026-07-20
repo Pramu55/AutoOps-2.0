@@ -67,6 +67,9 @@ volumes
 **/.terraform/*
 *.tfstate
 *.tfstate.*
+*.tfplan
+*.tfplan.*
+*.plan
 *.tfvars
 *.tfvars.json
 !*.tfvars.example
@@ -76,6 +79,10 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+.terraform.d/
+**/.terraform.d/
+terraform-plugin-cache/
+**/terraform-plugin-cache/
 crash.log
 crash.*.log
 .terraform.lock.hcl

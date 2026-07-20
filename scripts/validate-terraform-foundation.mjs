@@ -34,6 +34,22 @@ const requiredVariables = [
   'managed_by',
   'data_classification',
 ];
+const proofTfvarsVariables = [
+  ...requiredVariables,
+  'proof_expires_at',
+  'approved_domain',
+  'approved_ingress_cidr',
+  'ami_id',
+  'cost_approval_reference',
+  'max_proof_hours',
+  'instance_type',
+  'root_volume_size_gib',
+  'enable_public_https',
+  'associate_public_ip',
+  'enable_ssm',
+  'detailed_monitoring',
+  'expected_max_cost_usd',
+];
 const requiredTags = [
   'Project',
   'Environment',
@@ -148,6 +164,7 @@ function validateGitignore() {
     '**/.terraform/*',
     '*.tfstate',
     '*.tfstate.*',
+    '*.tfplan',
     '*.tfvars',
     '*.tfvars.json',
     '!*.tfvars.example',
@@ -157,6 +174,8 @@ function validateGitignore() {
     '*_override.tf.json',
     '.terraformrc',
     'terraform.rc',
+    '.terraform.d/',
+    'terraform-plugin-cache/',
     'crash.log',
     'crash.*.log',
     '!infra/terraform/environments/proof/.terraform.lock.hcl',
@@ -397,7 +416,8 @@ function validateTfvarsExample(env) {
   const text = read(relativePath);
   const active = stripComments(text);
   const keys = [...active.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/gm)].map((match) => match[1]);
-  const unexpected = keys.filter((key) => !requiredVariables.includes(key));
+  const allowedVariables = env === 'proof' ? proofTfvarsVariables : requiredVariables;
+  const unexpected = keys.filter((key) => !allowedVariables.includes(key));
   const missing = requiredVariables.filter((key) => !keys.includes(key));
 
   assert(unexpected.length === 0, `${relativePath} contains unexpected keys: ${unexpected.join(', ')}`);
