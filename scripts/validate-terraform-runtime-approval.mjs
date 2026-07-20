@@ -264,6 +264,11 @@ function validateRuntimeScript() {
   assertContains(text, /\$branch\s*=\s*Get-ExactlyOneGitLine\s+@\('branch',\s*'--show-current'\)\s+'current branch'/, `${runtimeScript} must use safe branch capture`);
   assertContains(text, /\$commit\s*=\s*Get-ExactlyOneGitLine\s+@\('rev-parse',\s*'HEAD'\)\s+'HEAD commit'/, `${runtimeScript} must use safe commit capture`);
   assertContains(text, /\$tree\s*=\s*Get-ExactlyOneGitLine\s+@\('rev-parse',\s*'HEAD\^\{tree\}'\)\s+'HEAD tree'/, `${runtimeScript} must use safe tree capture`);
+  assertNoPattern(text, /\[System\.IO\.Path\]::GetRelativePath/, `${runtimeScript} must remain compatible with Windows PowerShell 5.1`);
+  assertContains(text, /\[System\.IO\.Path\]::GetFullPath\(\$repoRoot\)/, `${runtimeScript} must normalize the repository root`);
+  assertContains(text, /\[System\.IO\.Path\]::GetFullPath\(\$PathValue\)/, `${runtimeScript} must normalize generated artifact paths`);
+  assertContains(text, /StartsWith\([\s\S]*?\$rootPrefix[\s\S]*?\[System\.StringComparison\]::OrdinalIgnoreCase/, `${runtimeScript} must reject paths outside the repository root`);
+  assertContains(text, /Substring\(\$rootPrefix\.Length\)/, `${runtimeScript} must derive relative paths without Path.GetRelativePath`);
 
   assert(text.includes(exactInitCommand), `${runtimeScript} must print the exact approved init command`);
   assertContains(text, /\$initArgs\s*=\s*@\("-chdir=\$proofRootRelative",\s*'init',\s*'-backend=false'\)/, `${runtimeScript} must construct only the approved init arguments`);

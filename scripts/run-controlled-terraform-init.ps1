@@ -49,7 +49,32 @@ function Invoke-Git([string[]]$Arguments) {
 }
 
 function Get-RelativePath([string]$PathValue) {
-  return [System.IO.Path]::GetRelativePath($repoRoot, $PathValue).Replace('\', '/')
+  $normalizedRoot = [System.IO.Path]::GetFullPath($repoRoot).TrimEnd(
+    [char[]]@('\', '/')
+  )
+  $normalizedPath = [System.IO.Path]::GetFullPath($PathValue)
+
+  if (
+    $normalizedPath.Equals(
+      $normalizedRoot,
+      [System.StringComparison]::OrdinalIgnoreCase
+    )
+  ) {
+    return '.'
+  }
+
+  $rootPrefix = $normalizedRoot + [System.IO.Path]::DirectorySeparatorChar
+
+  if (
+    -not $normalizedPath.StartsWith(
+      $rootPrefix,
+      [System.StringComparison]::OrdinalIgnoreCase
+    )
+  ) {
+    Fail "path must remain inside repository root: $normalizedPath"
+  }
+
+  return $normalizedPath.Substring($rootPrefix.Length).Replace('\', '/')
 }
 
 function Get-LockHashes {
