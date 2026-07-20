@@ -72,6 +72,12 @@ const approvedLockFiles = [
   'infra/terraform/environments/proof/.terraform.lock.hcl',
   'infra/terraform/environments/production/.terraform.lock.hcl',
 ];
+const allowProofTerraformDirectoryFlag = '--allow-proof-terraform-directory';
+const allowedArguments = new Set([allowProofTerraformDirectoryFlag]);
+const suppliedArguments = process.argv.slice(2);
+const unexpectedArguments = suppliedArguments.filter((argument) => !allowedArguments.has(argument));
+const allowProofTerraformDirectory = suppliedArguments.includes(allowProofTerraformDirectoryFlag);
+const approvedProofTerraformDirectory = 'infra/terraform/environments/proof/.terraform';
 const errors = [];
 
 function relPath(filePath) {
@@ -250,7 +256,15 @@ function validateGeneratedArtifacts() {
   const approvedLocks = new Set(approvedLockFiles);
 
   for (const dir of directories) {
-    assert(path.basename(dir) !== '.terraform', `Unexpected .terraform directory: ${relPath(dir)}`);
+    if (path.basename(dir) !== '.terraform') {
+      continue;
+    }
+
+    const relativePath = relPath(dir);
+    const isApprovedProofDirectory =
+      allowProofTerraformDirectory && relativePath === approvedProofTerraformDirectory;
+
+    assert(isApprovedProofDirectory, `Unexpected .terraform directory: ${relativePath}`);
   }
 
   for (const file of files) {
@@ -476,6 +490,9 @@ function validateScanScope() {
 }
 
 validateExpectedFiles();
+for (const argument of unexpectedArguments) {
+  assert(false, `Unknown argument: ${argument}`);
+}
 validatePackageJson();
 validateGitignore();
 validateScanScope();

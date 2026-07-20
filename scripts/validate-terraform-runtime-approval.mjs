@@ -16,6 +16,7 @@ const approvedLockFiles = [
   'infra/terraform/environments/proof/.terraform.lock.hcl',
   'infra/terraform/environments/production/.terraform.lock.hcl',
 ];
+const approvedProofTerraformDirectory = 'infra/terraform/environments/proof/.terraform';
 const expectedResources = [
   'aws_vpc.proof',
   'aws_subnet.public',
@@ -274,6 +275,17 @@ function validateRuntimeScript() {
   assertContains(text, /\$initArgs\s*=\s*@\("-chdir=\$proofRootRelative",\s*'init',\s*'-backend=false'\)/, `${runtimeScript} must construct only the approved init arguments`);
   assertContains(text, /&\s+\$resolvedTerraform\s+@initArgs/, `${runtimeScript} must execute Terraform only through the approved init argument list`);
   assertContains(text, /&\s+\$resolvedTerraform\s+version/, `${runtimeScript} must run only a Terraform version check before init`);
+  assertContains(
+    text,
+    /Invoke-CheckedCommand\s+'node'\s+@\(\s*'scripts\/validate-terraform-foundation\.mjs',\s*'--allow-proof-terraform-directory'\s*\)/,
+    `${runtimeScript} must pass the exact proof .terraform opt-in flag only to the post-init foundation validator`,
+  );
+  assertContains(
+    text,
+    /Invoke-CheckedCommand\s+'node'\s+@\(\s*'scripts\/validate-terraform-init-readiness\.mjs',\s*'--allow-proof-terraform-directory'\s*\)/,
+    `${runtimeScript} must pass the exact proof .terraform opt-in flag only to the post-init readiness validator`,
+  );
+  assertNoPattern(text, /allow-proof-terraform-directory[\s\S]{0,120}(Environment|env:|SetEnvironmentVariable)/i, `${runtimeScript} must not use an environment-based .terraform bypass`);
   const initArgsLine = text.match(/\$initArgs\s*=\s*@\([^\n]+\)/)?.[0] ?? '';
   assertNoPattern(initArgsLine, /-upgrade/, `${runtimeScript} must not include -upgrade in init arguments`);
 
@@ -344,8 +356,12 @@ function validateGeneratedArtifacts() {
   }
 
   for (const dir of listDirectories(terraformRoot)) {
+    const relativePath = relPath(dir);
     const name = path.basename(dir);
-    assert(name !== '.terraform', `Unexpected .terraform directory: ${relPath(dir)}`);
+    assert(
+      name !== '.terraform' || relativePath === approvedProofTerraformDirectory,
+      `Unexpected .terraform directory: ${relativePath}`,
+    );
     assert(name !== '.terraform.d', `Unexpected Terraform CLI config/cache directory: ${relPath(dir)}`);
     assert(name !== 'terraform-plugin-cache', `Unexpected Terraform plugin cache directory: ${relPath(dir)}`);
   }

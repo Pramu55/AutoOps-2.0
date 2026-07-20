@@ -262,9 +262,15 @@ foreach ($lockFile in $approvedLockFiles) {
 Assert-ApprovedLockState
 Assert-GeneratedArtifacts 'after init' -AllowProofTerraformDirectory
 
-Invoke-CheckedCommand 'node' @('scripts/validate-terraform-foundation.mjs')
+Invoke-CheckedCommand 'node' @(
+  'scripts/validate-terraform-foundation.mjs',
+  '--allow-proof-terraform-directory'
+)
 Invoke-CheckedCommand 'node' @('scripts/validate-aws-proof-infrastructure.mjs')
-Invoke-CheckedCommand 'node' @('scripts/validate-terraform-init-readiness.mjs')
+Invoke-CheckedCommand 'node' @(
+  'scripts/validate-terraform-init-readiness.mjs',
+  '--allow-proof-terraform-directory'
+)
 Invoke-CheckedCommand 'node' @('scripts/validate-terraform-runtime-approval.mjs')
 Invoke-CheckedCommand 'powershell' @('-ExecutionPolicy', 'Bypass', '-File', 'scripts/scan-secrets.ps1')
 
