@@ -266,7 +266,10 @@ Invoke-CheckedCommand 'node' @(
   'scripts/validate-terraform-foundation.mjs',
   '--allow-proof-terraform-directory'
 )
-Invoke-CheckedCommand 'node' @('scripts/validate-aws-proof-infrastructure.mjs')
+Invoke-CheckedCommand 'node' @(
+  'scripts/validate-aws-proof-infrastructure.mjs',
+  '--allow-proof-terraform-directory'
+)
 Invoke-CheckedCommand 'node' @(
   'scripts/validate-terraform-init-readiness.mjs',
   '--allow-proof-terraform-directory'

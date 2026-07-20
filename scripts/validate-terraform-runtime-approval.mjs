@@ -282,8 +282,18 @@ function validateRuntimeScript() {
   );
   assertContains(
     text,
+    /Invoke-CheckedCommand\s+'node'\s+@\(\s*'scripts\/validate-aws-proof-infrastructure\.mjs',\s*'--allow-proof-terraform-directory'\s*\)/,
+    `${runtimeScript} must pass the exact proof .terraform opt-in flag only to the post-init AWS proof validator`,
+  );
+  assertContains(
+    text,
     /Invoke-CheckedCommand\s+'node'\s+@\(\s*'scripts\/validate-terraform-init-readiness\.mjs',\s*'--allow-proof-terraform-directory'\s*\)/,
     `${runtimeScript} must pass the exact proof .terraform opt-in flag only to the post-init readiness validator`,
+  );
+  assertNoPattern(
+    text,
+    /Invoke-CheckedCommand\s+'node'\s+@\(\s*'scripts\/validate-terraform-runtime-approval\.mjs',\s*'--allow-proof-terraform-directory'/,
+    `${runtimeScript} must not pass the proof .terraform opt-in flag to the runtime approval validator`,
   );
   assertNoPattern(text, /allow-proof-terraform-directory[\s\S]{0,120}(Environment|env:|SetEnvironmentVariable)/i, `${runtimeScript} must not use an environment-based .terraform bypass`);
   const initArgsLine = text.match(/\$initArgs\s*=\s*@\([^\n]+\)/)?.[0] ?? '';
