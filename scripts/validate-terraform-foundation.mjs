@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,12 +15,14 @@ const expectedFiles = [
   'infra/terraform/environments/proof/locals.tf',
   'infra/terraform/environments/proof/outputs.tf',
   'infra/terraform/environments/proof/terraform.tfvars.example',
+  'infra/terraform/environments/proof/.terraform.lock.hcl',
   'infra/terraform/environments/production/versions.tf',
   'infra/terraform/environments/production/providers.tf',
   'infra/terraform/environments/production/variables.tf',
   'infra/terraform/environments/production/locals.tf',
   'infra/terraform/environments/production/outputs.tf',
   'infra/terraform/environments/production/terraform.tfvars.example',
+  'infra/terraform/environments/production/.terraform.lock.hcl',
   'scripts/validate-terraform-foundation.mjs',
 ];
 const requiredVariables = [
@@ -50,6 +52,10 @@ const requiredOutputs = [
   'selected_environment',
 ];
 const expectedScript = 'node scripts/validate-terraform-foundation.mjs';
+const approvedLockFiles = [
+  'infra/terraform/environments/proof/.terraform.lock.hcl',
+  'infra/terraform/environments/production/.terraform.lock.hcl',
+];
 const errors = [];
 
 function relPath(filePath) {
@@ -76,6 +82,30 @@ function existsFile(relativePath) {
   } catch {
     return false;
   }
+}
+
+function listFiles(root) {
+  const results = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const fullPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...listFiles(fullPath));
+    } else if (entry.isFile()) {
+      results.push(fullPath);
+    }
+  }
+  return results;
+}
+
+function listDirectories(root) {
+  const results = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const fullPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      results.push(fullPath, ...listDirectories(fullPath));
+    }
+  }
+  return results;
 }
 
 function stripComments(text) {
@@ -129,6 +159,8 @@ function validateGitignore() {
     'terraform.rc',
     'crash.log',
     'crash.*.log',
+    '!infra/terraform/environments/proof/.terraform.lock.hcl',
+    '!infra/terraform/environments/production/.terraform.lock.hcl',
   ];
 
   for (const rule of requiredRules) {
@@ -191,6 +223,66 @@ function validateSafeContent(relativePath, { terraformOnly = false } = {}) {
     /0\.0\.0\.0\/0[\s\S]{0,120}\b(5432|6379)\b|\b(5432|6379)\b[\s\S]{0,120}0\.0\.0\.0\/0/i,
     `${relativePath} must not guide public PostgreSQL or Redis access`,
   );
+}
+
+function validateGeneratedArtifacts() {
+  const files = listFiles(foundationRoot);
+  const directories = listDirectories(foundationRoot);
+  const approvedLocks = new Set(approvedLockFiles);
+
+  for (const dir of directories) {
+    assert(path.basename(dir) !== '.terraform', `Unexpected .terraform directory: ${relPath(dir)}`);
+  }
+
+  for (const file of files) {
+    const relativePath = relPath(file);
+    const name = path.basename(file);
+
+    if (name === '.terraform.lock.hcl') {
+      assert(approvedLocks.has(relativePath), `Unexpected Terraform lock file: ${relativePath}`);
+    }
+
+    assert(
+      !/^terraform\.tfstate(\.backup)?$/.test(name) && !name.includes('.tfstate.'),
+      `Unexpected Terraform state file: ${relativePath}`,
+    );
+    assert(!/^crash(\..*)?\.log$/.test(name), `Unexpected Terraform crash log: ${relativePath}`);
+  }
+}
+
+function validateLockFiles() {
+  const proofLock = read('infra/terraform/environments/proof/.terraform.lock.hcl');
+  const productionLock = read('infra/terraform/environments/production/.terraform.lock.hcl');
+
+  assert(proofLock === productionLock, 'Proof and production lock files must be byte-for-byte identical');
+
+  for (const relativePath of approvedLockFiles) {
+    const text = read(relativePath);
+    validateSafeContent(relativePath);
+    assertContains(
+      text,
+      /provider\s+"registry\.terraform\.io\/hashicorp\/aws"\s*{/,
+      `${relativePath} must lock registry.terraform.io/hashicorp/aws`,
+    );
+
+    const version = text.match(/version\s+=\s+"([^"]+)"/)?.[1] ?? '';
+    const versionParts = version.split('.').map((part) => Number.parseInt(part, 10));
+    assert(
+      versionParts.length >= 3 &&
+        versionParts.every((part) => Number.isInteger(part)) &&
+        versionParts[0] >= 6 &&
+        versionParts[0] < 7,
+      `${relativePath} selected provider version must satisfy >= 6.0.0 and < 7.0.0`,
+    );
+    assertContains(
+      text,
+      /constraints\s+=\s+">=\s*6\.0\.0,\s*<\s*7\.0\.0"/,
+      `${relativePath} must preserve AWS provider constraints >= 6.0.0 and < 7.0.0`,
+    );
+    assertContains(text, /hashes\s+=\s+\[/, `${relativePath} must include provider checksum entries`);
+    assertContains(text, /"h1:[^"]+"/, `${relativePath} must include h1 checksum entries`);
+    assertContains(text, /"zh:[a-f0-9]+"/, `${relativePath} must include zh checksum entries`);
+  }
 }
 
 function validateVersions(env) {
@@ -364,11 +456,13 @@ validateExpectedFiles();
 validatePackageJson();
 validateGitignore();
 validateScanScope();
+validateGeneratedArtifacts();
 validateSafeContent('infra/terraform/README.md');
 validateSafeContent('scripts/validate-terraform-foundation.mjs');
 validateSafeContent('package.json');
 validateSafeContent('.gitignore');
 validateReadme();
+validateLockFiles();
 
 for (const env of envs) {
   for (const name of ['versions.tf', 'providers.tf', 'variables.tf', 'locals.tf', 'outputs.tf']) {

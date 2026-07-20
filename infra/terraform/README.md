@@ -45,6 +45,28 @@ Both root modules require Terraform `>= 1.9.0, < 2.0.0` and the AWS provider
 Terraform installation is manual and user-controlled. Do not install Terraform
 automatically from repository scripts.
 
+Gate 3 Slice 3 verified Terraform CLI `1.15.8` at the user-local Windows path
+`$HOME\Tools\terraform\1.15.8\terraform.exe`. Use a temporary session PATH
+entry when needed:
+
+```powershell
+$env:PATH = "$HOME\Tools\terraform\1.15.8;$env:PATH"
+```
+
+The Terraform ZIP checksum was verified against the official HashiCorp
+`SHA256SUMS` file before extraction. GPG signature verification was not
+performed because `gpg` was not available; SHA256 verification over official
+HTTPS was the approved minimum for this slice, but it is not equivalent to GPG
+signature verification.
+
+HashiCorp release-server access is used only to obtain the Terraform CLI.
+Terraform Registry access is used only to resolve and download provider
+packages and checksums. AWS API access is separate and is not required for this
+foundation.
+
+The selected AWS provider version is `6.55.0`, signed by HashiCorp, satisfying
+`>= 6.0.0, < 7.0.0`.
+
 ## Local Validation
 
 Windows PowerShell:
@@ -76,10 +98,14 @@ by local execution policy. `pnpm.cmd` avoids that script policy path.
 must run independently in both root modules because each environment has its
 own provider and variable contract.
 
-`.terraform.lock.hcl` is not manually created in this slice. If a controlled
-future initialization generates lock files, the repository lock-file policy will
-be revisited. The existing repository ignore rules currently exclude generated
-lock files.
+The two committed root-module lock files are:
+
+- `infra/terraform/environments/proof/.terraform.lock.hcl`
+- `infra/terraform/environments/production/.terraform.lock.hcl`
+
+They are committed so provider selections and checksums can be reviewed like
+source changes. They include Windows and Linux hashes for reproducible local
+PowerShell and future Linux/WSL or CI validation.
 
 `.terraform` directories and state files must never be committed. Real `.tfvars`
 files must remain uncommitted. The checked-in `terraform.tfvars.example` files
@@ -115,3 +141,13 @@ this slice.
 - Add remote state only in a later approved slice.
 - Add AWS resources only after explicit cost approval.
 - Add CI integration later, after the local foundation is stable.
+
+## Controlled Provider Upgrade Procedure
+
+Future provider upgrades must be explicit. Update version constraints only in a
+reviewed slice, run `terraform providers lock` for both root modules and both
+platforms, run backend-disabled initialization and validation, compare the two
+lock files, remove `.terraform` directories, and commit only the approved lock
+file changes and documentation evidence. Do not run plan, apply, destroy,
+refresh, import, state, console, test, or AWS CLI commands as part of this
+foundation validation.
