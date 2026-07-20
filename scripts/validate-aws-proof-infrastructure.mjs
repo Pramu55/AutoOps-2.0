@@ -62,8 +62,12 @@ function filePath(relativePath) {
   return path.join(repoRoot, ...relativePath.split('/'));
 }
 
+function normalizeNewlines(text) {
+  return text.replace(/\r\n?/g, '\n');
+}
+
 function read(relativePath) {
-  return readFileSync(filePath(relativePath), 'utf8');
+  return normalizeNewlines(readFileSync(filePath(relativePath), 'utf8'));
 }
 
 function assert(condition, message) {
@@ -198,7 +202,7 @@ function validateTerraform() {
 
   const tfText = listFiles(proofRoot)
     .filter((file) => file.endsWith('.tf'))
-    .map((file) => readFileSync(file, 'utf8'))
+    .map((file) => normalizeNewlines(readFileSync(file, 'utf8')))
     .join('\n');
   const active = stripComments(tfText);
 
