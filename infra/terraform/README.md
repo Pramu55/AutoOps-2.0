@@ -303,3 +303,28 @@ Offline readiness validation:
 ```powershell
 pnpm.cmd run check:terraform-init-readiness
 ```
+
+## Gate 3 Slice 5C Terraform Runtime Approval Package
+
+Slice 5C is documentation and static-script preparation only. Terraform was not
+installed or executed in Slice 5C, HashiCorp release servers were not contacted,
+the Terraform Registry was not contacted, the approved lock files were not
+modified, AWS was not accessed, no resources were created, and AWS spend remains
+USD 0.
+
+The runtime approval contract is documented in
+`docs/cloud/TERRAFORM_RUNTIME_APPROVAL_PACKAGE.md`. The prepared wrapper is
+`scripts/run-controlled-terraform-init.ps1`; do not execute it until a later
+runtime gate grants explicit approval for Terraform binary use and proof-root
+backend-disabled init.
+
+Slice 5C validates only the approval package:
+
+```powershell
+pnpm.cmd run check:terraform-runtime-approval
+```
+
+That validator is static and offline. It checks the approval document, wrapper
+guardrails, generated-artifact absence, approved lock-file immutability, the
+existing ten-resource proof scope, and the package script. It does not run
+Terraform, Docker, AWS CLI, provider downloads, or network commands.
