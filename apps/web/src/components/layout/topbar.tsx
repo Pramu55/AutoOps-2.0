@@ -7,35 +7,43 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   Activity,
   AlertTriangle,
+  Bell,
   Boxes,
-  Cloud,
-  ChevronLeft,
+  CheckCircle2,
+  ChevronDown,
   ChevronRight,
+  Cloud,
   Container,
   Database,
   Gauge,
   Github,
   GitMerge,
+  Grid3X3,
   Hammer,
+  HelpCircle,
+  Home,
   Layers,
   LogOut,
   Menu,
   Network,
+  PanelLeftClose,
+  PanelLeftOpen,
   Search,
   Server,
+  Settings,
   ShieldCheck,
   Wrench,
   X,
   Zap,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { clearAuthSession } from '@/lib/auth-session';
 import { cn } from '@/lib/cn';
 import { getQueryClient } from '@/lib/query-client';
+import { getPrimaryOrganizationRole, isAdminConsoleRole, type ConsoleRole } from '@/lib/role';
 import { disconnectSocket } from '@/lib/socket';
 import { useAuthStore } from '@/stores/auth';
 import { useWorkspaceStore } from '@/stores/workspace';
-import { getPrimaryOrganizationRole, isAdminConsoleRole, type ConsoleRole } from '@/lib/role';
 
 type CommandItem = {
   group: 'Pages' | 'Integrations' | 'Operations' | 'Incidents' | 'Actions';
@@ -56,6 +64,8 @@ type NavGroup = {
   label: string;
   items: NavItem[];
 };
+
+const SIDEBAR_STORAGE_KEY = 'autoops-console-sidebar-collapsed';
 
 const COMMANDS: CommandItem[] = [
   {
@@ -313,6 +323,27 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+const ROUTE_TITLES: Record<string, string> = {
+  '/dashboard': 'Command Workspace',
+  '/dashboard/operations': 'Operations Hub',
+  '/dashboard/incidents': 'Incidents',
+  '/dashboard/projects': 'Projects',
+  '/dashboard/deployments': 'Deployments',
+  '/dashboard/resources': 'Resource Graph',
+  '/dashboard/integrations': 'Integrations Hub',
+  '/dashboard/integrations/jenkins': 'Jenkins',
+  '/dashboard/integrations/docker': 'Docker',
+  '/dashboard/integrations/kubernetes': 'Kubernetes',
+  '/dashboard/integrations/infrastructure': 'Infrastructure Automation',
+  '/dashboard/integrations/github-actions': 'GitHub Actions',
+  '/dashboard/integrations/cloud': 'Cloud Readiness',
+  '/dashboard/integrations/aws': 'AWS Deployments',
+  '/dashboard/integrations/observability': 'Observability',
+  '/dashboard/integrations/devops-tools': 'DevOps Tools',
+  '/dashboard/governance': 'Governance Center',
+  '/dashboard/signals': 'Signal Ingest',
+};
+
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function getCommandResults(query: string): CommandItem[] {
@@ -348,6 +379,52 @@ function isActive(pathname: string, href: string): boolean {
   return base === '/dashboard' ? pathname === base : pathname.startsWith(base);
 }
 
+function routeTitle(pathname: string): string {
+  if (ROUTE_TITLES[pathname]) return ROUTE_TITLES[pathname];
+  const segments = pathname.split('/').filter(Boolean);
+  const lastSegment = segments.at(-1) ?? 'dashboard';
+  if (uuidPattern.test(lastSegment)) {
+    if (pathname.includes('/operations/')) return 'Operation Detail';
+    if (pathname.includes('/incidents/')) return 'Incident Record';
+    return 'Record Detail';
+  }
+  return lastSegment
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function routeCrumbs(pathname: string): Array<{ label: string; href?: string }> {
+  const segments = pathname.split('/').filter(Boolean);
+  const crumbs: Array<{ label: string; href?: string }> = [
+    { label: 'Console', href: '/dashboard' },
+  ];
+  let href = '';
+
+  for (const segment of segments) {
+    href += `/${segment}`;
+    if (segment === 'dashboard') continue;
+    crumbs.push({
+      label: uuidPattern.test(segment) ? 'Record' : routeTitle(href),
+      href: uuidPattern.test(segment) ? undefined : href,
+    });
+  }
+
+  return crumbs.length === 1 ? [{ label: 'Console' }, { label: routeTitle(pathname) }] : crumbs;
+}
+
+function useConsoleRole() {
+  const user = useAuthStore((state) => state.user);
+  const [consoleRole, setConsoleRole] = useState<ConsoleRole | null>(null);
+
+  useEffect(() => {
+    setConsoleRole(getPrimaryOrganizationRole());
+  }, [user?.email]);
+
+  return consoleRole;
+}
+
 function useCommandPalette() {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -355,6 +432,13 @@ function useCommandPalette() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setIsOpen(true);
+      }
+      if (
+        event.key === '/' &&
+        !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName ?? '')
+      ) {
         event.preventDefault();
         setIsOpen(true);
       }
@@ -368,6 +452,46 @@ function useCommandPalette() {
   }, []);
 
   return { isOpen, setIsOpen, query, setQuery };
+}
+
+function navGroupsForRole(role: ConsoleRole | null) {
+  return isAdminConsoleRole(role) ? ADMIN_NAV_GROUPS : NAV_GROUPS;
+}
+
+function filterNavGroups(groups: NavGroup[], query: string): NavGroup[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return groups;
+
+  return groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) =>
+        [group.label, item.label, item.href].join(' ').toLowerCase().includes(normalized),
+      ),
+    }))
+    .filter((group) => group.items.length > 0);
+}
+
+function ShellIconButton({
+  label,
+  children,
+  onClick,
+}: {
+  label: string;
+  children: React.ReactNode;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-white/10 text-slate-300 transition hover:border-[#5f6b7a] hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-[#7aa7ff]"
+    >
+      {children}
+    </button>
+  );
 }
 
 function CommandPalette({
@@ -403,14 +527,15 @@ function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/45 px-4 py-16 backdrop-blur-sm"
+      className="fixed inset-0 z-[70] bg-slate-950/60 px-3 py-14 backdrop-blur-sm sm:px-6"
       role="dialog"
       aria-modal="true"
+      aria-label="Global command search"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="mx-auto w-full max-w-3xl overflow-hidden rounded-xl border border-slate-300 bg-white shadow-2xl shadow-slate-950/20">
+      <div className="mx-auto w-full max-w-3xl overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xl shadow-slate-950/30">
         <div className="flex items-center gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
           <Search className="h-4 w-4 text-slate-500" />
           <input
@@ -431,128 +556,257 @@ function CommandPalette({
                 openCommand(activeResult);
               }
             }}
-            placeholder="Search pages, integrations, actions, or paste an operation UUID"
+            placeholder="Search services, operations, incidents, projects, resources..."
             className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-500"
           />
-          <span className="hidden rounded border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-500 sm:inline">Enter opens</span>
-          <button type="button" onClick={onClose} className="rounded-md p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-900" aria-label="Close command palette">
+          <span className="hidden rounded border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-500 sm:inline">
+            Enter opens
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-label="Close command palette"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="max-h-[65vh] overflow-y-auto p-3">
-          {results.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-600">
-              No command results. Route search does not invent resource data.
-            </div>
-          ) : (
-            groups.map((group) => (
-              <div key={group} className="mb-3 last:mb-0">
-                <p className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{group}</p>
-                <div className="space-y-1">
-                  {results
-                    .filter((item) => item.group === group)
-                    .map((item) => {
-                      resultIndex += 1;
-                      const currentIndex = resultIndex;
-                      const isActiveCommand = currentIndex === activeIndex;
-                      const Icon = item.icon;
-                      return (
-                        <button
-                          key={`${item.group}-${item.href}-${item.label}`}
-                          type="button"
-                          onMouseEnter={() => setActiveIndex(currentIndex)}
-                          onClick={() => openCommand(item)}
-                          className={cn(
-                            'flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition',
-                            isActiveCommand ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-slate-50',
-                          )}
-                        >
-                          <span className="flex h-9 w-9 items-center justify-center rounded-md border border-blue-100 bg-blue-50 text-blue-700">
-                            <Icon className="h-4 w-4" />
-                          </span>
-                          <span className="min-w-0">
-                            <span className="block truncate text-sm font-medium text-slate-900">{item.label}</span>
-                            <span className="block truncate text-xs text-slate-500">{item.description}</span>
-                          </span>
-                          {isActiveCommand ? (
-                            <span className="ml-auto hidden rounded border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-500 sm:inline">
-                              Enter
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                </div>
+        <ScrollArea className="max-h-[65vh]">
+          <div className="p-3">
+            {results.length === 0 ? (
+              <div className="rounded border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-600">
+                No command results. Route search does not invent resource data.
               </div>
-            ))
-          )}
-        </div>
+            ) : (
+              groups.map((group) => (
+                <div key={group} className="mb-3 last:mb-0">
+                  <p className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {group}
+                  </p>
+                  <div className="space-y-1">
+                    {results
+                      .filter((item) => item.group === group)
+                      .map((item) => {
+                        resultIndex += 1;
+                        const currentIndex = resultIndex;
+                        const isActiveCommand = currentIndex === activeIndex;
+                        const Icon = item.icon;
+                        return (
+                          <button
+                            key={`${item.group}-${item.href}-${item.label}`}
+                            type="button"
+                            onMouseEnter={() => setActiveIndex(currentIndex)}
+                            onClick={() => openCommand(item)}
+                            className={cn(
+                              'flex w-full items-center gap-3 rounded-md px-3 py-3 text-left transition focus:outline-none focus:ring-2 focus:ring-blue-500',
+                              isActiveCommand
+                                ? 'bg-blue-50 ring-1 ring-blue-200'
+                                : 'hover:bg-slate-50',
+                            )}
+                          >
+                            <span className="flex h-9 w-9 items-center justify-center rounded border border-blue-100 bg-blue-50 text-blue-700">
+                              <Icon className="h-4 w-4" />
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-medium text-slate-900">
+                                {item.label}
+                              </span>
+                              <span className="block truncate text-xs text-slate-500">
+                                {item.description}
+                              </span>
+                            </span>
+                            {isActiveCommand ? (
+                              <span className="ml-auto hidden rounded border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-500 sm:inline">
+                                Enter
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </ScrollArea>
       </div>
     </div>
   );
 }
 
-export function ConsoleSidebar() {
+function NavigationContent({
+  groups,
+  collapsed = false,
+  onNavigate,
+}: {
+  groups: NavGroup[];
+  collapsed?: boolean;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
+
+  return (
+    <div className="space-y-5">
+      {groups.map((group) => (
+        <section key={group.label}>
+          {collapsed ? (
+            <div className="mx-auto mb-2 h-px w-8 bg-slate-700" title={group.label} />
+          ) : (
+            <p className="px-3 pb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
+              {group.label}
+            </p>
+          )}
+          <nav className="space-y-1" aria-label={group.label}>
+            {group.items.map(({ href, label, icon: Icon }) => {
+              const active = isActive(pathname, href);
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  title={collapsed ? label : undefined}
+                  aria-label={collapsed ? label : undefined}
+                  aria-current={active ? 'page' : undefined}
+                  onClick={onNavigate}
+                  className={cn(
+                    'group relative flex min-h-9 items-center gap-3 rounded-md border border-transparent px-3 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#7aa7ff]',
+                    collapsed && 'justify-center px-2',
+                    active
+                      ? 'border-white/10 bg-[#233244] text-white shadow-[inset_3px_0_0_#ffb454]'
+                      : 'text-slate-300 hover:border-white/10 hover:bg-[#233244] hover:text-white',
+                  )}
+                >
+                  <Icon
+                    className={cn('h-4 w-4 shrink-0', active ? 'text-[#8ab4ff]' : 'text-slate-400')}
+                  />
+                  {collapsed ? (
+                    <span className="pointer-events-none absolute left-[calc(100%+0.5rem)] z-50 hidden whitespace-nowrap rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs font-medium text-white shadow-lg group-hover:block group-focus:block">
+                      {label}
+                    </span>
+                  ) : (
+                    <span className="truncate">{label}</span>
+                  )}
+                </Link>
+              );
+            })}
+          </nav>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+export function ConsoleSidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const user = useAuthStore((state) => state.user);
-  const [consoleRole, setConsoleRole] = useState<ConsoleRole | null>(null);
+  const [isHydrated, setIsHydrated] = useState(false);
+  const consoleRole = useConsoleRole();
+  const navGroups = navGroupsForRole(consoleRole);
 
   useEffect(() => {
-    setConsoleRole(getPrimaryOrganizationRole());
-  }, [user?.email]);
+    const stored = window.localStorage.getItem(SIDEBAR_STORAGE_KEY);
+    setIsCollapsed(stored === 'true');
+    setIsHydrated(true);
+  }, []);
 
-  const navGroups = isAdminConsoleRole(consoleRole) ? ADMIN_NAV_GROUPS : NAV_GROUPS;
+  function toggleCollapsed() {
+    setIsCollapsed((value) => {
+      const next = !value;
+      window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(next));
+      return next;
+    });
+  }
 
   return (
     <aside
       className={cn(
-        'hidden shrink-0 border-r border-[#2b313b] bg-[radial-gradient(circle_at_18%_0%,rgba(9,114,211,.24),transparent_26%),linear-gradient(180deg,#111827,#16191f_52%,#0b1120)] text-slate-200 shadow-2xl transition-[width] duration-200 md:block',
-        isCollapsed ? 'w-20' : 'w-[17rem]',
+        'hidden h-full shrink-0 border-r border-[#263241] bg-[#16191f] text-slate-200 shadow-xl transition-[width] duration-200 md:block',
+        isCollapsed && isHydrated ? 'w-[4.5rem]' : 'w-[16.5rem]',
       )}
+      aria-label="Primary console navigation"
     >
-      <div className="sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto px-3 py-4">
-        <button
-          type="button"
-          onClick={() => setIsCollapsed((value) => !value)}
-          className="mb-4 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-700 bg-white/5 px-3 py-2 text-xs font-bold text-slate-200 transition hover:border-[#ff9900]/60 hover:bg-white/10"
-          aria-label={isCollapsed ? 'Expand service navigation' : 'Collapse service navigation'}
-          title={isCollapsed ? 'Expand navigation' : 'Collapse navigation'}
-        >
-          {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-          {isCollapsed ? null : <span>Collapse navigation</span>}
-        </button>
-        {navGroups.map((group) => (
-          <div key={group.label} className="mb-6">
-            {isCollapsed ? null : (
-              <p className="px-3 pb-2 text-[11px] font-extrabold uppercase tracking-[0.12em] text-slate-400">{group.label}</p>
+      <div className="flex h-full flex-col">
+        <div className="flex h-12 items-center justify-between border-b border-white/10 px-3">
+          {isCollapsed && isHydrated ? (
+            <span className="sr-only">AutoOps services</span>
+          ) : (
+            <span className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
+              Services
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-300 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-[#7aa7ff]"
+            aria-label={isCollapsed ? 'Expand service navigation' : 'Collapse service navigation'}
+            title={isCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+          >
+            {isCollapsed ? (
+              <PanelLeftOpen className="h-4 w-4" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" />
             )}
-            <nav className="space-y-1">
-              {group.items.map(({ href, label, icon: Icon }) => {
-                const active = isActive(pathname, href);
-                return (
-                  <Link
-                    key={href}
-                    href={href}
-                    title={label}
-                    className={cn(
-                      'relative flex min-h-10 items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-sm font-semibold transition',
-                      isCollapsed && 'justify-center px-2',
-                      active
-                        ? 'border-white/10 bg-[#232f3e] text-white shadow-[inset_4px_0_0_#ff9900]'
-                        : 'text-slate-300 hover:border-white/10 hover:bg-[#232f3e] hover:text-white',
-                    )}
-                  >
-                    <Icon className={cn('h-4 w-4', active ? 'text-blue-300' : 'text-slate-400')} />
-                    {isCollapsed ? null : label}
-                  </Link>
-                );
-              })}
-            </nav>
+          </button>
+        </div>
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="px-3 py-4">
+            <NavigationContent groups={navGroups} collapsed={isCollapsed && isHydrated} />
           </div>
-        ))}
+        </ScrollArea>
+        <div className="border-t border-white/10 p-3">
+          <Link
+            href="/dashboard/governance"
+            title="Governance Center"
+            className={cn(
+              'flex items-center gap-3 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-xs font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-[#7aa7ff]',
+              isCollapsed && isHydrated && 'justify-center px-2',
+            )}
+          >
+            <ShieldCheck className="h-4 w-4 text-[#8ab4ff]" />
+            {isCollapsed && isHydrated ? null : <span>Audit evidence</span>}
+          </Link>
+        </div>
       </div>
     </aside>
+  );
+}
+
+export function PageContextBar() {
+  const pathname = usePathname();
+  const currentOrg = useWorkspaceStore((state) => state.currentOrg);
+  const title = routeTitle(pathname);
+  const crumbs = routeCrumbs(pathname);
+
+  return (
+    <div className="border-b border-slate-200 bg-white/85 px-3 py-2 backdrop-blur sm:px-5 lg:px-7">
+      <div className="flex min-h-10 flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <nav
+            className="flex flex-wrap items-center gap-1 text-xs text-slate-500"
+            aria-label="Breadcrumb"
+          >
+            <Home className="mr-1 h-3.5 w-3.5 text-slate-400" />
+            {crumbs.map((crumb, index) => (
+              <span key={`${crumb.label}-${index}`} className="inline-flex items-center gap-1">
+                {index > 0 ? <ChevronRight className="h-3 w-3 text-slate-300" /> : null}
+                {crumb.href && index < crumbs.length - 1 ? (
+                  <Link href={crumb.href} className="hover:text-slate-900 hover:underline">
+                    {crumb.label}
+                  </Link>
+                ) : (
+                  <span>{crumb.label}</span>
+                )}
+              </span>
+            ))}
+          </nav>
+          <h1 className="truncate text-base font-bold text-slate-950">{title}</h1>
+        </div>
+        <div className="hidden items-center gap-2 text-xs font-semibold text-slate-600 sm:flex">
+          <span className="rounded border border-slate-200 bg-slate-50 px-2 py-1">
+            {currentOrg?.name ?? 'Workspace not selected'}
+          </span>
+          <span className="rounded border border-slate-200 bg-slate-50 px-2 py-1">Console</span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -562,14 +816,44 @@ export function Topbar() {
   const clearAuth = useAuthStore((state) => state.clearAuth);
   const resetWorkspace = useWorkspaceStore((state) => state.reset);
   const currentOrg = useWorkspaceStore((state) => state.currentOrg);
+  const orgs = useWorkspaceStore((state) => state.orgs);
+  const setCurrentOrg = useWorkspaceStore((state) => state.setCurrentOrg);
   const { isOpen, setIsOpen, query, setQuery } = useCommandPalette();
   const [isServicesOpen, setIsServicesOpen] = useState(false);
-  const [consoleRole, setConsoleRole] = useState<ConsoleRole | null>(null);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
+  const [moduleSearch, setModuleSearch] = useState('');
+  const consoleRole = useConsoleRole();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const moduleSearchRef = useRef<HTMLInputElement | null>(null);
+  const navGroups = navGroupsForRole(consoleRole);
+  const filteredModuleGroups = useMemo(
+    () => filterNavGroups(navGroups, moduleSearch),
+    [navGroups, moduleSearch],
+  );
 
   useEffect(() => {
-    setConsoleRole(getPrimaryOrganizationRole());
-  }, [user?.email]);
+    if (!isServicesOpen && !isProfileOpen && !isWorkspaceOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsServicesOpen(false);
+        setIsProfileOpen(false);
+        setIsWorkspaceOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isServicesOpen, isProfileOpen, isWorkspaceOpen]);
+
+  useEffect(() => {
+    if (!isServicesOpen) {
+      setModuleSearch('');
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => moduleSearchRef.current?.focus(), 50);
+    return () => window.clearTimeout(timeoutId);
+  }, [isServicesOpen]);
 
   function handleLogout() {
     disconnectSocket();
@@ -591,124 +875,230 @@ export function Topbar() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 border-b border-[#d9dee7] bg-white/90 shadow-sm backdrop-blur">
-        <div className="flex min-h-16 flex-wrap items-center gap-2 px-3 py-2 sm:gap-3 lg:px-6">
+      <header className="fixed inset-x-0 top-0 z-50 h-14 border-b border-[#263241] bg-[#111827] text-slate-100 shadow-lg shadow-slate-950/20">
+        <div className="flex h-full items-center gap-2 px-3 sm:gap-3 lg:px-5">
+          <ShellIconButton label="Open services navigation" onClick={() => setIsServicesOpen(true)}>
+            <Menu className="h-4 w-4 md:hidden" />
+            <Grid3X3 className="hidden h-4 w-4 md:block" />
+          </ShellIconButton>
+
+          <Link href="/dashboard" className="flex min-w-0 items-center gap-2 pr-1 sm:pr-3">
+            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-[#0972d3] text-white shadow-sm">
+              <Zap className="h-4 w-4" />
+            </span>
+            <span className="hidden min-w-0 sm:block">
+              <span className="block truncate text-sm font-extrabold leading-4 text-white">
+                AutoOps
+              </span>
+              <span className="block truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                Control Platform
+              </span>
+            </span>
+          </Link>
+
           <button
             type="button"
             onClick={() => setIsServicesOpen(true)}
-            className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-800 transition hover:border-blue-500 hover:bg-blue-50 md:hidden"
+            className="hidden h-9 items-center gap-2 rounded-md border border-white/10 px-3 text-xs font-bold text-slate-200 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-[#7aa7ff] lg:inline-flex"
           >
-            <Menu className="h-4 w-4" />
+            <Grid3X3 className="h-4 w-4" />
             Services
           </button>
-          <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-3 sm:w-[15.25rem] sm:flex-none">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0972d3] text-white shadow-sm">
-              <Zap className="h-4 w-4" />
-            </div>
-            <div className="hidden min-[430px]:block">
-              <p className="text-sm font-extrabold text-slate-950">
-                {isAdminConsoleRole(consoleRole) ? 'AutoOps Admin' : 'AutoOps Console'}
-              </p>
-              <p className="text-[11px] font-semibold text-slate-500">{currentOrg?.name ?? 'Local runtime'}</p>
-            </div>
-          </Link>
 
-          <div className="relative order-last flex h-10 min-w-0 flex-[1_0_100%] items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm shadow-sm transition focus-within:border-[#0972d3] focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 sm:order-none sm:min-w-[14rem] sm:flex-1 lg:max-w-3xl">
-            <Search className="h-4 w-4 shrink-0 text-slate-500" />
-            <input
-              ref={searchInputRef}
-              value={query}
-              onFocus={() => {
-                if (query.trim()) setIsOpen(true);
-              }}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setIsOpen(event.target.value.trim().length > 0);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  const [firstResult] = getCommandResults(query);
-                  if (firstResult) {
-                    setIsOpen(false);
-                    router.push(firstResult.href);
-                  } else {
-                    setIsOpen(true);
+          <div className="mx-1 hidden h-6 w-px bg-white/10 lg:block" />
+
+          <div className="relative min-w-0 flex-1">
+            <div className="flex h-9 items-center gap-2 rounded-md border border-white/15 bg-white px-3 text-sm shadow-sm transition focus-within:border-[#7aa7ff] focus-within:ring-2 focus-within:ring-[#1f4f82]">
+              <Search className="h-4 w-4 shrink-0 text-slate-500" />
+              <input
+                ref={searchInputRef}
+                value={query}
+                onFocus={() => setIsOpen(true)}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setIsOpen(true);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    const [firstResult] = getCommandResults(query);
+                    if (firstResult) {
+                      setIsOpen(false);
+                      router.push(firstResult.href);
+                    }
                   }
-                }
-              }}
-              placeholder="Search services, operations, incidents, or paste UUID"
-              className="min-w-0 flex-1 bg-transparent text-sm font-medium text-slate-900 outline-none placeholder:text-slate-500"
-            />
+                }}
+                placeholder="Search services, operations, incidents, projects, resources..."
+                className="min-w-0 flex-1 bg-transparent text-sm font-medium text-slate-950 outline-none placeholder:text-slate-500"
+                aria-label="Search services, operations, incidents, projects, resources"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(true);
+                  searchInputRef.current?.focus();
+                }}
+                className="hidden rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-[11px] font-bold text-slate-600 hover:bg-slate-100 sm:inline"
+                aria-label="Open command search"
+              >
+                Ctrl K
+              </button>
+            </div>
+          </div>
+
+          <div className="hidden items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-400/10 px-2.5 py-1.5 text-xs font-bold text-emerald-200 lg:flex">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Console
+          </div>
+
+          <div className="relative hidden md:block">
             <button
               type="button"
-              onClick={() => {
-                setIsOpen(true);
-                searchInputRef.current?.focus();
-              }}
-              className="hidden shrink-0 rounded-md border border-slate-300 bg-white px-1.5 py-0.5 text-[11px] font-bold text-slate-500 hover:bg-slate-50 sm:inline"
+              onClick={() => setIsWorkspaceOpen((value) => !value)}
+              className="flex h-9 max-w-[13rem] items-center gap-2 rounded-md border border-white/10 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-[#7aa7ff]"
+              aria-haspopup="menu"
+              aria-expanded={isWorkspaceOpen}
             >
-              Ctrl K
+              <span className="truncate">{currentOrg?.name ?? 'Workspace'}</span>
+              <ChevronDown className="h-3.5 w-3.5 shrink-0" />
             </button>
+            {isWorkspaceOpen ? (
+              <div className="absolute right-0 top-11 z-[65] w-64 rounded-md border border-slate-700 bg-[#1f2937] p-2 shadow-xl">
+                <p className="px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                  Workspace
+                </p>
+                {orgs.length > 0 ? (
+                  orgs.map((org) => (
+                    <button
+                      key={org.id}
+                      type="button"
+                      onClick={() => {
+                        setCurrentOrg(org);
+                        setIsWorkspaceOpen(false);
+                      }}
+                      className="flex w-full items-center justify-between rounded px-2 py-2 text-left text-sm text-slate-100 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-[#7aa7ff]"
+                    >
+                      <span className="truncate">{org.name}</span>
+                      {currentOrg?.id === org.id ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+                      ) : null}
+                    </button>
+                  ))
+                ) : (
+                  <p className="px-2 py-2 text-sm text-slate-300">No workspace loaded</p>
+                )}
+              </div>
+            ) : null}
           </div>
 
-          <div className="hidden items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 lg:flex">
-            <span className="h-2 w-2 rounded-full bg-emerald-300" />
-            Runtime
+          <ShellIconButton label="Notifications">
+            <Bell className="h-4 w-4" />
+          </ShellIconButton>
+          <ShellIconButton label="Help">
+            <HelpCircle className="h-4 w-4" />
+          </ShellIconButton>
+          <ShellIconButton label="Open settings" onClick={() => router.push('/dashboard/settings')}>
+            <Settings className="h-4 w-4" />
+          </ShellIconButton>
+
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsProfileOpen((value) => !value)}
+              className="flex h-9 items-center gap-2 rounded-md border border-white/10 px-1.5 pr-2 text-slate-200 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-[#7aa7ff]"
+              aria-label="Open profile menu"
+              aria-haspopup="menu"
+              aria-expanded={isProfileOpen}
+            >
+              <span className="flex h-7 w-7 items-center justify-center rounded bg-[#31465f] text-xs font-bold text-white">
+                {initials}
+              </span>
+              <ChevronDown className="hidden h-3.5 w-3.5 sm:block" />
+            </button>
+            {isProfileOpen ? (
+              <div className="absolute right-0 top-11 z-[65] w-72 rounded-md border border-slate-700 bg-[#1f2937] p-2 shadow-xl">
+                <div className="border-b border-white/10 px-2 py-3">
+                  <p className="truncate text-sm font-semibold text-white">
+                    {user?.name ?? 'Operator'}
+                  </p>
+                  <p className="truncate text-xs text-slate-400">{user?.email ?? 'autoops'}</p>
+                  <p className="mt-1 text-xs font-medium text-slate-300">
+                    {isAdminConsoleRole(consoleRole) ? 'Admin console role' : 'Console role'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="mt-2 flex w-full items-center gap-2 rounded px-2 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-[#7aa7ff]"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Sign out
+                </button>
+              </div>
+            ) : null}
           </div>
-          <div className="hidden rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm xl:block">
-            {isAdminConsoleRole(consoleRole) ? 'Admin control' : 'Local runtime'}
-          </div>
-          <div className="hidden min-h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white py-1 pl-1 pr-3 shadow-sm sm:flex">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#232f3e] text-xs font-bold text-white">{initials}</div>
-            <div className="hidden max-w-40 lg:block">
-              <p className="truncate text-xs font-medium text-slate-900">{user?.name ?? 'Operator'}</p>
-              <p className="truncate text-[10px] text-slate-500">{user?.email ?? 'autoops'}</p>
-            </div>
-          </div>
-          <Button variant="ghost" size="icon" aria-label="Sign out" onClick={handleLogout} className="rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-950">
-            <LogOut className="h-4 w-4" />
-          </Button>
         </div>
       </header>
+
       {isServicesOpen ? (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm md:hidden" role="dialog" aria-modal="true">
-          <div className="h-full w-[min(22rem,86vw)] overflow-y-auto border-r border-[#31465f] bg-[#16191f] p-4 shadow-2xl shadow-black/50">
-            <div className="mb-4 flex items-center justify-between">
+        <div
+          className="fixed inset-0 z-[60] bg-slate-950/70 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Services navigation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setIsServicesOpen(false);
+          }}
+        >
+          <div className="flex h-full w-[min(42rem,92vw)] flex-col border-r border-[#31465f] bg-[#16191f] shadow-2xl shadow-black/50">
+            <div className="flex min-h-14 items-center justify-between border-b border-white/10 px-4">
               <div>
-                <p className="text-sm font-semibold text-white">Services</p>
-                <p className="text-xs text-slate-400">Navigate AutoOps modules</p>
+                <p className="text-sm font-semibold text-white">AutoOps services</p>
+                <p className="text-xs text-slate-400">Existing console destinations</p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsServicesOpen(false)}
-                className="rounded-md border border-slate-700 p-2 text-slate-300 hover:bg-[#31465f] hover:text-white"
+                className="rounded-md border border-slate-700 p-2 text-slate-300 hover:bg-[#31465f] hover:text-white focus:outline-none focus:ring-2 focus:ring-[#7aa7ff]"
                 aria-label="Close services navigation"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            {(isAdminConsoleRole(consoleRole) ? ADMIN_NAV_GROUPS : NAV_GROUPS).map((group) => (
-              <div key={group.label} className="mb-6">
-                <p className="px-2 pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{group.label}</p>
-                <nav className="space-y-1">
-                  {group.items.map(({ href, label, icon: Icon }) => (
-                    <Link
-                      key={href}
-                      href={href}
-                      onClick={() => setIsServicesOpen(false)}
-                      className="flex items-center gap-3 rounded-md border border-transparent px-3 py-2 text-sm text-slate-200 transition hover:border-blue-400/30 hover:bg-blue-500/10"
-                    >
-                      <Icon className="h-4 w-4 text-blue-300" />
-                      {label}
-                    </Link>
-                  ))}
-                </nav>
+            <div className="border-b border-white/10 p-4">
+              <label className="sr-only" htmlFor="autoops-module-search">
+                Filter AutoOps services
+              </label>
+              <div className="flex h-10 items-center gap-2 rounded-md border border-slate-600 bg-white px-3">
+                <Search className="h-4 w-4 text-slate-500" />
+                <input
+                  id="autoops-module-search"
+                  ref={moduleSearchRef}
+                  value={moduleSearch}
+                  onChange={(event) => setModuleSearch(event.target.value)}
+                  placeholder="Filter services, operations, integrations..."
+                  className="min-w-0 flex-1 bg-transparent text-sm font-medium text-slate-950 outline-none placeholder:text-slate-500"
+                />
               </div>
-            ))}
+            </div>
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="p-4">
+                {filteredModuleGroups.length > 0 ? (
+                  <NavigationContent
+                    groups={filteredModuleGroups}
+                    onNavigate={() => setIsServicesOpen(false)}
+                  />
+                ) : (
+                  <div className="rounded-md border border-dashed border-slate-600 bg-white/[0.03] p-6 text-sm text-slate-300">
+                    No existing AutoOps destination matches that filter.
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
           </div>
         </div>
       ) : null}
+
       <CommandPalette
         isOpen={isOpen}
         query={query}

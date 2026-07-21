@@ -1,13 +1,14 @@
-import { ConsoleSidebar, Topbar } from '@/components/layout/topbar';
+import { ConsoleSidebar, PageContextBar, Topbar } from '@/components/layout/topbar';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen ao-console-surface text-slate-900">
+    <div className="h-screen overflow-hidden bg-slate-100 text-slate-900">
       <Topbar />
-      <div className="flex min-h-[calc(100vh-4rem)]">
+      <div className="flex h-full pt-14">
         <ConsoleSidebar />
-        <main className="min-w-0 flex-1">
-          <div className="mx-auto w-full max-w-[1520px] px-3 py-4 sm:px-6 sm:py-5 lg:px-8">
+        <main className="min-w-0 flex-1 overflow-y-auto">
+          <PageContextBar />
+          <div className="mx-auto w-full max-w-[1560px] px-3 py-4 sm:px-5 sm:py-5 lg:px-7">
             {children}
           </div>
         </main>
