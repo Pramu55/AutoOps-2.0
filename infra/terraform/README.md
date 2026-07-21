@@ -342,3 +342,21 @@ Static validation:
 ```powershell
 pnpm.cmd run check:terraform-plan-readiness
 ```
+
+## Gate 3 Slice 5F AWS Identity And Credential Readiness
+
+Slice 5F is offline preparation only. The current provider skip settings do not
+prove identity and must not be treated as AWS account validation.
+
+No credentials, profiles, or environment variables were inspected. STS and AWS
+APIs were not called. No AWS command was executed. Terraform and Docker were not
+executed. No resources were created, and spend remains USD 0.
+
+Later identity verification requires separate approval. Later plan and apply
+remain separate approval gates.
+
+Static validation:
+
+```powershell
+pnpm.cmd run check:aws-identity-credential-readiness
+```
