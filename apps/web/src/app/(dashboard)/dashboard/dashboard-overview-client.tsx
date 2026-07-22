@@ -349,14 +349,14 @@ export function DashboardOverviewClient() {
   return (
     <div className="min-h-screen bg-[#f3f4f6]">
       <main
-        className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8"
+        className="mx-auto flex w-full max-w-[1440px] flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8"
         aria-labelledby="console-home-title"
       >
         <StatusStrip overview={overview} errors={loadErrors} isLoading={isLoading} />
 
-        <section className="rounded-lg border border-[#d7dde4] bg-white shadow-sm">
-          <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-start lg:justify-between">
-            <div>
+        <section className="rounded-lg border border-[#d7dde4] bg-white shadow-[0_1px_2px_rgba(16,24,32,0.04)]">
+          <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+            <div className="min-w-0">
               <nav
                 className="flex items-center gap-2 text-xs font-semibold text-[#64748b]"
                 aria-label="Breadcrumb"
@@ -368,7 +368,7 @@ export function DashboardOverviewClient() {
               <p className="mt-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#0066c0]">
                 AutoOps Console
               </p>
-              <div className="mt-2 flex flex-wrap items-center gap-3">
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
                 <h1
                   id="console-home-title"
                   className="text-2xl font-semibold tracking-tight text-[#101820] sm:text-[28px]"
@@ -384,16 +384,19 @@ export function DashboardOverviewClient() {
               <p className="mt-2 text-xs text-[#64748b]">Updated {formatTime(lastUpdated)}</p>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap lg:flex-nowrap lg:justify-end">
               <button
                 onClick={() => void loadOverview('refresh')}
                 disabled={isLoading || isRefreshing}
-                className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[#d7dde4] bg-white px-3 text-sm font-semibold text-[#101820] hover:bg-slate-50 disabled:opacity-50"
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[#d7dde4] bg-white px-3 text-sm font-semibold text-[#101820] hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0066c0] focus-visible:ring-offset-2 disabled:opacity-50"
+                aria-label="Refresh dashboard data"
               >
                 <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
                 Refresh
               </button>
-              <HeaderLink href={routes.operations}>Open Operations</HeaderLink>
+              <HeaderLink href={routes.operations} variant="primary">
+                Open Operations
+              </HeaderLink>
               <HeaderLink href={routes.approvals}>Review approvals</HeaderLink>
               <HeaderLink href={routes.incidents}>View incidents</HeaderLink>
             </div>
@@ -401,7 +404,7 @@ export function DashboardOverviewClient() {
         </section>
 
         <section
-          className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6"
+          className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6"
           aria-label="Executive summary"
         >
           {summaryCards.map((card) => (
@@ -409,23 +412,24 @@ export function DashboardOverviewClient() {
           ))}
         </section>
 
-        <section className="grid gap-5 xl:grid-cols-3" aria-label="Dashboard details">
+        <section
+          className="grid gap-4 xl:grid-cols-[1.05fr_1.1fr_1.1fr]"
+          aria-label="Dashboard details"
+        >
           <ConsoleCard
             title="Quick access"
-            action={
-              <Link className="text-xs font-semibold text-[#0066c0]" href={routes.resources}>
-                Open graph
-              </Link>
-            }
+            action={<InlineAction href={routes.resources}>Open graph</InlineAction>}
           >
             <div className="divide-y divide-slate-100">
               {quickAccessItems.map(([label, description, href, Icon]) => (
                 <Link
                   key={String(label)}
                   href={String(href)}
-                  className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50"
+                  className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0066c0]"
                 >
-                  <Icon className="h-4 w-4 shrink-0 text-[#334155]" />
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50">
+                    <Icon className="h-4 w-4 text-[#334155]" />
+                  </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-semibold text-[#101820]">{label}</span>
                     <span className="block truncate text-xs text-[#64748b]">{description}</span>
@@ -438,11 +442,7 @@ export function DashboardOverviewClient() {
 
           <ConsoleCard
             title="Operations and governance"
-            action={
-              <Link className="text-xs font-semibold text-[#0066c0]" href={routes.operations}>
-                Operations Hub
-              </Link>
-            }
+            action={<InlineAction href={routes.operations}>Operations Hub</InlineAction>}
           >
             <MetricRows
               rows={[
@@ -478,11 +478,7 @@ export function DashboardOverviewClient() {
 
           <ConsoleCard
             title="Deployment snapshot"
-            action={
-              <Link className="text-xs font-semibold text-[#0066c0]" href={routes.deployments}>
-                Deployments
-              </Link>
-            }
+            action={<InlineAction href={routes.deployments}>Deployments</InlineAction>}
           >
             <MetricRows
               rows={[
@@ -522,18 +518,13 @@ export function DashboardOverviewClient() {
         </section>
 
         <section
-          className="grid gap-5 lg:grid-cols-2 xl:grid-cols-3"
+          className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3"
           aria-label="Runtime and integration details"
         >
           <ConsoleCard
             title="Runtime health"
             action={
-              <Link
-                className="text-xs font-semibold text-[#0066c0]"
-                href={`${routes.operations}#runtime-health`}
-              >
-                Runtime
-              </Link>
+              <InlineAction href={`${routes.operations}#runtime-health`}>Runtime</InlineAction>
             }
           >
             <MetricRows
@@ -580,11 +571,7 @@ export function DashboardOverviewClient() {
 
           <ConsoleCard
             title="Integration readiness"
-            action={
-              <Link className="text-xs font-semibold text-[#0066c0]" href={routes.integrations}>
-                Integrations
-              </Link>
-            }
+            action={<InlineAction href={routes.integrations}>Integrations</InlineAction>}
           >
             <MetricRows
               rows={[
@@ -620,11 +607,7 @@ export function DashboardOverviewClient() {
 
           <ConsoleCard
             title="Incident summary"
-            action={
-              <Link className="text-xs font-semibold text-[#0066c0]" href={routes.incidents}>
-                Incidents
-              </Link>
-            }
+            action={<InlineAction href={routes.incidents}>Incidents</InlineAction>}
           >
             {overview.incidents.length === 0 ? (
               <EmptyState
@@ -638,7 +621,7 @@ export function DashboardOverviewClient() {
                   <Link
                     key={incident.id}
                     href={`/dashboard/incidents/${incident.id}`}
-                    className="block px-4 py-3 hover:bg-slate-50"
+                    className="block px-4 py-3 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0066c0]"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate text-sm font-semibold text-[#101820]">
@@ -647,7 +630,7 @@ export function DashboardOverviewClient() {
                       <StatusBadge status={incident.severity} className="min-h-6" />
                     </div>
                     <p className="mt-1 text-xs text-[#64748b]">
-                      {incident.status} · {incident.signalCount} signals ·{' '}
+                      {incident.status} - {incident.signalCount} signals -{' '}
                       {formatDateTime(incident.updatedAt)}
                     </p>
                   </Link>
@@ -669,7 +652,7 @@ export function DashboardOverviewClient() {
                 <p className="mt-1 text-xs">
                   {Object.entries(loadErrors)
                     .map(([key, message]) => `${key}: ${message}`)
-                    .join(' · ')}
+                    .join(' - ')}
                 </p>
                 <button
                   onClick={() => void loadOverview('refresh')}
@@ -695,51 +678,87 @@ function StatusStrip({
   errors: LoadErrors;
   isLoading: boolean;
 }) {
+  const failedOperations =
+    overview.summary?.operations?.failed ??
+    overview.recentOperations.filter((op) => op.status === 'FAILED').length;
+  const connectedProviders = Object.values(overview.observability?.providers ?? {}).filter(
+    (provider) => provider.status === 'CONNECTED',
+  ).length;
   const items = [
-    [
-      'API',
-      overview.observability?.platform.api.status ??
+    {
+      label: 'API',
+      value: statusLabel(
+        overview.observability?.platform.api.status ??
+          (errors.observability ? 'UNAVAILABLE' : 'UNKNOWN'),
+      ),
+      status:
+        overview.observability?.platform.api.status ??
         (errors.observability ? 'UNAVAILABLE' : 'UNKNOWN'),
-    ],
-    [
-      'Worker',
-      overview.observability?.platform.worker.status ??
+    },
+    {
+      label: 'Worker',
+      value: statusLabel(
+        overview.observability?.platform.worker.status ??
+          (errors.observability ? 'UNAVAILABLE' : 'UNKNOWN'),
+      ),
+      status:
+        overview.observability?.platform.worker.status ??
         (errors.observability ? 'UNAVAILABLE' : 'UNKNOWN'),
-    ],
-    [
-      'Queues',
-      overview.observability?.queues.operations.status ??
+    },
+    {
+      label: 'Queues',
+      value: statusLabel(
+        overview.observability?.queues.operations.status ??
+          (errors.observability ? 'UNAVAILABLE' : 'UNKNOWN'),
+      ),
+      status:
+        overview.observability?.queues.operations.status ??
         (errors.observability ? 'UNAVAILABLE' : 'UNKNOWN'),
-    ],
-    [
-      'Connector readiness',
-      `${Object.values(overview.observability?.providers ?? {}).filter((provider) => provider.status === 'CONNECTED').length} connected`,
-    ],
-    ['Pending approvals', isLoading ? 'Loading' : String(overview.pendingApprovals.length)],
-    [
-      'Failed operations',
-      isLoading
-        ? 'Loading'
-        : String(
-            overview.summary?.operations?.failed ??
-              overview.recentOperations.filter((op) => op.status === 'FAILED').length,
-          ),
-    ],
+    },
+    {
+      label: 'Connector readiness',
+      value: isLoading ? 'Loading' : `${connectedProviders} connected`,
+      status: errors.observability
+        ? 'UNAVAILABLE'
+        : connectedProviders > 0
+          ? 'CONNECTED'
+          : 'NOT_CONFIGURED',
+    },
+    {
+      label: 'Pending approvals',
+      value: isLoading ? 'Loading' : String(overview.pendingApprovals.length),
+      status: errors.pendingApprovals
+        ? 'UNAVAILABLE'
+        : overview.pendingApprovals.length > 0
+          ? 'PENDING_APPROVAL'
+          : 'READY',
+    },
+    {
+      label: 'Failed operations',
+      value: isLoading ? 'Loading' : String(failedOperations),
+      status:
+        errors.summary && errors.recentOperations
+          ? 'UNAVAILABLE'
+          : failedOperations > 0
+            ? 'FAILED'
+            : 'READY',
+    },
   ];
 
   return (
     <section
-      className="rounded-lg border border-[#d7dde4] bg-white px-3 py-2 shadow-sm"
+      className="rounded-lg border border-[#d7dde4] bg-white px-3 py-2 shadow-[0_1px_2px_rgba(16,24,32,0.04)]"
       aria-label="Platform status"
+      aria-busy={isLoading}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        {items.map(([label, value]) => (
+      <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+        {items.map((item) => (
           <div
-            key={label}
-            className="flex min-h-8 items-center gap-2 rounded-md border border-slate-200 bg-[#f8fafc] px-3 text-xs"
+            key={item.label}
+            className="flex min-h-9 items-center justify-between gap-2 rounded-md border border-slate-200 bg-[#f8fafc] px-3 text-xs"
           >
-            <span className="font-semibold text-[#334155]">{label}</span>
-            <span className="text-[#64748b]">{value}</span>
+            <span className="min-w-0 truncate font-semibold text-[#334155]">{item.label}</span>
+            <StatusPill status={item.status} text={item.value} />
           </div>
         ))}
       </div>
@@ -774,14 +793,73 @@ function StateIndicator({
   );
 }
 
-function HeaderLink({ href, children }: { href: string; children: React.ReactNode }) {
+function HeaderLink({
+  href,
+  children,
+  variant = 'secondary',
+}: {
+  href: string;
+  children: React.ReactNode;
+  variant?: 'primary' | 'secondary';
+}) {
   return (
     <Link
       href={href}
-      className="inline-flex h-9 items-center justify-center rounded-md border border-[#d7dde4] bg-[#f8fafc] px-3 text-sm font-semibold text-[#101820] hover:bg-white"
+      className={cn(
+        'inline-flex h-9 items-center justify-center rounded-md border px-3 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0066c0] focus-visible:ring-offset-2',
+        variant === 'primary'
+          ? 'border-[#101820] bg-[#101820] text-white hover:bg-[#1f2933]'
+          : 'border-[#d7dde4] bg-[#f8fafc] text-[#101820] hover:bg-white',
+      )}
     >
       {children}
     </Link>
+  );
+}
+
+function InlineAction({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex items-center gap-1 text-xs font-semibold text-[#0066c0] hover:text-[#004b8d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0066c0] focus-visible:ring-offset-2"
+    >
+      {children}
+      <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+    </Link>
+  );
+}
+
+function StatusPill({ status, text }: { status: string; text: string }) {
+  const normStatus = status.toUpperCase();
+  const toneClass = [
+    'CONNECTED',
+    'RESOLVED',
+    'SUCCEEDED',
+    'APPROVED',
+    'READY',
+    'HEALTHY',
+    'RUNNING',
+  ].includes(normStatus)
+    ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-700'
+    : ['WARNING', 'ACKNOWLEDGED', 'NOT_CONFIGURED', 'PENDING_APPROVAL', 'QUEUED'].includes(
+          normStatus,
+        )
+      ? 'border-amber-400/25 bg-amber-400/10 text-amber-700'
+      : ['ERROR', 'CRITICAL', 'FAILED', 'REJECTED', 'UNREACHABLE', 'AUTH_FAILED', 'OPEN'].includes(
+            normStatus,
+          )
+        ? 'border-rose-400/30 bg-rose-500/10 text-rose-700'
+        : 'border-slate-300/60 bg-slate-100/50 text-slate-600';
+
+  return (
+    <span
+      className={cn(
+        'inline-flex min-h-6 shrink-0 items-center rounded-full border px-2 text-[10px] font-bold uppercase',
+        toneClass,
+      )}
+    >
+      {text}
+    </span>
   );
 }
 
@@ -803,15 +881,19 @@ function SummaryCard({
   return (
     <Link
       href={href}
-      className="rounded-lg border border-[#d7dde4] bg-white p-4 shadow-sm hover:border-slate-400"
+      className="group flex min-h-[142px] flex-col rounded-lg border border-[#d7dde4] bg-white p-4 shadow-[0_1px_2px_rgba(16,24,32,0.04)] transition hover:border-slate-400 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0066c0] focus-visible:ring-offset-2"
     >
       <div className="flex items-start justify-between gap-3">
-        <Icon className="h-4 w-4 text-[#334155]" />
+        <span className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-slate-50">
+          <Icon className="h-4 w-4 text-[#334155]" />
+        </span>
         <StatusBadge status={status} className="min-h-6 px-2 text-[10px]" />
       </div>
-      <p className="mt-4 text-xs font-bold uppercase tracking-wide text-[#64748b]">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-[#101820]">{value}</p>
-      <p className="mt-1 min-h-8 text-xs leading-4 text-[#64748b]">{context}</p>
+      <p className="mt-3 truncate text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">
+        {label}
+      </p>
+      <p className="mt-1 truncate text-[26px] font-semibold leading-8 text-[#101820]">{value}</p>
+      <p className="mt-auto line-clamp-2 pt-2 text-xs leading-4 text-[#64748b]">{context}</p>
     </Link>
   );
 }
@@ -826,8 +908,8 @@ function ConsoleCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded-lg border border-[#d7dde4] bg-white shadow-sm">
-      <div className="flex min-h-14 items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+    <section className="overflow-hidden rounded-lg border border-[#d7dde4] bg-white shadow-[0_1px_2px_rgba(16,24,32,0.04)]">
+      <div className="flex min-h-12 items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
         <h2 className="text-sm font-bold text-[#101820]">{title}</h2>
         {action}
       </div>
@@ -840,7 +922,7 @@ function MetricRows({ rows }: { rows: Array<[string, string | number, string, st
   return (
     <div className="divide-y divide-slate-100">
       {rows.map(([label, value, context, status]) => (
-        <div key={label} className="flex items-start justify-between gap-3 px-4 py-3">
+        <div key={label} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-[#101820]">{label}</p>
             <p className="mt-1 truncate text-xs text-[#64748b]">{context}</p>
