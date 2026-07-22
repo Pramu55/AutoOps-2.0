@@ -2,37 +2,95 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import type { LucideIcon } from 'lucide-react';
 import type {
   Deployment,
-  Project,
-  OpsObservabilityResponse,
-  OpsSummary,
+  IncidentListResponse,
+  IncidentSummary,
   OperationActivityItem,
   OperationActivityResponse,
+  OpsObservabilityResponse,
+  OpsSummary,
+  Project,
   SignalReadinessResponse,
-  IncidentSummary,
-  IncidentListResponse
 } from '@autoops/types';
 import {
   Activity,
   AlertTriangle,
   ArrowRight,
-  CheckCircle2,
-  Database,
+  Boxes,
   GitMerge,
   Network,
-  RadioTower,
   RefreshCw,
+  Route,
   ShieldCheck,
-  Terminal,
-  Zap
+  SlidersHorizontal,
+  Workflow,
+  XCircle,
 } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
-import { WorkspaceHeader } from '@/components/layout/workspace-header';
-import { WorkQueue } from '@/components/layout/work-queue';
 import { EmptyState } from '@/components/layout/empty-state';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { cn } from '@/lib/cn';
+
+const POLL_INTERVAL_MS = 60_000;
+
+type LoadKey =
+  | 'projects'
+  | 'deployments'
+  | 'summary'
+  | 'observability'
+  | 'pendingApprovals'
+  | 'recentOperations'
+  | 'signals'
+  | 'incidents';
+
+type LoadErrors = Partial<Record<LoadKey, string>>;
+
+type OverviewState = {
+  projects: Project[];
+  deployments: Deployment[];
+  environmentCount: number | null;
+  summary: OpsSummary | null;
+  observability: OpsObservabilityResponse | null;
+  pendingApprovals: OperationActivityItem[];
+  recentOperations: OperationActivityItem[];
+  signalReadiness: SignalReadinessResponse | null;
+  incidents: IncidentSummary[];
+};
+
+const initialOverviewState: OverviewState = {
+  projects: [],
+  deployments: [],
+  environmentCount: null,
+  summary: null,
+  observability: null,
+  pendingApprovals: [],
+  recentOperations: [],
+  signalReadiness: null,
+  incidents: [],
+};
+
+const routes = {
+  projects: '/dashboard/projects',
+  deployments: '/dashboard/deployments',
+  operations: '/dashboard/operations',
+  approvals: '/dashboard/operations#approvals',
+  incidents: '/dashboard/incidents',
+  integrations: '/dashboard/integrations',
+  governance: '/dashboard/governance',
+  resources: '/dashboard/resources',
+};
+
+const quickAccessItems: Array<[string, string, string, LucideIcon]> = [
+  ['Projects', 'Application inventory and environments', routes.projects, Boxes],
+  ['Deployments', 'Recent delivery activity', routes.deployments, GitMerge],
+  ['Operations Hub', 'Runtime actions and approvals', routes.operations, Workflow],
+  ['Integrations', 'Provider readiness', routes.integrations, Network],
+  ['Incidents', 'Open and acknowledged incidents', routes.incidents, AlertTriangle],
+  ['Governance', 'Policies and guarded operation evidence', routes.governance, SlidersHorizontal],
+  ['Resource Graph', 'Environment and dependency map', routes.resources, Route],
+];
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.code === 'SESSION_EXPIRED') {
@@ -40,7 +98,7 @@ function getErrorMessage(error: unknown): string {
   }
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
-  return 'Unable to load dashboard data.';
+  return 'Unavailable';
 }
 
 function formatTime(value: Date | string | null): string {
@@ -52,83 +110,131 @@ function formatTime(value: Date | string | null): string {
   }).format(new Date(value));
 }
 
-const POLL_INTERVAL_MS = 60_000;
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return 'No recent activity';
+  return new Intl.DateTimeFormat('en', {
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+function resultData<T>(
+  result: PromiseSettledResult<T>,
+  key: LoadKey,
+  errors: LoadErrors,
+): T | null {
+  if (result.status === 'fulfilled') return result.value;
+  errors[key] = getErrorMessage(result.reason);
+  return null;
+}
+
+function statusLabel(status: string | undefined | null): string {
+  if (!status) return 'Unavailable';
+  return status.replace(/_/g, ' ');
+}
+
+function platformState(data: OverviewState, errors: LoadErrors, isLoading: boolean) {
+  if (isLoading) return { label: 'Loading', tone: 'slate' as const };
+  if (Object.keys(errors).length > 0) return { label: 'Degraded', tone: 'rose' as const };
+  if (
+    data.incidents.length > 0 ||
+    data.pendingApprovals.length > 0 ||
+    (data.summary?.operations?.failed ?? 0) > 0 ||
+    (data.signalReadiness?.criticalCount ?? 0) > 0 ||
+    (data.signalReadiness?.errorCount ?? 0) > 0
+  ) {
+    return { label: 'Needs attention', tone: 'amber' as const };
+  }
+  return { label: 'Operational', tone: 'emerald' as const };
+}
+
+function countDeployments(deployments: Deployment[], statuses: string[]) {
+  return deployments.filter((deployment) =>
+    statuses.includes(String(deployment.status).toUpperCase()),
+  ).length;
+}
+
+function latestDeployment(deployments: Deployment[]) {
+  return (
+    [...deployments].sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    )[0] ?? null
+  );
+}
 
 export function DashboardOverviewClient() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [deployments, setDeployments] = useState<Deployment[]>([]);
-  const [environmentCount, setEnvironmentCount] = useState(0);
-
-  const [observability, setObservability] = useState<OpsObservabilityResponse | null>(null);
-  const [pendingApprovals, setPendingApprovals] = useState<OperationActivityItem[]>([]);
-  const [recentOperations, setRecentOperations] = useState<OperationActivityItem[]>([]);
-  const [signalReadiness, setSignalReadiness] = useState<SignalReadinessResponse | null>(null);
-  const [incidents, setIncidents] = useState<IncidentSummary[]>([]);
-
+  const [overview, setOverview] = useState<OverviewState>(initialOverviewState);
+  const [loadErrors, setLoadErrors] = useState<LoadErrors>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const loadOverview = useCallback(async (mode: 'initial' | 'refresh' = 'refresh') => {
     if (mode === 'initial') setIsLoading(true);
     else setIsRefreshing(true);
-    setError(null);
 
-    try {
-      const [
-        projectsRes,
-        deploymentsRes,
-        summaryRes,
-        obsRes,
-        pendingOpsRes,
-        recentOpsRes,
-        signalsRes,
-        openIncidentsRes,
-        ackIncidentsRes
-      ] = await Promise.all([
-        api.get<{ data: Project[] }>('/v1/projects'),
-        api.get<{ data: Deployment[] }>('/v1/deployments'),
-        api.get<{ data: OpsSummary }>('/v1/ops/summary'),
-        api.get<{ data: OpsObservabilityResponse }>('/v1/ops/observability'),
-        api.get<{ data: OperationActivityResponse }>('/v1/ops/activity?status=PENDING_APPROVAL&limit=5'),
-        api.get<{ data: OperationActivityResponse }>('/v1/ops/activity?limit=5'),
-        api.get<{ data: SignalReadinessResponse }>('/v1/signals/readiness'),
-        api.get<IncidentListResponse>('/v1/incidents?status=OPEN&limit=5').catch(() => ({ data: [] as IncidentSummary[] })),
-        api.get<IncidentListResponse>('/v1/incidents?status=ACKNOWLEDGED&limit=5').catch(() => ({ data: [] as IncidentSummary[] })),
-      ]);
+    const errors: LoadErrors = {};
 
-      setProjects(projectsRes.data);
-      setDeployments(deploymentsRes.data);
-      setEnvironmentCount(summaryRes.data.resources.environments);
-      setObservability(obsRes.data);
-      setPendingApprovals(pendingOpsRes.data.items || []);
-      setRecentOperations(recentOpsRes.data.items || []);
-      setSignalReadiness(signalsRes.data);
+    const [
+      projectsRes,
+      deploymentsRes,
+      summaryRes,
+      obsRes,
+      pendingOpsRes,
+      recentOpsRes,
+      signalsRes,
+      openIncidentsRes,
+      ackIncidentsRes,
+    ] = await Promise.allSettled([
+      api.get<{ data: Project[] }>('/v1/projects'),
+      api.get<{ data: Deployment[] }>('/v1/deployments'),
+      api.get<{ data: OpsSummary }>('/v1/ops/summary'),
+      api.get<{ data: OpsObservabilityResponse }>('/v1/ops/observability'),
+      api.get<{ data: OperationActivityResponse }>(
+        '/v1/ops/activity?status=PENDING_APPROVAL&limit=5',
+      ),
+      api.get<{ data: OperationActivityResponse }>('/v1/ops/activity?limit=5'),
+      api.get<{ data: SignalReadinessResponse }>('/v1/signals/readiness'),
+      api.get<IncidentListResponse>('/v1/incidents?status=OPEN&limit=5'),
+      api.get<IncidentListResponse>('/v1/incidents?status=ACKNOWLEDGED&limit=5'),
+    ]);
 
-      const openIncidents = (openIncidentsRes.data || []) as IncidentSummary[];
-      const ackIncidents = (ackIncidentsRes.data || []) as IncidentSummary[];
+    const projects = resultData(projectsRes, 'projects', errors)?.data ?? [];
+    const deployments = resultData(deploymentsRes, 'deployments', errors)?.data ?? [];
+    const summary = resultData(summaryRes, 'summary', errors)?.data ?? null;
+    const observability = resultData(obsRes, 'observability', errors)?.data ?? null;
+    const pendingApprovals =
+      resultData(pendingOpsRes, 'pendingApprovals', errors)?.data.items ?? [];
+    const recentOperations = resultData(recentOpsRes, 'recentOperations', errors)?.data.items ?? [];
+    const signalReadiness = resultData(signalsRes, 'signals', errors)?.data ?? null;
+    const openIncidents = resultData(openIncidentsRes, 'incidents', errors)?.data ?? [];
+    const ackIncidents = resultData(ackIncidentsRes, 'incidents', errors)?.data ?? [];
 
-      const allActiveIncidents: IncidentSummary[] = [
-        ...openIncidents,
-        ...ackIncidents,
-      ];
+    const incidents = [...openIncidents, ...ackIncidents]
+      .sort(
+        (a, b) =>
+          new Date(b.updatedAt || b.createdAt || 0).getTime() -
+          new Date(a.updatedAt || a.createdAt || 0).getTime(),
+      )
+      .slice(0, 5);
 
-      allActiveIncidents.sort((a, b) => {
-        const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
-        const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
-        return timeB - timeA;
-      });
-
-      setIncidents(allActiveIncidents.slice(0, 5));
-
-      setLastUpdated(new Date());
-    } catch (loadError) {
-      setError(getErrorMessage(loadError));
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
+    setOverview({
+      projects,
+      deployments,
+      environmentCount: summary?.resources.environments ?? null,
+      summary,
+      observability,
+      pendingApprovals,
+      recentOperations,
+      signalReadiness,
+      incidents,
+    });
+    setLoadErrors(errors);
+    setLastUpdated(new Date());
+    setIsLoading(false);
+    setIsRefreshing(false);
   }, []);
 
   useEffect(() => {
@@ -136,383 +242,615 @@ export function DashboardOverviewClient() {
   }, [loadOverview]);
 
   useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      void loadOverview('refresh');
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
+    const intervalId = window.setInterval(() => void loadOverview('refresh'), POLL_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
   }, [loadOverview]);
 
-  const needsAttentionItems = useMemo(() => {
-    const items: Array<{ title: string; description: string; href: string; tone: string }> = [];
+  const state = platformState(overview, loadErrors, isLoading);
+  const failedOperations =
+    overview.summary?.operations?.failed ??
+    overview.recentOperations.filter((op) => op.status === 'FAILED').length;
+  const runningOperations =
+    overview.summary?.operations?.running ??
+    overview.recentOperations.filter((op) => op.status === 'RUNNING').length;
+  const runningDeployments = countDeployments(overview.deployments, ['RUNNING', 'QUEUED']);
+  const successfulDeployments = countDeployments(overview.deployments, ['SUCCEEDED']);
+  const failedDeployments = countDeployments(overview.deployments, ['FAILED']);
+  const latest = latestDeployment(overview.deployments);
 
-    if (incidents.length > 0) {
-      items.push({
-        title: `${incidents.length} active incident${incidents.length === 1 ? '' : 's'}`,
-        description: 'Open or acknowledged incidents require your attention.',
-        href: '/dashboard/incidents',
-        tone: 'rose',
-      });
-    }
+  const connectedIntegrations = useMemo(() => {
+    const integrations = overview.summary?.integrations;
+    if (integrations)
+      return integrations.filter((integration) => integration.status === 'CONNECTED').length;
+    return Object.values(overview.observability?.providers ?? {}).filter(
+      (provider) => provider.status === 'CONNECTED',
+    ).length;
+  }, [overview.summary?.integrations, overview.observability?.providers]);
 
-    if (pendingApprovals.length > 0) {
-      items.push({
-        title: `${pendingApprovals.length} pending approval${pendingApprovals.length === 1 ? '' : 's'}`,
-        description: 'Operations are blocked waiting for review.',
-        href: '/dashboard/operations#approvals',
-        tone: 'amber',
-      });
-    }
-
-    const failedOps = recentOperations.filter(op => op.status === 'FAILED');
-    if (failedOps.length > 0) {
-      items.push({
-        title: `${failedOps.length} recent failed operation${failedOps.length === 1 ? '' : 's'}`,
-        description: 'Operations have failed and may require recovery.',
-        href: '/dashboard/operations',
-        tone: 'rose',
-      });
-    }
-
-    const criticalSignals = signalReadiness?.criticalCount ?? 0;
-    const errorSignals = signalReadiness?.errorCount ?? 0;
-    if (criticalSignals > 0 || errorSignals > 0) {
-      items.push({
-        title: `${criticalSignals + errorSignals} critical/error signals`,
-        description: 'Infrastructure signals indicate severe problems.',
-        href: '/dashboard/signals',
-        tone: 'rose',
-      });
-    }
-
-    if (observability?.platform.api.status === 'OFFLINE') {
-      items.push({
-        title: 'Platform API Offline',
-        description: 'Core API is unreachable. Operations may be impacted.',
-        href: '/dashboard/operations#runtime-health',
-        tone: 'rose',
-      });
-    }
-
-    const providers = observability?.providers || {};
-    type ProviderHealthLike = {
-      status?: string;
-    };
-
-    const hasUnhealthyProviders = Object.values(providers).some((provider) => {
-      const providerHealth = provider as ProviderHealthLike;
-      return providerHealth.status === 'UNAVAILABLE' || providerHealth.status === 'DEGRADED';
-    });
-    if (hasUnhealthyProviders) {
-      items.push({
-        title: 'Provider Health Issues',
-        description: 'One or more connected providers are unreachable or failing auth.',
-        href: '/dashboard/integrations',
-        tone: 'rose',
-      });
-    }
-
-    return items;
-  }, [incidents.length, pendingApprovals.length, recentOperations, signalReadiness, observability]);
-
-  const nextBestActions = useMemo(() => {
-    const actions: Array<{ title: string; description: string; href: string; icon: React.ElementType }> = [];
-
-    if (incidents.length === 0 && pendingApprovals.length === 0 && (signalReadiness?.activeSignals ?? 0) === 0) {
-      actions.push({
-        title: 'Review Provider Health',
-        description: 'Check connected providers to ensure readiness.',
-        href: '/dashboard/integrations',
-        icon: Network,
-      });
-      actions.push({
-        title: 'Review Delivery Activity',
-        description: 'View recent deployments and projects.',
-        href: '/dashboard/deployments',
-        icon: Activity,
-      });
-    }
-
-    if (incidents.length === 0 && (signalReadiness?.activeSignals ?? 0) > 0) {
-      actions.push({
-        title: 'Run Correlation',
-        description: 'Signals exist. Open Incidents to run correlation.',
-        href: '/dashboard/incidents',
-        icon: Zap,
-      });
-    }
-
-    if (pendingApprovals.length > 0) {
-      actions.push({
-        title: 'Review Approvals',
-        description: 'Operations are waiting for your decision.',
-        href: '/dashboard/operations',
-        icon: ShieldCheck,
-      });
-    }
-
-    if (incidents.length > 0) {
-      actions.push({
-        title: 'Triage Incidents',
-        description: 'Acknowledge or resolve open incidents.',
-        href: '/dashboard/incidents',
-        icon: AlertTriangle,
-      });
-    }
-
-    if (Object.values(observability?.providers ?? {}).some(p => p.status === 'NOT_CONFIGURED')) {
-       actions.push({
-        title: 'Configure Providers',
-        description: 'Some providers are not configured.',
-        href: '/dashboard/integrations',
-        icon: Database,
-      });
-    }
-
-    if (actions.length === 0) {
-       actions.push({
-        title: 'Open Operations Hub',
-        description: 'Monitor ongoing activity.',
-        href: '/dashboard/operations',
-        icon: Terminal,
-      });
-    }
-
-    return actions.slice(0, 4);
-  }, [incidents.length, pendingApprovals.length, signalReadiness?.activeSignals, observability?.providers]);
+  const summaryCards = [
+    {
+      label: 'Active projects',
+      value: isLoading ? 'Loading' : String(overview.projects.length),
+      context: loadErrors.projects
+        ? 'Unavailable'
+        : `${overview.environmentCount ?? 0} environments tracked`,
+      status: loadErrors.projects
+        ? 'UNAVAILABLE'
+        : overview.projects.length > 0
+          ? 'READY'
+          : 'EMPTY',
+      href: routes.projects,
+      icon: Boxes,
+    },
+    {
+      label: 'Recent deployments',
+      value: isLoading ? 'Loading' : String(overview.deployments.length),
+      context: loadErrors.deployments
+        ? 'Unavailable'
+        : `${runningDeployments} running, ${failedDeployments} failed`,
+      status: loadErrors.deployments ? 'UNAVAILABLE' : failedDeployments > 0 ? 'WARNING' : 'READY',
+      href: routes.deployments,
+      icon: GitMerge,
+    },
+    {
+      label: 'Pending approvals',
+      value: isLoading ? 'Loading' : String(overview.pendingApprovals.length),
+      context: loadErrors.pendingApprovals ? 'Unavailable' : 'Governed operations awaiting review',
+      status: loadErrors.pendingApprovals
+        ? 'UNAVAILABLE'
+        : overview.pendingApprovals.length > 0
+          ? 'PENDING_APPROVAL'
+          : 'READY',
+      href: routes.approvals,
+      icon: ShieldCheck,
+    },
+    {
+      label: 'Failed operations',
+      value: isLoading ? 'Loading' : String(failedOperations),
+      context:
+        loadErrors.summary && loadErrors.recentOperations
+          ? 'Unavailable'
+          : 'Recent governed operation failures',
+      status: failedOperations > 0 ? 'FAILED' : loadErrors.summary ? 'UNKNOWN' : 'READY',
+      href: routes.operations,
+      icon: XCircle,
+    },
+    {
+      label: 'Connected integrations',
+      value: isLoading ? 'Loading' : String(connectedIntegrations),
+      context:
+        loadErrors.summary && loadErrors.observability
+          ? 'Unavailable'
+          : 'Configured provider connections',
+      status: connectedIntegrations > 0 ? 'CONNECTED' : 'NOT_CONFIGURED',
+      href: routes.integrations,
+      icon: Network,
+    },
+    {
+      label: 'Worker and queues',
+      value: isLoading
+        ? 'Loading'
+        : statusLabel(
+            overview.observability?.workerRuntime.status ??
+              overview.observability?.platform.worker.status,
+          ),
+      context: loadErrors.observability
+        ? 'Unavailable'
+        : `Deployments queue ${statusLabel(overview.observability?.queues.deployments.status)}`,
+      status:
+        overview.observability?.workerRuntime.status ??
+        overview.observability?.platform.worker.status ??
+        'UNKNOWN',
+      href: `${routes.operations}#runtime-health`,
+      icon: Activity,
+    },
+  ];
 
   return (
-    <div className="flex flex-col min-h-screen bg-slate-50/50 animate-fade-in">
-      <WorkspaceHeader
-        title="Command Workspace"
-        purpose="Your operational command center."
-        icon={<Activity className="h-5 w-5 text-blue-600" />}
-        statusSummary={
-          <span className="text-xs font-medium text-slate-500">
-            Updated {formatTime(lastUpdated)}
-          </span>
-        }
-        primaryAction={
-          <button
-            onClick={() => void loadOverview('refresh')}
-            disabled={isLoading || isRefreshing}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
-            <RefreshCw className={isRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-            Refresh
-          </button>
-        }
-      />
+    <div className="min-h-screen bg-[#f3f4f6]">
+      <main
+        className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8"
+        aria-labelledby="console-home-title"
+      >
+        <StatusStrip overview={overview} errors={loadErrors} isLoading={isLoading} />
 
-      <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
-        {error && (
-          <div className="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 shadow-sm">
-            {error}
-          </div>
-        )}
-
-        <WorkQueue
-          title="Needs Attention"
-          description="Urgent items requiring your review."
-          count={needsAttentionItems.length}
-          isEmpty={needsAttentionItems.length === 0}
-          emptyState={
-            <EmptyState
-              title="All clear"
-              description="No active incidents, failing signals, or blocked operations."
-              icon={<CheckCircle2 className="h-6 w-6" />}
-              variant="compact"
-            />
-          }
-        >
-          {needsAttentionItems.map((item, i) => (
-            <div key={i} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 hover:bg-slate-50 transition-colors gap-3 border-t border-slate-100 first:border-t-0">
-              <div className="flex items-start gap-3">
-                <div className={cn(
-                  "mt-1.5 h-2 w-2 rounded-full shrink-0",
-                  item.tone === 'rose' ? "bg-rose-500" : "bg-amber-500"
-                )} />
-                <div>
-                  <h4 className="text-sm font-semibold text-slate-900">{item.title}</h4>
-                  <p className="mt-1 text-xs text-slate-600">{item.description}</p>
-                </div>
+        <section className="rounded-lg border border-[#d7dde4] bg-white shadow-sm">
+          <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <nav
+                className="flex items-center gap-2 text-xs font-semibold text-[#64748b]"
+                aria-label="Breadcrumb"
+              >
+                <span>Dashboard</span>
+                <span aria-hidden="true">/</span>
+                <span className="text-[#101820]">Console Home</span>
+              </nav>
+              <p className="mt-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#0066c0]">
+                AutoOps Console
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <h1
+                  id="console-home-title"
+                  className="text-2xl font-semibold tracking-tight text-[#101820] sm:text-[28px]"
+                >
+                  AutoOps Console Home
+                </h1>
+                <StateIndicator label={state.label} tone={state.tone} />
               </div>
-              <Link href={item.href} className="inline-flex items-center gap-1 text-sm font-semibold text-blue-600 hover:text-blue-700 sm:self-center">
-                Review <ArrowRight className="h-4 w-4" />
-              </Link>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-[#334155]">
+                Central visibility for deployments, runtime operations, governed approvals,
+                incidents and platform integrations.
+              </p>
+              <p className="mt-2 text-xs text-[#64748b]">Updated {formatTime(lastUpdated)}</p>
             </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => void loadOverview('refresh')}
+                disabled={isLoading || isRefreshing}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[#d7dde4] bg-white px-3 text-sm font-semibold text-[#101820] hover:bg-slate-50 disabled:opacity-50"
+              >
+                <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
+                Refresh
+              </button>
+              <HeaderLink href={routes.operations}>Open Operations</HeaderLink>
+              <HeaderLink href={routes.approvals}>Review approvals</HeaderLink>
+              <HeaderLink href={routes.incidents}>View incidents</HeaderLink>
+            </div>
+          </div>
+        </section>
+
+        <section
+          className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6"
+          aria-label="Executive summary"
+        >
+          {summaryCards.map((card) => (
+            <SummaryCard key={card.label} {...card} />
           ))}
-        </WorkQueue>
+        </section>
 
-        <div className="grid gap-6 xl:grid-cols-2">
-           <WorkQueue
-             title="Active Incidents"
-             viewAllLink="/dashboard/incidents"
-             count={incidents.length}
-             isEmpty={incidents.length === 0}
-             emptyState={<EmptyState title="No active incidents" description="No OPEN or ACKNOWLEDGED incidents." variant="compact" />}
-           >
-             {incidents.map((inc, i) => (
-               <div key={inc.id} className={cn("flex items-center justify-between p-4 hover:bg-slate-50 transition-colors", i > 0 && "border-t border-slate-100")}>
-                  <div className="flex flex-wrap items-center gap-2">
-                     <StatusBadge status={inc.severity} />
-                     <StatusBadge status={inc.status} />
-                     <span className="text-sm font-medium text-slate-900 ml-1 truncate max-w-[200px] sm:max-w-xs">{inc.title}</span>
-                  </div>
-                  <Link href={`/dashboard/incidents/${inc.id}`} className="text-sm font-semibold text-blue-600 hover:underline shrink-0 ml-4">Details</Link>
-               </div>
-             ))}
-           </WorkQueue>
+        <section className="grid gap-5 xl:grid-cols-3" aria-label="Dashboard details">
+          <ConsoleCard
+            title="Quick access"
+            action={
+              <Link className="text-xs font-semibold text-[#0066c0]" href={routes.resources}>
+                Open graph
+              </Link>
+            }
+          >
+            <div className="divide-y divide-slate-100">
+              {quickAccessItems.map(([label, description, href, Icon]) => (
+                <Link
+                  key={String(label)}
+                  href={String(href)}
+                  className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50"
+                >
+                  <Icon className="h-4 w-4 shrink-0 text-[#334155]" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-[#101820]">{label}</span>
+                    <span className="block truncate text-xs text-[#64748b]">{description}</span>
+                  </span>
+                  <ArrowRight className="h-4 w-4 text-[#64748b]" />
+                </Link>
+              ))}
+            </div>
+          </ConsoleCard>
 
-           <WorkQueue
-             title="Pending Approvals"
-             viewAllLink="/dashboard/operations#approvals"
-             count={pendingApprovals.length}
-             isEmpty={pendingApprovals.length === 0}
-             emptyState={<EmptyState title="No pending approvals" description="All operations are approved." variant="compact" />}
-           >
-             {pendingApprovals.map((op, i) => (
-               <div key={op.id} className={cn("flex items-center justify-between p-4 hover:bg-slate-50 transition-colors", i > 0 && "border-t border-slate-100")}>
-                  <div className="flex flex-wrap items-center gap-2">
-                     <StatusBadge status={op.status} />
-                     <span className="text-sm font-medium text-slate-900 ml-1 truncate max-w-[200px] sm:max-w-xs">{op.title}</span>
-                  </div>
-                  <Link href={`/dashboard/operations/${op.id}`} className="text-sm font-semibold text-blue-600 hover:underline shrink-0 ml-4">Review</Link>
-               </div>
-             ))}
-           </WorkQueue>
+          <ConsoleCard
+            title="Operations and governance"
+            action={
+              <Link className="text-xs font-semibold text-[#0066c0]" href={routes.operations}>
+                Operations Hub
+              </Link>
+            }
+          >
+            <MetricRows
+              rows={[
+                [
+                  'Pending approvals',
+                  overview.pendingApprovals.length,
+                  loadErrors.pendingApprovals ? 'Unavailable' : 'Waiting for governed review',
+                  overview.pendingApprovals.length > 0 ? 'PENDING_APPROVAL' : 'READY',
+                ],
+                [
+                  'Running operations',
+                  runningOperations,
+                  loadErrors.summary ? 'Unavailable' : 'Currently active operations',
+                  runningOperations > 0 ? 'RUNNING' : 'READY',
+                ],
+                [
+                  'Failed operations',
+                  failedOperations,
+                  loadErrors.summary && loadErrors.recentOperations
+                    ? 'Unavailable'
+                    : 'Recent failures needing review',
+                  failedOperations > 0 ? 'FAILED' : 'READY',
+                ],
+                [
+                  'Latest governed activity',
+                  overview.recentOperations[0]?.title ?? 'No recent activity',
+                  formatDateTime(overview.recentOperations[0]?.createdAt),
+                  overview.recentOperations[0]?.status ?? 'EMPTY',
+                ],
+              ]}
+            />
+          </ConsoleCard>
 
-           <div className="rounded-lg border border-slate-200 bg-white shadow-sm flex flex-col">
-              <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-                 <div>
-                   <h3 className="text-base font-semibold text-slate-900">Critical & Error Signals</h3>
-                   <p className="text-sm text-slate-500 mt-1">Tenant-scoped signal readiness.</p>
-                 </div>
-                 <Link href="/dashboard/signals" className="text-sm font-medium text-blue-600 hover:underline">View all</Link>
-              </div>
-              <div className="p-5 flex-1 flex flex-col justify-center">
-                 <div className="grid grid-cols-2 gap-4">
-                    <div className="rounded-md border border-rose-200 bg-rose-50 p-4 flex flex-col items-center justify-center text-center">
-                       <p className="text-xs font-semibold uppercase tracking-wider text-rose-700">Critical</p>
-                       <p className="mt-2 text-3xl font-bold text-rose-900">{signalReadiness?.criticalCount ?? 0}</p>
+          <ConsoleCard
+            title="Deployment snapshot"
+            action={
+              <Link className="text-xs font-semibold text-[#0066c0]" href={routes.deployments}>
+                Deployments
+              </Link>
+            }
+          >
+            <MetricRows
+              rows={[
+                [
+                  'Recent deployments',
+                  overview.deployments.length,
+                  loadErrors.deployments ? 'Unavailable' : 'Loaded from deployment history',
+                  overview.deployments.length > 0 ? 'READY' : 'EMPTY',
+                ],
+                [
+                  'Running deployments',
+                  runningDeployments,
+                  'Queued or running deployments',
+                  runningDeployments > 0 ? 'RUNNING' : 'READY',
+                ],
+                [
+                  'Successful deployments',
+                  successfulDeployments,
+                  'Completed deployment records',
+                  'SUCCEEDED',
+                ],
+                [
+                  'Failed deployments',
+                  failedDeployments,
+                  'Failed deployment records',
+                  failedDeployments > 0 ? 'FAILED' : 'READY',
+                ],
+                [
+                  'Latest deployment',
+                  latest?.branch ?? latest?.imageTag ?? 'No recent activity',
+                  formatDateTime(latest?.updatedAt),
+                  latest?.status ?? 'EMPTY',
+                ],
+              ]}
+            />
+          </ConsoleCard>
+        </section>
+
+        <section
+          className="grid gap-5 lg:grid-cols-2 xl:grid-cols-3"
+          aria-label="Runtime and integration details"
+        >
+          <ConsoleCard
+            title="Runtime health"
+            action={
+              <Link
+                className="text-xs font-semibold text-[#0066c0]"
+                href={`${routes.operations}#runtime-health`}
+              >
+                Runtime
+              </Link>
+            }
+          >
+            <MetricRows
+              rows={[
+                [
+                  'API',
+                  statusLabel(overview.observability?.platform.api.status),
+                  loadErrors.observability
+                    ? 'Unavailable'
+                    : (overview.observability?.platform.api.message ??
+                      'Loaded from runtime health'),
+                  overview.observability?.platform.api.status ?? 'UNKNOWN',
+                ],
+                [
+                  'Worker',
+                  statusLabel(overview.observability?.platform.worker.status),
+                  loadErrors.observability
+                    ? 'Unavailable'
+                    : (overview.observability?.platform.worker.message ??
+                      'Loaded from runtime health'),
+                  overview.observability?.platform.worker.status ?? 'UNKNOWN',
+                ],
+                [
+                  'PostgreSQL',
+                  statusLabel(overview.observability?.platform.database.status),
+                  loadErrors.observability
+                    ? 'Unavailable'
+                    : (overview.observability?.platform.database.message ??
+                      'Loaded from runtime health'),
+                  overview.observability?.platform.database.status ?? 'UNKNOWN',
+                ],
+                [
+                  'Redis',
+                  statusLabel(overview.observability?.platform.redis.status),
+                  loadErrors.observability
+                    ? 'Unavailable'
+                    : (overview.observability?.platform.redis.message ??
+                      'Loaded from runtime health'),
+                  overview.observability?.platform.redis.status ?? 'UNKNOWN',
+                ],
+              ]}
+            />
+          </ConsoleCard>
+
+          <ConsoleCard
+            title="Integration readiness"
+            action={
+              <Link className="text-xs font-semibold text-[#0066c0]" href={routes.integrations}>
+                Integrations
+              </Link>
+            }
+          >
+            <MetricRows
+              rows={[
+                [
+                  'Docker',
+                  statusLabel(overview.observability?.providers.docker.status),
+                  overview.observability?.providers.docker.message ?? 'Unavailable',
+                  overview.observability?.providers.docker.status ?? 'UNKNOWN',
+                ],
+                [
+                  'Kubernetes',
+                  statusLabel(overview.observability?.providers.kubernetes.status),
+                  overview.observability?.providers.kubernetes.message ??
+                    'Unavailable or not configured',
+                  overview.observability?.providers.kubernetes.status ?? 'NOT_CONFIGURED',
+                ],
+                [
+                  'Jenkins',
+                  statusLabel(overview.observability?.providers.jenkins.status),
+                  overview.observability?.providers.jenkins.message ??
+                    'Unavailable or not configured',
+                  overview.observability?.providers.jenkins.status ?? 'NOT_CONFIGURED',
+                ],
+                [
+                  'Infrastructure',
+                  statusLabel(overview.observability?.providers.infrastructure?.status),
+                  overview.observability?.providers.infrastructure?.message ?? 'Not configured',
+                  overview.observability?.providers.infrastructure?.status ?? 'NOT_CONFIGURED',
+                ],
+              ]}
+            />
+          </ConsoleCard>
+
+          <ConsoleCard
+            title="Incident summary"
+            action={
+              <Link className="text-xs font-semibold text-[#0066c0]" href={routes.incidents}>
+                Incidents
+              </Link>
+            }
+          >
+            {overview.incidents.length === 0 ? (
+              <EmptyState
+                title={loadErrors.incidents ? 'Incidents unavailable' : 'No active incidents'}
+                description={loadErrors.incidents ?? 'No OPEN or ACKNOWLEDGED incidents.'}
+                variant="compact"
+              />
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {overview.incidents.map((incident) => (
+                  <Link
+                    key={incident.id}
+                    href={`/dashboard/incidents/${incident.id}`}
+                    className="block px-4 py-3 hover:bg-slate-50"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-semibold text-[#101820]">
+                        {incident.title}
+                      </span>
+                      <StatusBadge status={incident.severity} className="min-h-6" />
                     </div>
-                    <div className="rounded-md border border-amber-200 bg-amber-50 p-4 flex flex-col items-center justify-center text-center">
-                       <p className="text-xs font-semibold uppercase tracking-wider text-amber-700">Errors</p>
-                       <p className="mt-2 text-3xl font-bold text-amber-900">{signalReadiness?.errorCount ?? 0}</p>
-                    </div>
-                 </div>
+                    <p className="mt-1 text-xs text-[#64748b]">
+                      {incident.status} · {incident.signalCount} signals ·{' '}
+                      {formatDateTime(incident.updatedAt)}
+                    </p>
+                  </Link>
+                ))}
               </div>
-           </div>
+            )}
+          </ConsoleCard>
+        </section>
 
-           <WorkQueue
-             title="Recent Controlled Operations"
-             viewAllLink="/dashboard/operations"
-             count={recentOperations.length}
-             isEmpty={recentOperations.length === 0}
-             emptyState={<EmptyState title="No recent operations" description="No operation history available." variant="compact" />}
-           >
-             {recentOperations.map((op, i) => (
-               <div key={op.id} className={cn("flex items-center justify-between p-4 hover:bg-slate-50 transition-colors", i > 0 && "border-t border-slate-100")}>
-                  <div className="flex flex-wrap items-center gap-2">
-                     <StatusBadge status={op.status} />
-                     <span className="text-sm font-medium text-slate-900 ml-1 truncate max-w-[200px] sm:max-w-xs">{op.title}</span>
-                  </div>
-                  <Link href={`/dashboard/operations/${op.id}`} className="text-sm font-semibold text-blue-600 hover:underline shrink-0 ml-4">Details</Link>
-               </div>
-             ))}
-           </WorkQueue>
-
-           <div className="rounded-lg border border-slate-200 bg-white shadow-sm flex flex-col">
-              <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-                 <div>
-                   <h3 className="text-base font-semibold text-slate-900">Provider Health Snapshot</h3>
-                   <p className="text-sm text-slate-500 mt-1">Summary of connected systems.</p>
-                 </div>
-                 <Link href="/dashboard/integrations" className="text-sm font-medium text-blue-600 hover:underline">Manage</Link>
+        {Object.keys(loadErrors).length > 0 && (
+          <section
+            className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+            aria-live="polite"
+          >
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-semibold">Some dashboard sources are unavailable.</p>
+                <p className="mt-1 text-xs">
+                  {Object.entries(loadErrors)
+                    .map(([key, message]) => `${key}: ${message}`)
+                    .join(' · ')}
+                </p>
+                <button
+                  onClick={() => void loadOverview('refresh')}
+                  className="mt-3 text-xs font-bold text-amber-950 underline"
+                >
+                  Retry unavailable sources
+                </button>
               </div>
-              <div className="p-5 grid grid-cols-2 sm:grid-cols-3 gap-3">
-                 {['jenkins', 'docker', 'kubernetes', 'aws', 'github'].map(providerKey => {
-                    const provider = observability?.providers?.[providerKey as keyof typeof observability.providers];
-                    if (!provider) return null;
-                    return (
-                       <div key={providerKey} className="rounded-md border border-slate-100 bg-slate-50 p-3 flex flex-col items-start justify-between">
-                          <p className="text-xs font-semibold capitalize text-slate-700">{providerKey}</p>
-                          <StatusBadge status={provider.status} className="mt-2 self-start" />
-                       </div>
-                    );
-                 })}
-              </div>
-           </div>
+            </div>
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}
 
-           <div className="rounded-lg border border-slate-200 bg-white shadow-sm flex flex-col">
-              <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-                 <div>
-                   <h3 className="text-base font-semibold text-slate-900">Delivery Snapshot</h3>
-                   <p className="text-sm text-slate-500 mt-1">Overview of your delivery pipeline.</p>
-                 </div>
-                 <Link href="/dashboard/deployments" className="text-sm font-medium text-blue-600 hover:underline">View</Link>
-              </div>
-              <div className="p-5 grid grid-cols-3 gap-4">
-                 <div className="rounded-md border border-slate-200 bg-white p-4 text-center">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Projects</p>
-                    <p className="mt-2 text-2xl font-bold text-slate-900">{projects.length}</p>
-                 </div>
-                 <div className="rounded-md border border-slate-200 bg-white p-4 text-center">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Environments</p>
-                    <p className="mt-2 text-2xl font-bold text-slate-900">{environmentCount}</p>
-                 </div>
-                 <div className="rounded-md border border-slate-200 bg-white p-4 text-center">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Deployments</p>
-                    <p className="mt-2 text-2xl font-bold text-slate-900">{deployments.length}</p>
-                 </div>
-              </div>
-           </div>
-        </div>
+function StatusStrip({
+  overview,
+  errors,
+  isLoading,
+}: {
+  overview: OverviewState;
+  errors: LoadErrors;
+  isLoading: boolean;
+}) {
+  const items = [
+    [
+      'API',
+      overview.observability?.platform.api.status ??
+        (errors.observability ? 'UNAVAILABLE' : 'UNKNOWN'),
+    ],
+    [
+      'Worker',
+      overview.observability?.platform.worker.status ??
+        (errors.observability ? 'UNAVAILABLE' : 'UNKNOWN'),
+    ],
+    [
+      'Queues',
+      overview.observability?.queues.operations.status ??
+        (errors.observability ? 'UNAVAILABLE' : 'UNKNOWN'),
+    ],
+    [
+      'Connector readiness',
+      `${Object.values(overview.observability?.providers ?? {}).filter((provider) => provider.status === 'CONNECTED').length} connected`,
+    ],
+    ['Pending approvals', isLoading ? 'Loading' : String(overview.pendingApprovals.length)],
+    [
+      'Failed operations',
+      isLoading
+        ? 'Loading'
+        : String(
+            overview.summary?.operations?.failed ??
+              overview.recentOperations.filter((op) => op.status === 'FAILED').length,
+          ),
+    ],
+  ];
 
-        <div className="rounded-lg border border-slate-200 bg-white shadow-sm p-5">
-           <h3 className="text-base font-semibold text-slate-900 mb-4">Command Service Paths</h3>
-           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Link href="/dashboard/integrations/docker" className="rounded-md border border-slate-200 p-4 hover:border-blue-300 hover:bg-blue-50 transition">
-                 <Database className="h-5 w-5 text-blue-600 mb-2" />
-                 <span className="block text-sm font-semibold text-slate-900">Docker</span>
-                 <span className="mt-1 block text-xs text-slate-500">Containers and local state</span>
-              </Link>
-              <Link href="/dashboard/integrations/kubernetes" className="rounded-md border border-slate-200 p-4 hover:border-blue-300 hover:bg-blue-50 transition">
-                 <Network className="h-5 w-5 text-blue-600 mb-2" />
-                 <span className="block text-sm font-semibold text-slate-900">Kubernetes</span>
-                 <span className="mt-1 block text-xs text-slate-500">Cluster workloads</span>
-              </Link>
-              <Link href="/dashboard/integrations/jenkins" className="rounded-md border border-slate-200 p-4 hover:border-blue-300 hover:bg-blue-50 transition">
-                 <GitMerge className="h-5 w-5 text-blue-600 mb-2" />
-                 <span className="block text-sm font-semibold text-slate-900">Jenkins</span>
-                 <span className="mt-1 block text-xs text-slate-500">Build pipelines</span>
-              </Link>
-              <Link href="/dashboard/operations#runtime-health" className="rounded-md border border-slate-200 p-4 hover:border-blue-300 hover:bg-blue-50 transition">
-                 <RadioTower className="h-5 w-5 text-blue-600 mb-2" />
-                 <span className="block text-sm font-semibold text-slate-900">Runtime Health</span>
-                 <span className="mt-1 block text-xs text-slate-500">API and worker status</span>
-              </Link>
-           </div>
-        </div>
-
-        <div className="rounded-lg border border-slate-200 bg-white shadow-sm p-5">
-           <h3 className="text-base font-semibold text-slate-900 mb-4">Next Best Actions</h3>
-           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {nextBestActions.map((action, i) => {
-                 const Icon = action.icon;
-                 return (
-                    <Link key={i} href={action.href} className="flex flex-col rounded-md border border-slate-200 p-4 hover:border-blue-300 hover:bg-blue-50 transition">
-                       <Icon className="h-5 w-5 text-blue-600 mb-2" />
-                       <span className="text-sm font-semibold text-slate-900">{action.title}</span>
-                       <span className="mt-1 text-xs text-slate-500">{action.description}</span>
-                    </Link>
-                 );
-              })}
-           </div>
-        </div>
+  return (
+    <section
+      className="rounded-lg border border-[#d7dde4] bg-white px-3 py-2 shadow-sm"
+      aria-label="Platform status"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        {items.map(([label, value]) => (
+          <div
+            key={label}
+            className="flex min-h-8 items-center gap-2 rounded-md border border-slate-200 bg-[#f8fafc] px-3 text-xs"
+          >
+            <span className="font-semibold text-[#334155]">{label}</span>
+            <span className="text-[#64748b]">{value}</span>
+          </div>
+        ))}
       </div>
+    </section>
+  );
+}
+
+function StateIndicator({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: 'emerald' | 'amber' | 'rose' | 'slate';
+}) {
+  const colors = {
+    emerald: 'border-emerald-300 bg-emerald-50 text-emerald-800',
+    amber: 'border-amber-300 bg-amber-50 text-amber-800',
+    rose: 'border-rose-300 bg-rose-50 text-rose-800',
+    slate: 'border-slate-300 bg-slate-50 text-slate-700',
+  };
+
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold',
+        colors[tone],
+      )}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      {label}
+    </span>
+  );
+}
+
+function HeaderLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex h-9 items-center justify-center rounded-md border border-[#d7dde4] bg-[#f8fafc] px-3 text-sm font-semibold text-[#101820] hover:bg-white"
+    >
+      {children}
+    </Link>
+  );
+}
+
+function SummaryCard({
+  label,
+  value,
+  context,
+  status,
+  href,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  context: string;
+  status: string;
+  href: string;
+  icon: React.ElementType;
+}) {
+  return (
+    <Link
+      href={href}
+      className="rounded-lg border border-[#d7dde4] bg-white p-4 shadow-sm hover:border-slate-400"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <Icon className="h-4 w-4 text-[#334155]" />
+        <StatusBadge status={status} className="min-h-6 px-2 text-[10px]" />
+      </div>
+      <p className="mt-4 text-xs font-bold uppercase tracking-wide text-[#64748b]">{label}</p>
+      <p className="mt-1 text-2xl font-semibold text-[#101820]">{value}</p>
+      <p className="mt-1 min-h-8 text-xs leading-4 text-[#64748b]">{context}</p>
+    </Link>
+  );
+}
+
+function ConsoleCard({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-lg border border-[#d7dde4] bg-white shadow-sm">
+      <div className="flex min-h-14 items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+        <h2 className="text-sm font-bold text-[#101820]">{title}</h2>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function MetricRows({ rows }: { rows: Array<[string, string | number, string, string]> }) {
+  return (
+    <div className="divide-y divide-slate-100">
+      {rows.map(([label, value, context, status]) => (
+        <div key={label} className="flex items-start justify-between gap-3 px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-[#101820]">{label}</p>
+            <p className="mt-1 truncate text-xs text-[#64748b]">{context}</p>
+          </div>
+          <div className="shrink-0 text-right">
+            <p className="text-sm font-semibold text-[#334155]">{value}</p>
+            <StatusBadge status={status} className="mt-1 min-h-6 px-2 text-[10px]" />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
