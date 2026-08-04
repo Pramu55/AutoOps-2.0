@@ -9,26 +9,28 @@ $contracts = @{
   runtime = @{
     Variable = 'AUTOOPS_FILE_MODE_ENV_FILE'
     FileName = $null
-    Consumers = 'api,worker'
   }
   core = @(
-    @{ Variable = 'AUTOOPS_SECRET_JWT_ACCESS_FILE'; FileName = 'jwt-access'; Consumers = 'api' },
-    @{ Variable = 'AUTOOPS_SECRET_JWT_REFRESH_FILE'; FileName = 'jwt-refresh'; Consumers = 'api' }
+    @{ Variable = 'AUTOOPS_SECRET_JWT_ACCESS_FILE'; FileName = 'jwt-access' },
+    @{ Variable = 'AUTOOPS_SECRET_JWT_REFRESH_FILE'; FileName = 'jwt-refresh' }
   )
   github = @{
     Variable = 'AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE'
     FileName = 'github-actions-token'
-    Consumers = 'api'
   }
   jenkins = @{
     Variable = 'AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE'
     FileName = 'jenkins-api-token'
-    Consumers = 'api,worker'
   }
 }
 
+$runtimeEnablementKeys = @('GITHUB_ACTIONS_ENABLED', 'JENKINS_INTEGRATION_ENABLED')
+$migratedSecretKeys = @('JWT_SECRET', 'JWT_REFRESH_SECRET', 'GITHUB_ACTIONS_TOKEN', 'JENKINS_API_TOKEN')
+
 function Write-Result([string]$Name, [string]$Status, [bool]$Passed) {
-  Write-Output "$Name $Status $(if ($Passed) { 'PASS' } else { 'FAIL' })"
+  # Host output is intentionally kept outside the PowerShell success pipeline so
+  # callers can use Boolean results without status text changing control flow.
+  Write-Host "$Name $Status $(if ($Passed) { 'PASS' } else { 'FAIL' })"
 }
 
 function Test-WithinPath([string]$Candidate, [string]$Root) {
@@ -42,48 +44,194 @@ function Test-WithinPath([string]$Candidate, [string]$Root) {
   return $normalizedCandidate.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
 }
 
-function Get-SourceMetadata([string]$SourcePath) {
-  if ([string]::IsNullOrWhiteSpace($SourcePath) -or -not [IO.Path]::IsPathRooted($SourcePath)) {
-    return @{ Exists = $false }
-  }
-  if (-not (Test-Path -LiteralPath $SourcePath -PathType Leaf)) {
-    return @{ Exists = $false }
-  }
+function Initialize-SafeFileLinkCountApi {
+  if ($null -ne ('AutoOps.MountedSecretFileMetadata' -as [type])) { return }
 
-  $normalized = [IO.Path]::GetFullPath($SourcePath)
-  $current = $normalized
-  $hasReparsePoint = $false
-  while ($true) {
-    $item = Get-Item -Force -LiteralPath $current
-    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-      $hasReparsePoint = $true
-      break
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace AutoOps {
+  public static class MountedSecretFileMetadata {
+    private const uint FILE_READ_ATTRIBUTES = 0x80;
+    private const uint FILE_SHARE_READ = 0x1;
+    private const uint FILE_SHARE_WRITE = 0x2;
+    private const uint FILE_SHARE_DELETE = 0x4;
+    private const uint OPEN_EXISTING = 3;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ByHandleFileInformation {
+      public uint FileAttributes;
+      public uint CreationTimeLow;
+      public uint CreationTimeHigh;
+      public uint LastAccessTimeLow;
+      public uint LastAccessTimeHigh;
+      public uint LastWriteTimeLow;
+      public uint LastWriteTimeHigh;
+      public uint VolumeSerialNumber;
+      public uint FileSizeHigh;
+      public uint FileSizeLow;
+      public uint NumberOfLinks;
+      public uint FileIndexHigh;
+      public uint FileIndexLow;
     }
-    $parentInfo = [IO.Directory]::GetParent($current)
-    if ($null -eq $parentInfo -or $parentInfo.FullName -eq $current) { break }
-    $current = $parentInfo.FullName
-  }
 
-  $leaf = Get-Item -Force -LiteralPath $normalized
-  return @{
-    Exists = $true
-    IsRegularFile = (-not $leaf.PSIsContainer -and $leaf -is [IO.FileInfo])
-    LeafName = $leaf.Name
-    CanonicalPath = [IO.Path]::GetFullPath($leaf.FullName)
-    HasReparsePoint = $hasReparsePoint
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LinuxTimespec {
+      public long Seconds;
+      public long Nanoseconds;
+    }
+
+    // Linux x64/glibc struct stat. Unsupported platforms fail closed.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LinuxStat {
+      public ulong Device;
+      public ulong Inode;
+      public ulong NumberOfLinks;
+      public uint Mode;
+      public uint UserId;
+      public uint GroupId;
+      public int Padding;
+      public ulong DeviceType;
+      public long Size;
+      public long BlockSize;
+      public long Blocks;
+      public LinuxTimespec AccessTime;
+      public LinuxTimespec ModificationTime;
+      public LinuxTimespec ChangeTime;
+      public long Reserved0;
+      public long Reserved1;
+      public long Reserved2;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(
+      string path,
+      uint desiredAccess,
+      uint shareMode,
+      IntPtr securityAttributes,
+      uint creationDisposition,
+      uint flagsAndAttributes,
+      IntPtr templateFile);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandle(
+      SafeFileHandle file,
+      out ByHandleFileInformation information);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int stat(string path, out LinuxStat information);
+
+    public static long GetLinkCount(string path) {
+      if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
+        return GetWindowsLinkCount(path);
+      }
+      if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && IntPtr.Size == 8) {
+        return GetLinuxLinkCount(path);
+      }
+      throw new PlatformNotSupportedException("Safe file link metadata is unavailable on this platform.");
+    }
+
+    private static long GetWindowsLinkCount(string path) {
+      SafeFileHandle handle = CreateFile(
+        path,
+        FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        IntPtr.Zero,
+        OPEN_EXISTING,
+        0,
+        IntPtr.Zero);
+      try {
+        if (handle == null || handle.IsInvalid) {
+          throw new InvalidOperationException("Unable to inspect file metadata.");
+        }
+        ByHandleFileInformation information;
+        if (!GetFileInformationByHandle(handle, out information)) {
+          throw new InvalidOperationException("Unable to inspect file metadata.");
+        }
+        return information.NumberOfLinks;
+      } finally {
+        if (handle != null) {
+          handle.Dispose();
+        }
+      }
+    }
+
+    private static long GetLinuxLinkCount(string path) {
+      LinuxStat information;
+      if (stat(path, out information) != 0) {
+        throw new InvalidOperationException("Unable to inspect file metadata.");
+      }
+      return unchecked((long)information.NumberOfLinks);
+    }
+  }
+}
+'@ -ErrorAction Stop
+}
+
+function Get-SafeFileLinkCount([string]$Path) {
+  Initialize-SafeFileLinkCountApi
+  $count = [AutoOps.MountedSecretFileMetadata]::GetLinkCount($Path)
+  if ($count -lt 1) { throw 'Invalid file link metadata.' }
+  return [int64]$count
+}
+
+function Get-SourceMetadata([string]$SourcePath) {
+  try {
+    if ([string]::IsNullOrWhiteSpace($SourcePath) -or -not [IO.Path]::IsPathRooted($SourcePath)) {
+      return @{ Exists = $false; MetadataAvailable = $true }
+    }
+    if (-not (Test-Path -LiteralPath $SourcePath -PathType Leaf)) {
+      return @{ Exists = $false; MetadataAvailable = $true }
+    }
+
+    $normalized = [IO.Path]::GetFullPath($SourcePath)
+    $current = $normalized
+    $hasReparsePoint = $false
+    while ($true) {
+      $item = Get-Item -Force -LiteralPath $current
+      if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        $hasReparsePoint = $true
+        break
+      }
+      $parentInfo = [IO.Directory]::GetParent($current)
+      if ($null -eq $parentInfo -or $parentInfo.FullName -eq $current) { break }
+      $current = $parentInfo.FullName
+    }
+
+    $leaf = Get-Item -Force -LiteralPath $normalized
+    $linkCount = if ($hasReparsePoint) { $null } else { Get-SafeFileLinkCount $normalized }
+    return @{
+      Exists = $true
+      MetadataAvailable = $true
+      IsRegularFile = (-not $leaf.PSIsContainer -and $leaf -is [IO.FileInfo])
+      LeafName = $leaf.Name
+      CanonicalPath = [IO.Path]::GetFullPath($leaf.FullName)
+      HasReparsePoint = $hasReparsePoint
+      LinkCountKnown = (-not $hasReparsePoint)
+      LinkCount = $linkCount
+    }
+  } catch {
+    return @{ Exists = $false; MetadataAvailable = $false }
   }
 }
 
 function Test-SourceFile([hashtable]$Contract, [string]$RepositoryRoot, [hashtable]$MetadataOverride) {
-  $value = [Environment]::GetEnvironmentVariable($Contract.Variable)
-  if ([string]::IsNullOrWhiteSpace($value)) {
+  $sourcePath = [Environment]::GetEnvironmentVariable($Contract.Variable)
+  if ([string]::IsNullOrWhiteSpace($sourcePath)) {
     Write-Result $Contract.Variable 'ABSENT' $false
     return @{ Passed = $false; CanonicalPath = $null }
   }
   Write-Result $Contract.Variable 'PRESENT' $true
 
-  $metadata = if ($null -ne $MetadataOverride) { $MetadataOverride } else { Get-SourceMetadata $value }
-  if (-not $metadata.Exists) {
+  $metadata = if ($null -ne $MetadataOverride) { $MetadataOverride } else { Get-SourceMetadata $sourcePath }
+  if (-not $metadata.MetadataAvailable) {
+    Write-Result $Contract.Variable 'METADATA_UNAVAILABLE' $false
+    return @{ Passed = $false; CanonicalPath = $null }
+  }
+  if (-not $metadata.Exists -or -not $metadata.IsRegularFile) {
     Write-Result $Contract.Variable 'INVALID_TYPE' $false
     return @{ Passed = $false; CanonicalPath = $null }
   }
@@ -91,8 +239,12 @@ function Test-SourceFile([hashtable]$Contract, [string]$RepositoryRoot, [hashtab
     Write-Result $Contract.Variable 'LINK_PATH_REJECTED' $false
     return @{ Passed = $false; CanonicalPath = $null }
   }
-  if (-not $metadata.IsRegularFile) {
-    Write-Result $Contract.Variable 'INVALID_TYPE' $false
+  if (-not $metadata.LinkCountKnown) {
+    Write-Result $Contract.Variable 'LINK_COUNT_UNAVAILABLE' $false
+    return @{ Passed = $false; CanonicalPath = $null }
+  }
+  if ($metadata.LinkCount -ne 1) {
+    Write-Result $Contract.Variable 'LINK_COUNT_INVALID' $false
     return @{ Passed = $false; CanonicalPath = $null }
   }
   if ($null -ne $Contract.FileName -and $metadata.LeafName -ne $Contract.FileName) {
@@ -100,18 +252,14 @@ function Test-SourceFile([hashtable]$Contract, [string]$RepositoryRoot, [hashtab
     return @{ Passed = $false; CanonicalPath = $null }
   }
 
-  # Link-bearing paths were rejected above. The canonical target is the only
+  # Reparse-bearing paths were rejected above. The canonical path is the only
   # path used for repository containment and Git-tracking checks.
   $canonicalPath = [IO.Path]::GetFullPath($metadata.CanonicalPath)
   if (Test-WithinPath $canonicalPath $RepositoryRoot) {
     $trimCharacters = [char[]]@('\', '/')
     $relative = $canonicalPath.Substring(([IO.Path]::GetFullPath($RepositoryRoot).TrimEnd($trimCharacters)).Length).TrimStart($trimCharacters)
     $null = & git -C $RepositoryRoot ls-files --error-unmatch -- $relative 2>$null
-    if ($LASTEXITCODE -eq 0) {
-      Write-Result $Contract.Variable 'TRACKED' $false
-    } else {
-      Write-Result $Contract.Variable 'REPOSITORY_PATH' $false
-    }
+    Write-Result $Contract.Variable $(if ($LASTEXITCODE -eq 0) { 'TRACKED' } else { 'REPOSITORY_PATH' }) $false
     return @{ Passed = $false; CanonicalPath = $canonicalPath }
   }
 
@@ -144,22 +292,60 @@ function Get-NormalizedOverlays([string[]]$Requested) {
     $selected.Insert(0, 'core')
     Write-Result 'OVERLAY_CORE' 'IMPLIED' $true
   }
-  if ($selected.Count -eq 0) {
-    $selected.Add('core')
-    Write-Result 'OVERLAY_CORE' 'IMPLIED' $true
-  }
   return @{ Valid = $valid; Selected = @($selected) }
 }
 
-function Get-EnabledFlag([string]$Variable) {
-  $value = [Environment]::GetEnvironmentVariable($Variable)
-  if ([string]::IsNullOrWhiteSpace($value) -or $value -eq 'false' -or $value -eq '0') {
-    return @{ Valid = $true; Enabled = $false }
-  }
-  if ($value -eq 'true' -or $value -eq '1') {
-    return @{ Valid = $true; Enabled = $true }
-  }
+function ConvertTo-ApplicationBoolean([string]$Value) {
+  if ($Value -eq 'true' -or $Value -eq '1') { return @{ Valid = $true; Enabled = $true } }
+  if ($Value -eq 'false' -or $Value -eq '0') { return @{ Valid = $true; Enabled = $false } }
   return @{ Valid = $false; Enabled = $false }
+}
+
+function Read-RuntimeEnablement([string]$RuntimeConfigurationPath) {
+  $states = @{
+    GITHUB_ACTIONS_ENABLED = @{ Defined = $false; Enabled = $false }
+    JENKINS_INTEGRATION_ENABLED = @{ Defined = $false; Enabled = $false }
+  }
+  $reader = $null
+  try {
+    $reader = [IO.File]::OpenText($RuntimeConfigurationPath)
+    while (($rawLine = $reader.ReadLine()) -ne $null) {
+      $line = $rawLine.Trim().TrimStart([char]0xfeff)
+      if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) { continue }
+      $match = [regex]::Match($line, '^(?<key>[A-Za-z_][A-Za-z0-9_]*)=(?<value>.*)$')
+      if (-not $match.Success) {
+        Write-Result 'RUNTIME_CONFIGURATION' 'INVALID_FORMAT' $false
+        return @{ Valid = $false }
+      }
+      $key = $match.Groups['key'].Value
+      if ($migratedSecretKeys -contains $key) {
+        Write-Result 'RUNTIME_CONFIGURATION' 'MIGRATED_SECRET_KEY' $false
+        return @{ Valid = $false }
+      }
+      if ($runtimeEnablementKeys -notcontains $key) { continue }
+      if ($states[$key].Defined) {
+        Write-Result $key 'DUPLICATE' $false
+        return @{ Valid = $false }
+      }
+      $state = ConvertTo-ApplicationBoolean $match.Groups['value'].Value.Trim()
+      if (-not $state.Valid) {
+        Write-Result $key 'INVALID' $false
+        return @{ Valid = $false }
+      }
+      $states[$key] = @{ Defined = $true; Enabled = $state.Enabled }
+    }
+  } catch {
+    Write-Result 'RUNTIME_CONFIGURATION' 'UNREADABLE' $false
+    return @{ Valid = $false }
+  } finally {
+    if ($null -ne $reader) { $reader.Dispose() }
+  }
+
+  foreach ($key in $runtimeEnablementKeys) {
+    Write-Result $key $(if ($states[$key].Enabled) { 'ENABLED' } else { 'DISABLED' }) $true
+  }
+  Write-Result 'RUNTIME_CONFIGURATION' 'VALID' $true
+  return @{ Valid = $true; Github = $states.GITHUB_ACTIONS_ENABLED; Jenkins = $states.JENKINS_INTEGRATION_ENABLED }
 }
 
 function Test-Overlay([string[]]$RequestedOverlay, [hashtable]$MetadataOverrides) {
@@ -167,23 +353,27 @@ function Test-Overlay([string[]]$RequestedOverlay, [hashtable]$MetadataOverrides
   $normalization = Get-NormalizedOverlays $RequestedOverlay
   if (-not $normalization.Valid) { return $false }
   $selected = $normalization.Selected
-  $github = Get-EnabledFlag 'GITHUB_ACTIONS_ENABLED'
-  $jenkins = Get-EnabledFlag 'JENKINS_INTEGRATION_ENABLED'
-  $allPassed = $github.Valid -and $jenkins.Valid
-  if (-not $github.Valid) { Write-Result 'GITHUB_ACTIONS_ENABLED' 'INVALID' $false }
-  if (-not $jenkins.Valid) { Write-Result 'JENKINS_INTEGRATION_ENABLED' 'INVALID' $false }
 
-  foreach ($integration in @(
-      @{ Name = 'GITHUB_ACTIONS_ENABLED'; Overlay = 'github'; State = $github },
-      @{ Name = 'JENKINS_INTEGRATION_ENABLED'; Overlay = 'jenkins'; State = $jenkins }
-    )) {
+  $runtimeOverride = $null
+  if ($null -ne $MetadataOverrides -and $MetadataOverrides.ContainsKey($contracts.runtime.Variable)) {
+    $runtimeOverride = $MetadataOverrides[$contracts.runtime.Variable]
+  }
+  $runtimeSource = Test-SourceFile $contracts.runtime $repositoryRoot $runtimeOverride
+  if (-not $runtimeSource.Passed) { return $false }
+  $runtime = Read-RuntimeEnablement $runtimeSource.CanonicalPath
+  if (-not $runtime.Valid) { return $false }
+
+  $integrations = @(
+    @{ Name = 'GITHUB_ACTIONS_ENABLED'; Overlay = 'github'; State = $runtime.Github },
+    @{ Name = 'JENKINS_INTEGRATION_ENABLED'; Overlay = 'jenkins'; State = $runtime.Jenkins }
+  )
+  $allPassed = $true
+  foreach ($integration in $integrations) {
     $hasOverlay = $selected -contains $integration.Overlay
     if ($integration.State.Enabled -and -not $hasOverlay) {
       Write-Result $integration.Name 'OVERLAY_REQUIRED' $false
       $allPassed = $false
     } elseif (-not $integration.State.Enabled -and $hasOverlay) {
-      # Optional credential overlays are rejected while disabled so they cannot
-      # create needless credential exposure.
       Write-Result $integration.Name 'OVERLAY_CONTRADICTS_DISABLED' $false
       $allPassed = $false
     } else {
@@ -214,6 +404,10 @@ function Test-Overlay([string[]]$RequestedOverlay, [hashtable]$MetadataOverrides
   return $allPassed
 }
 
+function Set-TemporaryRuntimeConfiguration([string]$Path, [string[]]$Lines) {
+  [IO.File]::WriteAllText($Path, ($Lines -join [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+}
+
 function Invoke-SelfTest {
   $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "autoops-mounted-secret-test-$([guid]::NewGuid())"
   $variables = @(
@@ -226,47 +420,94 @@ function Invoke-SelfTest {
   foreach ($variable in $variables) { $original[$variable] = [Environment]::GetEnvironmentVariable($variable) }
   New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
   try {
-    foreach ($file in @('file-mode.env', 'jwt-access', 'jwt-refresh', 'github-actions-token', 'jenkins-api-token')) {
+    foreach ($file in @('jwt-access', 'jwt-refresh', 'github-actions-token', 'jenkins-api-token')) {
       New-Item -ItemType File -Path (Join-Path $temporaryRoot $file) | Out-Null
     }
-    $env:AUTOOPS_FILE_MODE_ENV_FILE = Join-Path $temporaryRoot 'file-mode.env'
+    $runtimeFile = Join-Path $temporaryRoot 'file-mode.env'
+    $env:AUTOOPS_FILE_MODE_ENV_FILE = $runtimeFile
     $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = Join-Path $temporaryRoot 'jwt-access'
     $env:AUTOOPS_SECRET_JWT_REFRESH_FILE = Join-Path $temporaryRoot 'jwt-refresh'
     $env:AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE = Join-Path $temporaryRoot 'github-actions-token'
     $env:AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE = Join-Path $temporaryRoot 'jenkins-api-token'
+    $env:GITHUB_ACTIONS_ENABLED = 'true'
+    $env:JENKINS_INTEGRATION_ENABLED = 'true'
 
     $passed = $true
-    $env:GITHUB_ACTIONS_ENABLED = 'false'; $env:JENKINS_INTEGRATION_ENABLED = 'false'
+    Set-TemporaryRuntimeConfiguration $runtimeFile @()
     if (-not (Test-Overlay @('core') $null)) { $passed = $false }
-    $env:GITHUB_ACTIONS_ENABLED = 'true'
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false')
+    if (-not (Test-Overlay @('core') $null)) { $passed = $false }
+
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=true', 'JENKINS_INTEGRATION_ENABLED=false')
     if (Test-Overlay @('core') $null) { $passed = $false }
     if (-not (Test-Overlay @('github') $null)) { $passed = $false }
     $env:AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE = $null
     if (Test-Overlay @('github') $null) { $passed = $false }
     $env:AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE = Join-Path $temporaryRoot 'github-actions-token'
-    $env:GITHUB_ACTIONS_ENABLED = 'false'
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false')
     if (Test-Overlay @('github') $null) { $passed = $false }
-    $env:JENKINS_INTEGRATION_ENABLED = 'true'
+
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=true')
     if (Test-Overlay @('core') $null) { $passed = $false }
     if (-not (Test-Overlay @('jenkins') $null)) { $passed = $false }
     $env:AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE = $null
     if (Test-Overlay @('jenkins') $null) { $passed = $false }
     $env:AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE = Join-Path $temporaryRoot 'jenkins-api-token'
-    $env:GITHUB_ACTIONS_ENABLED = 'true'
+
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=true', 'JENKINS_INTEGRATION_ENABLED=true')
     if (-not (Test-Overlay @('core', 'github', 'jenkins') $null)) { $passed = $false }
+    $env:GITHUB_ACTIONS_ENABLED = 'false'; $env:JENKINS_INTEGRATION_ENABLED = 'false'
+    if (-not (Test-Overlay @('core', 'github', 'jenkins') $null)) { $passed = $false }
+    $env:GITHUB_ACTIONS_ENABLED = 'true'; $env:JENKINS_INTEGRATION_ENABLED = 'true'
     if (Test-Overlay @('core', 'github', 'github', 'jenkins') $null) { $passed = $false }
     if (Test-Overlay @('unknown') $null) { $passed = $false }
-    $env:AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE = $env:AUTOOPS_SECRET_JWT_ACCESS_FILE
-    if (Test-Overlay @('core', 'github', 'jenkins') $null) { $passed = $false }
-    $env:AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE = Join-Path $temporaryRoot 'github-actions-token'
-    $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $null
-    if (Test-Overlay @('core', 'github', 'jenkins') $null) { $passed = $false }
-    $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = Join-Path $temporaryRoot 'jwt-access'
 
-    $linkOverride = @{ Exists = $true; IsRegularFile = $true; LeafName = 'jwt-access'; CanonicalPath = (Join-Path $temporaryRoot 'jwt-access'); HasReparsePoint = $true }
-    if ((Test-SourceFile $contracts.core[0] ((git rev-parse --show-toplevel).Trim()) $linkOverride).Passed) { $passed = $false }
-    $repositoryOverride = @{ Exists = $true; IsRegularFile = $true; LeafName = 'jwt-access'; CanonicalPath = (Join-Path ((git rev-parse --show-toplevel).Trim()) 'package.json'); HasReparsePoint = $false }
-    if ((Test-SourceFile $contracts.core[0] ((git rev-parse --show-toplevel).Trim()) $repositoryOverride).Passed) { $passed = $false }
+    foreach ($invalidRuntime in @(
+        @('GITHUB_ACTIONS_ENABLED=true', 'GITHUB_ACTIONS_ENABLED=false'),
+        @('GITHUB_ACTIONS_ENABLED=enabled', 'JENKINS_INTEGRATION_ENABLED=false'),
+        @('JWT_SECRET=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false'),
+        @('JWT_REFRESH_SECRET=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false'),
+        @('GITHUB_ACTIONS_TOKEN=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false'),
+        @('JENKINS_API_TOKEN=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false')
+      )) {
+      Set-TemporaryRuntimeConfiguration $runtimeFile $invalidRuntime
+      if (Test-Overlay @('core') $null) { $passed = $false }
+    }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=true', 'JENKINS_INTEGRATION_ENABLED=true')
+
+    $normalMetadata = @{ Exists = $true; MetadataAvailable = $true; IsRegularFile = $true; LeafName = 'jwt-access'; CanonicalPath = (Join-Path $temporaryRoot 'jwt-access'); HasReparsePoint = $false; LinkCountKnown = $true; LinkCount = 1 }
+    if (-not (Test-SourceFile $contracts.core[0] ((git rev-parse --show-toplevel).Trim()) $normalMetadata).Passed) { $passed = $false }
+    $multiLinkMetadata = @{ Exists = $true; MetadataAvailable = $true; IsRegularFile = $true; LeafName = 'jwt-access'; CanonicalPath = (Join-Path $temporaryRoot 'jwt-access'); HasReparsePoint = $false; LinkCountKnown = $true; LinkCount = 2 }
+    if ((Test-SourceFile $contracts.core[0] ((git rev-parse --show-toplevel).Trim()) $multiLinkMetadata).Passed) { $passed = $false }
+    $unknownLinkMetadata = @{ Exists = $true; MetadataAvailable = $true; IsRegularFile = $true; LeafName = 'jwt-access'; CanonicalPath = (Join-Path $temporaryRoot 'jwt-access'); HasReparsePoint = $false; LinkCountKnown = $false; LinkCount = $null }
+    if ((Test-SourceFile $contracts.core[0] ((git rev-parse --show-toplevel).Trim()) $unknownLinkMetadata).Passed) { $passed = $false }
+    $linkMetadata = @{ Exists = $true; MetadataAvailable = $true; IsRegularFile = $true; LeafName = 'jwt-access'; CanonicalPath = (Join-Path $temporaryRoot 'jwt-access'); HasReparsePoint = $true; LinkCountKnown = $false; LinkCount = $null }
+    if ((Test-SourceFile $contracts.core[0] ((git rev-parse --show-toplevel).Trim()) $linkMetadata).Passed) { $passed = $false }
+    $repositoryHardLinkMetadata = @{ Exists = $true; MetadataAvailable = $true; IsRegularFile = $true; LeafName = 'jwt-access'; CanonicalPath = (Join-Path $temporaryRoot 'jwt-access'); HasReparsePoint = $false; LinkCountKnown = $true; LinkCount = 2 }
+    if ((Test-SourceFile $contracts.core[0] ((git rev-parse --show-toplevel).Trim()) $repositoryHardLinkMetadata).Passed) { $passed = $false }
+    $repositoryMetadata = @{ Exists = $true; MetadataAvailable = $true; IsRegularFile = $true; LeafName = 'jwt-access'; CanonicalPath = (Join-Path ((git rev-parse --show-toplevel).Trim()) 'package.json'); HasReparsePoint = $false; LinkCountKnown = $true; LinkCount = 1 }
+    if ((Test-SourceFile $contracts.core[0] ((git rev-parse --show-toplevel).Trim()) $repositoryMetadata).Passed) { $passed = $false }
+
+    $hardLinkRoot = Join-Path $temporaryRoot 'hard-link-test'
+    New-Item -ItemType Directory -Path $hardLinkRoot | Out-Null
+    $hardLinkTargetDirectory = Join-Path $hardLinkRoot 'target'
+    $hardLinkSourceDirectory = Join-Path $hardLinkRoot 'source'
+    New-Item -ItemType Directory -Path $hardLinkTargetDirectory, $hardLinkSourceDirectory | Out-Null
+    $hardLinkTarget = Join-Path $hardLinkTargetDirectory 'jwt-access'
+    $hardLinkSource = Join-Path $hardLinkSourceDirectory 'jwt-access'
+    New-Item -ItemType File -Path $hardLinkTarget | Out-Null
+    try {
+      New-Item -ItemType HardLink -Path $hardLinkSource -Target $hardLinkTarget -ErrorAction Stop | Out-Null
+      $originalJwtAccess = $env:AUTOOPS_SECRET_JWT_ACCESS_FILE
+      $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $hardLinkSource
+      if (Test-Overlay @('core', 'github', 'jenkins') $null) { $passed = $false }
+      $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $originalJwtAccess
+      Write-Result 'SELF_TEST_HARD_LINK' 'REJECTED' $true
+    } catch {
+      # The deterministic metadata-seam assertion above remains mandatory on
+      # platforms that do not expose unprivileged hard-link creation.
+      Write-Result 'SELF_TEST_HARD_LINK' 'UNAVAILABLE' $true
+    }
 
     Write-Result 'SELF_TEST' 'STRUCTURAL' $passed
     return $passed

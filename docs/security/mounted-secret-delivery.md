@@ -61,19 +61,33 @@ even if the optional Jenkins overlay is not selected.
 `scripts/validate-mounted-secret-delivery.ps1` validates metadata only. It
 accepts a normalized overlay set, for example `-Overlay core,github,jenkins`;
 `core` is implied when an optional overlay is selected. It rejects duplicate or
-unknown selections. An enabled GitHub or Jenkins integration requires its
-matching overlay and source path. Conversely, selecting an optional credential
-overlay while that integration is disabled is rejected to avoid needless
-credential exposure.
+unknown selections. Enablement is derived exclusively from the approved
+external `AUTOOPS_FILE_MODE_ENV_FILE`, not from ambient shell variables. This
+matches the file-mode Compose `env_file` source and prevents a shell from
+silently changing validation behavior.
+
+The runtime file parser reads only the two allowlisted enablement keys,
+`GITHUB_ACTIONS_ENABLED` and `JENKINS_INTEGRATION_ENABLED`. Missing keys use
+the application's exact `false` default; duplicate or invalid values fail.
+The runtime file must not contain any migrated application-secret key. When an
+integration is enabled, its matching overlay and source path are required;
+when disabled, selecting its optional credential overlay fails to prevent
+needless credential exposure.
 
 The validator checks configured path variables, regular-file type, fixed
 filename mapping, duplicate canonical source paths, and integration/overlay
 agreement. It rejects final-file and parent-directory symbolic links,
 junctions, reparse points, and repository-contained canonical targets before
-any Git tracking check. It never opens a secret file or prints content, length,
-hash, prefix, suffix, or path. Its `-RunSelfTest` mode uses only temporary empty
-files and includes deterministic metadata-seam coverage for link-target
-bypass rejection.
+any Git tracking check. Every source, including the non-secret runtime file,
+must have exactly one filesystem hard link; unavailable or multiply-linked
+metadata fails closed. Windows uses read-only handle metadata, Linux uses the
+runtime `stat` metadata API, and unsupported platforms fail closed.
+
+It never opens a mounted secret file or prints content, length, hash, prefix,
+suffix, filesystem identifiers, or paths. Its `-RunSelfTest` mode uses only
+temporary empty files and non-secret temporary runtime configuration files,
+with deterministic metadata-seam coverage for link and hard-link bypass
+rejection.
 
 Run the validator before any controlled activation and use `docker compose
 config` with the selected explicit overlay(s). These checks render structure
