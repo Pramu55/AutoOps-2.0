@@ -56,6 +56,14 @@ credential-bearing settings: `DATABASE_URL`, `REDIS_URL`,
 approved provider migration exists. The four migrated keys are forbidden in
 both files.
 
+The compatibility overlay resets the inherited Compose `DATABASE_URL` and
+`REDIS_URL` environment mappings for API and worker. This makes the values in
+the second `sensitive.env` file authoritative after the non-secret
+`runtime.env` file. `GOOGLE_APPLICATION_CREDENTIALS` is an allowed non-secret
+runtime path/reference only; this delivery correction does not mount, read, or
+validate the referenced GCP credential content. GitHub remains enabled through
+its dedicated API-only mounted-token overlay, while Jenkins remains disabled.
+
 ## Fixed mounted filenames
 
 The typed registry accepts only these filenames below the mounted root:

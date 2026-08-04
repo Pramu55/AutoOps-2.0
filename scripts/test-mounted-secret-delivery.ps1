@@ -33,12 +33,17 @@ function Test-MountTargets($Service, [string[]]$Expected) {
   return (($actual -join ',') -eq (($Expected | Sort-Object) -join ','))
 }
 
+function Test-SensitiveEnvironmentAuthoritative($Service, [string]$DatabaseUrl, [string]$RedisUrl) {
+  return ($Service.environment.DATABASE_URL -eq $DatabaseUrl) -and
+    ($Service.environment.REDIS_URL -eq $RedisUrl)
+}
+
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "autoops-mounted-secret-compose-test-$([guid]::NewGuid())"
 $variables = @(
   'AUTOOPS_FILE_MODE_ENV_FILE', 'AUTOOPS_SECRET_JWT_ACCESS_FILE',
   'AUTOOPS_SECRET_JWT_REFRESH_FILE', 'AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE',
   'AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE', 'AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE', 'GITHUB_ACTIONS_ENABLED',
-  'JENKINS_INTEGRATION_ENABLED'
+  'JENKINS_INTEGRATION_ENABLED', 'DATABASE_URL', 'REDIS_URL'
 )
 $original = @{}
 foreach ($variable in $variables) { $original[$variable] = [Environment]::GetEnvironmentVariable($variable) }
@@ -53,6 +58,14 @@ try {
   $env:AUTOOPS_SECRET_JWT_REFRESH_FILE = Join-Path $temporaryRoot 'jwt-refresh'
   $env:AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE = Join-Path $temporaryRoot 'github-actions-token'
   $env:AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE = Join-Path $temporaryRoot 'jenkins-api-token'
+  $sensitiveDatabaseUrl = 'postgresql://dummy:dummy@dummy.invalid:5432/dummy'
+  $sensitiveRedisUrl = 'redis://dummy.invalid:6379'
+  $ambientDatabaseUrl = 'postgresql://ambient:ambient@ambient.invalid:5432/ambient'
+  $ambientRedisUrl = 'redis://ambient.invalid:6380'
+  Set-Content -LiteralPath $env:AUTOOPS_FILE_MODE_ENV_FILE -Value @('GITHUB_ACTIONS_ENABLED=true', 'JENKINS_INTEGRATION_ENABLED=false')
+  Set-Content -LiteralPath $env:AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE -Value @("DATABASE_URL=$sensitiveDatabaseUrl", "REDIS_URL=$sensitiveRedisUrl")
+  $env:DATABASE_URL = $ambientDatabaseUrl
+  $env:REDIS_URL = $ambientRedisUrl
 
   $default = Get-ComposeModel @('docker-compose.yml')
   $core = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml')
@@ -71,9 +84,13 @@ try {
   Assert-Condition 'CORE_API_FILE_MODE' ($core.services.api.environment.SECRET_PROVIDER_MODE -eq 'file')
   Assert-Condition 'CORE_WORKER_FILE_MODE' ($core.services.worker.environment.SECRET_PROVIDER_MODE -eq 'file')
   Assert-Condition 'SENSITIVE_ENV_API_AND_WORKER_FILE_MODE' (($sensitive.services.api.environment.SECRET_PROVIDER_MODE -eq 'file') -and ($sensitive.services.worker.environment.SECRET_PROVIDER_MODE -eq 'file'))
+  Assert-Condition 'BASE_PRECEDENCE_REGRESSION_REPRODUCED' (($core.services.api.environment.DATABASE_URL -eq $ambientDatabaseUrl) -and ($core.services.worker.environment.REDIS_URL -ne $sensitiveRedisUrl))
+  Assert-Condition 'SENSITIVE_ENV_DATABASE_URL_AUTHORITATIVE' ((Test-SensitiveEnvironmentAuthoritative $sensitive.services.api $sensitiveDatabaseUrl $sensitiveRedisUrl) -and (Test-SensitiveEnvironmentAuthoritative $sensitive.services.worker $sensitiveDatabaseUrl $sensitiveRedisUrl))
+  Assert-Condition 'SENSITIVE_ENV_AMBIENT_OVERRIDES_BLOCKED' (($sensitive.services.api.environment.DATABASE_URL -ne $ambientDatabaseUrl) -and ($sensitive.services.api.environment.REDIS_URL -ne $ambientRedisUrl) -and ($sensitive.services.worker.environment.DATABASE_URL -ne $ambientDatabaseUrl) -and ($sensitive.services.worker.environment.REDIS_URL -ne $ambientRedisUrl))
   # Compose resolves env_file into environment in the rendered JSON. Verify the
   # compatibility overlay's two explicit source entries and their order instead.
   Assert-Condition 'SENSITIVE_ENV_ORDER' (($compatibilityOverlay.IndexOf($runtimeMarker, [System.StringComparison]::Ordinal) -ge 0) -and ($compatibilityOverlay.IndexOf($sensitiveMarker, [System.StringComparison]::Ordinal) -gt $compatibilityOverlay.IndexOf($runtimeMarker, [System.StringComparison]::Ordinal)) -and (([regex]::Matches($compatibilityOverlay, [regex]::Escape($runtimeMarker))).Count -eq 2) -and (([regex]::Matches($compatibilityOverlay, [regex]::Escape($sensitiveMarker))).Count -eq 2))
+  Assert-Condition 'SENSITIVE_ENV_BASE_MAPPINGS_RESET' ((([regex]::Matches($compatibilityOverlay, 'environment:\s*!override')).Count -eq 2) -and -not ($compatibilityOverlay -match 'DATABASE_URL:|REDIS_URL:'))
   Assert-Condition 'CORE_API_MIGRATED_ENV_REMOVED' (Test-MigratedEnvironmentAbsent $core.services.api)
   Assert-Condition 'CORE_WORKER_MIGRATED_ENV_REMOVED' (Test-MigratedEnvironmentAbsent $core.services.worker)
   Assert-Condition 'API_CORE_MOUNTS_ONLY_JWT' (Test-MountTargets $core.services.api @('/run/secrets/autoops/jwt-access', '/run/secrets/autoops/jwt-refresh'))

@@ -60,7 +60,7 @@ $runtimeAllowedKeys = @(
   'INFRA_OPERATION_TIMEOUT_SECONDS', 'INFRA_EXPORT_OUTPUT_LIMIT',
   'AWS_DEFAULT_TAG_OWNER', 'AWS_ECR_ALLOWED_REPOSITORIES', 'AWS_ECR_ALLOWED_BUILD_TARGETS',
   'AZURE_INTEGRATION_ENABLED', 'AZURE_TENANT_ID', 'AZURE_CLIENT_ID',
-  'AZURE_SUBSCRIPTION_ID', 'GCP_INTEGRATION_ENABLED'
+  'AZURE_SUBSCRIPTION_ID', 'GCP_INTEGRATION_ENABLED', 'GOOGLE_APPLICATION_CREDENTIALS'
 )
 $sensitiveRuntimeKeys = @(
   'DATABASE_URL', 'REDIS_URL',
@@ -657,6 +657,15 @@ function Invoke-SelfTest {
     $env:AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE = Join-Path $temporaryRoot 'jenkins-api-token'
     $env:GITHUB_ACTIONS_ENABLED = 'true'
     $env:JENKINS_INTEGRATION_ENABLED = 'true'
+    $gcpKey = 'GOOGLE_APPLICATION_CREDENTIALS'
+    $gcpReference = '/temporary/dummy/reference.json'
+    $gcpAssignment = $gcpKey + '=' + $gcpReference
+    $gcpLowerAssignment = $gcpKey.ToLowerInvariant() + '=' + $gcpReference
+    $gcpMixedAssignment = ('Google' + $gcpKey.Substring(6).ToLowerInvariant()) + '=' + $gcpReference
+    $gcpDuplicateAssignments = @(
+      ($gcpKey + '=/temporary/dummy/one.json')
+      ($gcpKey + '=/temporary/dummy/two.json')
+    )
 
     $passed = $true
     $literalLsFiles = Get-GitArgumentVector $temporaryRoot @('ls-files', '--error-unmatch', '--', ':(top)literal/jwt-access') -LiteralPathspecs
@@ -706,12 +715,25 @@ function Invoke-SelfTest {
         @('JWT_SECRET=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false'),
         @('JWT_REFRESH_SECRET=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false'),
         @('GITHUB_ACTIONS_TOKEN=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false'),
-        @('JENKINS_API_TOKEN=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false')
+        @('JENKINS_API_TOKEN=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false'),
+        @($gcpLowerAssignment),
+        @($gcpMixedAssignment),
+        $gcpDuplicateAssignments
       )) {
       Set-TemporaryRuntimeConfiguration $runtimeFile $invalidRuntime
       if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
     }
     Set-TemporaryRuntimeConfiguration $runtimeFile @('LOG_LEVEL=info')
+    if (-not (Test-Overlay @('core', 'sensitive-env') $null)) { $passed = $false }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @(
+      'GCP_INTEGRATION_ENABLED=true',
+      $gcpAssignment
+    )
+    if (-not (Test-Overlay @('core', 'sensitive-env') $null)) { $passed = $false }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @(
+      'GCP_INTEGRATION_ENABLED=false',
+      $gcpAssignment
+    )
     if (-not (Test-Overlay @('core', 'sensitive-env') $null)) { $passed = $false }
 
     $env:AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE = $null
@@ -721,6 +743,7 @@ function Invoke-SelfTest {
         @('JWT_SECRET=placeholder'),
         @('DATABASE_URL=placeholder', 'DATABASE_URL=duplicate'),
         @('LOG_LEVEL=info'),
+        @($gcpAssignment),
         @('UNKNOWN_CREDENTIAL=placeholder'),
         @('DATABASE_URL=')
       )) {
@@ -729,6 +752,9 @@ function Invoke-SelfTest {
     }
     Set-TemporaryRuntimeConfiguration $runtimeFile @('DATABASE_URL=placeholder')
     Set-TemporaryRuntimeConfiguration $sensitiveFile @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder')
+    if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @($gcpAssignment)
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @($gcpAssignment)
     if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
     Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false')
     Set-TemporaryRuntimeConfiguration $sensitiveFile @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder')
