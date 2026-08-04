@@ -37,17 +37,18 @@ $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "autoops-mounted-secret-co
 $variables = @(
   'AUTOOPS_FILE_MODE_ENV_FILE', 'AUTOOPS_SECRET_JWT_ACCESS_FILE',
   'AUTOOPS_SECRET_JWT_REFRESH_FILE', 'AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE',
-  'AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE', 'GITHUB_ACTIONS_ENABLED',
+  'AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE', 'AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE', 'GITHUB_ACTIONS_ENABLED',
   'JENKINS_INTEGRATION_ENABLED'
 )
 $original = @{}
 foreach ($variable in $variables) { $original[$variable] = [Environment]::GetEnvironmentVariable($variable) }
 New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
 try {
-  foreach ($file in @('file-mode.env', 'jwt-access', 'jwt-refresh', 'github-actions-token', 'jenkins-api-token')) {
+  foreach ($file in @('runtime.env', 'sensitive.env', 'jwt-access', 'jwt-refresh', 'github-actions-token', 'jenkins-api-token')) {
     New-Item -ItemType File -Path (Join-Path $temporaryRoot $file) | Out-Null
   }
-  $env:AUTOOPS_FILE_MODE_ENV_FILE = Join-Path $temporaryRoot 'file-mode.env'
+  $env:AUTOOPS_FILE_MODE_ENV_FILE = Join-Path $temporaryRoot 'runtime.env'
+  $env:AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE = Join-Path $temporaryRoot 'sensitive.env'
   $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = Join-Path $temporaryRoot 'jwt-access'
   $env:AUTOOPS_SECRET_JWT_REFRESH_FILE = Join-Path $temporaryRoot 'jwt-refresh'
   $env:AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE = Join-Path $temporaryRoot 'github-actions-token'
@@ -55,21 +56,35 @@ try {
 
   $default = Get-ComposeModel @('docker-compose.yml')
   $core = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml')
+  $sensitive = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml', 'docker-compose.secrets-sensitive-env.yml')
   $github = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml', 'docker-compose.secrets-github.yml')
+  $sensitiveGithub = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml', 'docker-compose.secrets-sensitive-env.yml', 'docker-compose.secrets-github.yml')
   $jenkins = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml', 'docker-compose.secrets-jenkins.yml')
+  $sensitiveJenkins = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml', 'docker-compose.secrets-sensitive-env.yml', 'docker-compose.secrets-jenkins.yml')
   $combined = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml', 'docker-compose.secrets-github.yml', 'docker-compose.secrets-jenkins.yml')
+  $sensitiveCombined = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml', 'docker-compose.secrets-sensitive-env.yml', 'docker-compose.secrets-github.yml', 'docker-compose.secrets-jenkins.yml')
+  $compatibilityOverlay = Get-Content -LiteralPath 'docker-compose.secrets-sensitive-env.yml' -Raw
+  $runtimeMarker = '${AUTOOPS_FILE_MODE_ENV_FILE:?'
+  $sensitiveMarker = '${AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE:?'
 
   Assert-Condition 'DEFAULT_ENV_MODE_UNCHANGED' ($null -eq $default.services.api.environment.SECRET_PROVIDER_MODE)
   Assert-Condition 'CORE_API_FILE_MODE' ($core.services.api.environment.SECRET_PROVIDER_MODE -eq 'file')
   Assert-Condition 'CORE_WORKER_FILE_MODE' ($core.services.worker.environment.SECRET_PROVIDER_MODE -eq 'file')
+  Assert-Condition 'SENSITIVE_ENV_API_AND_WORKER_FILE_MODE' (($sensitive.services.api.environment.SECRET_PROVIDER_MODE -eq 'file') -and ($sensitive.services.worker.environment.SECRET_PROVIDER_MODE -eq 'file'))
+  # Compose resolves env_file into environment in the rendered JSON. Verify the
+  # compatibility overlay's two explicit source entries and their order instead.
+  Assert-Condition 'SENSITIVE_ENV_ORDER' (($compatibilityOverlay.IndexOf($runtimeMarker, [System.StringComparison]::Ordinal) -ge 0) -and ($compatibilityOverlay.IndexOf($sensitiveMarker, [System.StringComparison]::Ordinal) -gt $compatibilityOverlay.IndexOf($runtimeMarker, [System.StringComparison]::Ordinal)) -and (([regex]::Matches($compatibilityOverlay, [regex]::Escape($runtimeMarker))).Count -eq 2) -and (([regex]::Matches($compatibilityOverlay, [regex]::Escape($sensitiveMarker))).Count -eq 2))
   Assert-Condition 'CORE_API_MIGRATED_ENV_REMOVED' (Test-MigratedEnvironmentAbsent $core.services.api)
   Assert-Condition 'CORE_WORKER_MIGRATED_ENV_REMOVED' (Test-MigratedEnvironmentAbsent $core.services.worker)
   Assert-Condition 'API_CORE_MOUNTS_ONLY_JWT' (Test-MountTargets $core.services.api @('/run/secrets/autoops/jwt-access', '/run/secrets/autoops/jwt-refresh'))
   Assert-Condition 'WORKER_CORE_HAS_NO_SECRET_MOUNTS' (Test-MountTargets $core.services.worker @())
   Assert-Condition 'GITHUB_MOUNTS_ONLY_API_TOKEN' (Test-MountTargets $github.services.api @('/run/secrets/autoops/github-actions-token', '/run/secrets/autoops/jwt-access', '/run/secrets/autoops/jwt-refresh'))
   Assert-Condition 'GITHUB_WORKER_REMAINS_SECRET_FREE' (Test-MountTargets $github.services.worker @())
+  Assert-Condition 'SENSITIVE_GITHUB_API_ONLY_TOKEN' ((Test-MountTargets $sensitiveGithub.services.api @('/run/secrets/autoops/github-actions-token', '/run/secrets/autoops/jwt-access', '/run/secrets/autoops/jwt-refresh')) -and (Test-MountTargets $sensitiveGithub.services.worker @()))
   Assert-Condition 'JENKINS_MOUNTS_ONLY_REQUIRED_TOKEN' ((Test-MountTargets $jenkins.services.api @('/run/secrets/autoops/jenkins-api-token', '/run/secrets/autoops/jwt-access', '/run/secrets/autoops/jwt-refresh')) -and (Test-MountTargets $jenkins.services.worker @('/run/secrets/autoops/jenkins-api-token')))
+  Assert-Condition 'SENSITIVE_JENKINS_MOUNTS_ONLY_REQUIRED_TOKEN' ((Test-MountTargets $sensitiveJenkins.services.api @('/run/secrets/autoops/jenkins-api-token', '/run/secrets/autoops/jwt-access', '/run/secrets/autoops/jwt-refresh')) -and (Test-MountTargets $sensitiveJenkins.services.worker @('/run/secrets/autoops/jenkins-api-token')))
   Assert-Condition 'COMBINED_OVERLAYS_MOUNT_EXPECTED_FILES' ((Test-MountTargets $combined.services.api @('/run/secrets/autoops/github-actions-token', '/run/secrets/autoops/jenkins-api-token', '/run/secrets/autoops/jwt-access', '/run/secrets/autoops/jwt-refresh')) -and (Test-MountTargets $combined.services.worker @('/run/secrets/autoops/jenkins-api-token')))
+  Assert-Condition 'SENSITIVE_COMBINED_OVERLAYS_MOUNT_EXPECTED_FILES' ((Test-MountTargets $sensitiveCombined.services.api @('/run/secrets/autoops/github-actions-token', '/run/secrets/autoops/jenkins-api-token', '/run/secrets/autoops/jwt-access', '/run/secrets/autoops/jwt-refresh')) -and (Test-MountTargets $sensitiveCombined.services.worker @('/run/secrets/autoops/jenkins-api-token')))
   $allMounts = @((Get-SecretMounts $combined.services.api) + (Get-SecretMounts $combined.services.worker))
   Assert-Condition 'ALL_SECRET_MOUNTS_READ_ONLY' (@($allMounts | Where-Object { -not $_.read_only }).Count -eq 0)
   Assert-Condition 'COMBINED_API_MIGRATED_ENV_REMOVED' (Test-MigratedEnvironmentAbsent $combined.services.api)

@@ -19,13 +19,18 @@ worker:
 - `docker-compose.secrets-github.yml` is an additional API-only GitHub Actions
   token mount. Use it only when GitHub Actions is enabled through approved
   non-secret configuration.
+- `docker-compose.secrets-sensitive-env.yml` is a transitional compatibility
+  overlay. Apply it after the core overlay to replace `env_file` with the
+  approved external `runtime.env` followed by `sensitive.env`, preserving only
+  explicitly allowlisted non-migrated API/worker credentials during the
+  migration.
 - `docker-compose.secrets-jenkins.yml` is an additional API-and-worker Jenkins
   token mount. It does not enable Jenkins; `JENKINS_INTEGRATION_ENABLED` remains
   disabled unless separately approved.
 
 The core overlay requires external host-file path variables for `jwt-access`
-and `jwt-refresh`, plus `AUTOOPS_FILE_MODE_ENV_FILE` for the non-secret
-runtime configuration normally supplied by `.env`. Optional integration
+and `jwt-refresh`, plus `AUTOOPS_FILE_MODE_ENV_FILE` for `runtime.env` and
+`AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE` for `sensitive.env`. Optional integration
 overlays require their own external path variable. Compose bind mounts are
 read-only and refuse to create missing host paths. Keep every host file outside
 the tracked repository; never place them in an image, build argument, label,
@@ -38,6 +43,18 @@ to, the base `env_file` list. Null environment entries remove inherited
 two mounted files in file mode, while the worker receives neither JWT nor
 GitHub credentials. The GitHub file is mounted only by its API overlay; the
 Jenkins file is mounted only by its dedicated API-and-worker overlay.
+
+For the current compatibility migration, the approved activation selection is
+`core,sensitive-env,github`. `runtime.env` must contain only exact allowlisted
+non-secret application configuration and must set `GITHUB_ACTIONS_ENABLED=true`
+and `JENKINS_INTEGRATION_ENABLED=false`. `sensitive.env` is not a general
+secret store. Its only allowed keys are the transitional API/worker
+credential-bearing settings: `DATABASE_URL`, `REDIS_URL`,
+`ARGOCD_AUTH_TOKEN`, `ARGOCD_PASSWORD`, `GRAFANA_API_TOKEN`,
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, and
+`AZURE_CLIENT_SECRET`. These remain environment-delivered until a separately
+approved provider migration exists. The four migrated keys are forbidden in
+both files.
 
 ## Fixed mounted filenames
 
@@ -59,21 +76,26 @@ even if the optional Jenkins overlay is not selected.
 ## Structural validation
 
 `scripts/validate-mounted-secret-delivery.ps1` validates metadata only. It
-accepts a normalized overlay set, for example `-Overlay core,github,jenkins`;
+accepts a normalized overlay set, for example `-Overlay core,sensitive-env,github`;
 `core` is implied when an optional overlay is selected. It rejects duplicate or
 unknown selections. Enablement is derived exclusively from the approved
 external `AUTOOPS_FILE_MODE_ENV_FILE`, not from ambient shell variables. This
 matches the file-mode Compose `env_file` source and prevents a shell from
 silently changing validation behavior.
 
-The runtime file parser inspects every assignment only for exact, ordinal-case
-duplicate detection, but retains and interprets values only for the exact
+The runtime file parser permits only an explicit non-secret allowlist and
+inspects every assignment for exact, ordinal-case duplicate detection. It
+retains and interprets values only for the exact
 allowlisted enablement keys `GITHUB_ACTIONS_ENABLED` and
 `JENKINS_INTEGRATION_ENABLED`. Lowercase or mixed-case variants are ordinary
 Linux environment keys and do not enable an integration. Missing exact keys
 use the application's exact `false` default. Duplicate assignments for every
 runtime key are rejected before allowlist filtering, so unrelated duplicate
-configuration cannot pass.
+configuration cannot pass. The sensitive file accepts only its documented
+transitional credential allowlist, requires syntactically present values, and
+never retains or displays them. Duplicate keys across the two files,
+non-secret keys in the sensitive file, sensitive keys in the runtime file, and
+migrated keys in either file fail closed.
 The runtime file must not contain any migrated application-secret key. When an
 integration is enabled, its matching overlay and source path are required;
 when disabled, selecting its optional credential overlay fails to prevent
