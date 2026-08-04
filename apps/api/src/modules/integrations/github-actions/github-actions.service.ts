@@ -6,6 +6,8 @@ import type {
   GitHubWorkflowSummary,
 } from '@autoops/types';
 import { GitHubActionsConnectionStatus } from '@autoops/types';
+import { env } from '../../../config/env.js';
+import { getGitHubActionsToken } from '../../../config/application-secrets.js';
 
 type GitHubConfig = {
   enabled: boolean;
@@ -52,14 +54,11 @@ type GitHubJobApi = {
 
 function getConfig(): GitHubConfig {
   return {
-    enabled: process.env.GITHUB_ACTIONS_ENABLED === 'true',
-    owner: process.env.GITHUB_REPOSITORY_OWNER?.trim() || 'Pramu55',
-    repo: process.env.GITHUB_REPOSITORY_NAME?.trim() || 'AutoOps-2.0',
-    token: process.env.GITHUB_ACTIONS_TOKEN?.trim() || null,
-    allowedWorkflows: (process.env.GITHUB_ACTIONS_ALLOWED_WORKFLOWS ?? 'ci.yml')
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean),
+    enabled: env.GITHUB_ACTIONS_ENABLED,
+    owner: env.GITHUB_REPOSITORY_OWNER,
+    repo: env.GITHUB_REPOSITORY_NAME,
+    token: getGitHubActionsToken()?.revealForUse() ?? null,
+    allowedWorkflows: env.GITHUB_ACTIONS_ALLOWED_WORKFLOWS,
   };
 }
 
@@ -74,11 +73,15 @@ export class GitHubActionsService {
         repository: `${config.owner}/${config.repo}`,
         allowedWorkflows: config.allowedWorkflows,
         checkedAt,
-        message: 'Set GITHUB_ACTIONS_ENABLED=true and GITHUB_ACTIONS_TOKEN to enable read-only workflow status.',
+        message:
+          'Set GITHUB_ACTIONS_ENABLED=true and GITHUB_ACTIONS_TOKEN to enable read-only workflow status.',
       };
     }
 
-    const result = await this._request<{ total_count?: number }>('actions/workflows?per_page=1', config);
+    const result = await this._request<{ total_count?: number }>(
+      'actions/workflows?per_page=1',
+      config,
+    );
     return {
       status: result.status,
       configured: true,
@@ -94,7 +97,10 @@ export class GitHubActionsService {
     const base = await this._emptyIfNotConfigured<GitHubWorkflowSummary>(config);
     if (base) return base;
 
-    const response = await this._request<{ workflows?: GitHubWorkflowApi[] }>('actions/workflows?per_page=50', config);
+    const response = await this._request<{ workflows?: GitHubWorkflowApi[] }>(
+      'actions/workflows?per_page=50',
+      config,
+    );
     return {
       status: response.status,
       configured: true,
@@ -102,7 +108,11 @@ export class GitHubActionsService {
       checkedAt: new Date().toISOString(),
       message: response.message,
       items: (response.data?.workflows ?? [])
-        .filter((workflow) => config.allowedWorkflows.length === 0 || config.allowedWorkflows.includes(workflow.path ?? ''))
+        .filter(
+          (workflow) =>
+            config.allowedWorkflows.length === 0 ||
+            config.allowedWorkflows.includes(workflow.path ?? ''),
+        )
         .map((workflow) => ({
           id: workflow.id,
           name: workflow.name ?? workflow.path ?? 'Workflow',
@@ -119,7 +129,10 @@ export class GitHubActionsService {
     const base = await this._emptyIfNotConfigured<GitHubWorkflowRunSummary>(config);
     if (base) return base;
 
-    const response = await this._request<{ workflow_runs?: GitHubRunApi[] }>('actions/runs?per_page=20', config);
+    const response = await this._request<{ workflow_runs?: GitHubRunApi[] }>(
+      'actions/runs?per_page=20',
+      config,
+    );
     return {
       status: response.status,
       configured: true,
@@ -148,7 +161,10 @@ export class GitHubActionsService {
     const base = await this._emptyIfNotConfigured<GitHubWorkflowJobSummary>(config);
     if (base) return base;
 
-    const response = await this._request<{ jobs?: GitHubJobApi[] }>(`actions/runs/${runId}/jobs?per_page=50`, config);
+    const response = await this._request<{ jobs?: GitHubJobApi[] }>(
+      `actions/runs/${runId}/jobs?per_page=50`,
+      config,
+    );
     return {
       status: response.status,
       configured: true,
@@ -167,7 +183,9 @@ export class GitHubActionsService {
     };
   }
 
-  private async _emptyIfNotConfigured<T>(config: GitHubConfig): Promise<GitHubActionsListResponse<T> | null> {
+  private async _emptyIfNotConfigured<T>(
+    config: GitHubConfig,
+  ): Promise<GitHubActionsListResponse<T> | null> {
     if (config.enabled && config.token) return null;
     return {
       status: GitHubActionsConnectionStatus.NOT_CONFIGURED,
@@ -184,19 +202,28 @@ export class GitHubActionsService {
     config: GitHubConfig,
   ): Promise<{ status: GitHubActionsStatusResponse['status']; message: string; data?: T }> {
     try {
-      const response = await fetch(`https://api.github.com/repos/${config.owner}/${config.repo}/${path}`, {
-        headers: {
-          Accept: 'application/vnd.github+json',
-          Authorization: `Bearer ${config.token}`,
-          'User-Agent': 'AutoOps-Control-Plane',
-          'X-GitHub-Api-Version': '2022-11-28',
+      const response = await fetch(
+        `https://api.github.com/repos/${config.owner}/${config.repo}/${path}`,
+        {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Bearer ${config.token}`,
+            'User-Agent': 'AutoOps-Control-Plane',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
         },
-      });
+      );
       if (response.status === 401 || response.status === 403) {
-        return { status: GitHubActionsConnectionStatus.AUTH_FAILED, message: 'GitHub token was rejected or lacks repository Actions read access.' };
+        return {
+          status: GitHubActionsConnectionStatus.AUTH_FAILED,
+          message: 'GitHub token was rejected or lacks repository Actions read access.',
+        };
       }
       if (!response.ok) {
-        return { status: GitHubActionsConnectionStatus.UNREACHABLE, message: `GitHub API returned HTTP ${response.status}.` };
+        return {
+          status: GitHubActionsConnectionStatus.UNREACHABLE,
+          message: `GitHub API returned HTTP ${response.status}.`,
+        };
       }
       return {
         status: GitHubActionsConnectionStatus.CONNECTED,
@@ -204,7 +231,10 @@ export class GitHubActionsService {
         data: (await response.json()) as T,
       };
     } catch {
-      return { status: GitHubActionsConnectionStatus.UNREACHABLE, message: 'GitHub Actions API is unreachable.' };
+      return {
+        status: GitHubActionsConnectionStatus.UNREACHABLE,
+        message: 'GitHub Actions API is unreachable.',
+      };
     }
   }
 }

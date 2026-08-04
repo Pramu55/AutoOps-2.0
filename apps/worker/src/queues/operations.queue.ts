@@ -13,14 +13,23 @@ import {
   ListClustersCommand,
   ListServicesCommand,
 } from '@aws-sdk/client-ecs';
-import { CloudWatchLogsClient, DescribeLogGroupsCommand, type LogGroup } from '@aws-sdk/client-cloudwatch-logs';
+import {
+  CloudWatchLogsClient,
+  DescribeLogGroupsCommand,
+  type LogGroup,
+} from '@aws-sdk/client-cloudwatch-logs';
 import {
   ElasticLoadBalancingV2Client,
   DescribeLoadBalancersCommand,
   type LoadBalancer,
 } from '@aws-sdk/client-elastic-load-balancing-v2';
 import { prisma as db, type Prisma } from '@autoops/database';
-import { OperationProvider, OperationStatus, OperationType, type AwsEcsVerificationSummary } from '@autoops/types';
+import {
+  OperationProvider,
+  OperationStatus,
+  OperationType,
+  type AwsEcsVerificationSummary,
+} from '@autoops/types';
 import {
   DockerEngineClient,
   detectAnsibleTool,
@@ -40,6 +49,7 @@ import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
 import { jobsProcessedTotal, jobDurationSeconds } from '../lib/metrics.js';
 import { createIncidentForFailedOperation } from '../runtime/operation-incidents.js';
+import { getWorkerJenkinsApiToken } from '../config/application-secrets.js';
 
 export interface OperationJobData {
   operationId: string;
@@ -84,7 +94,10 @@ async function processOperation(job: Job<OperationJobData>): Promise<void> {
     throw new Error(`Operation not found: ${operationId}`);
   }
 
-  if (operation.status === OperationStatus.SUCCEEDED || operation.status === OperationStatus.FAILED) {
+  if (
+    operation.status === OperationStatus.SUCCEEDED ||
+    operation.status === OperationStatus.FAILED
+  ) {
     jobLog.info({ status: operation.status }, 'Operation already terminal; skipping duplicate job');
     return;
   }
@@ -188,7 +201,8 @@ async function executeOperation(operation: {
   }
 
   if (
-    (operation.provider === OperationProvider.INFRASTRUCTURE || operation.provider === OperationProvider.AWS) &&
+    (operation.provider === OperationProvider.INFRASTRUCTURE ||
+      operation.provider === OperationProvider.AWS) &&
     (operation.operationType === OperationType.TERRAFORM_VALIDATE ||
       operation.operationType === OperationType.TERRAFORM_PLAN ||
       operation.operationType === OperationType.TERRAFORM_APPLY)
@@ -222,7 +236,7 @@ async function executeOperation(operation: {
       input,
       operation.approvedAt ?? null,
       operation.approvedByUserId ?? null,
-      { sourcePlanOperationId }
+      { sourcePlanOperationId },
     );
   }
 
@@ -237,7 +251,7 @@ async function executeOperation(operation: {
       input,
       operation.approvedAt ?? null,
       operation.approvedByUserId ?? null,
-      { promotedFromReleaseId: sourceReleaseId }
+      { promotedFromReleaseId: sourceReleaseId },
     );
   }
 
@@ -252,7 +266,7 @@ async function executeOperation(operation: {
       input,
       operation.approvedAt ?? null,
       operation.approvedByUserId ?? null,
-      { promotedFromReleaseId: null, rolledBackFromReleaseId }
+      { promotedFromReleaseId: null, rolledBackFromReleaseId },
     );
   }
 
@@ -481,7 +495,14 @@ async function buildAwsEcrImage(
   }
 
   const startedAt = Date.now();
-  const args = ['build', '--pull=false', '--file', target.absoluteDockerfilePath, '--tag', imageUri];
+  const args = [
+    'build',
+    '--pull=false',
+    '--file',
+    target.absoluteDockerfilePath,
+    '--tag',
+    imageUri,
+  ];
   if (platform) args.push('--platform', platform);
   args.push(target.absoluteContextPath);
   const output = await runTool('docker', args, process.cwd());
@@ -514,9 +535,18 @@ async function pushAwsEcrImage(
 
   const startedAt = Date.now();
   const ecrAuthInput = await getEcrLoginPassword();
-  await runToolWithInput('docker', ['login', '--username', 'AWS', '--password-stdin', registry], process.cwd(), `${ecrAuthInput}\n`);
+  await runToolWithInput(
+    'docker',
+    ['login', '--username', 'AWS', '--password-stdin', registry],
+    process.cwd(),
+    `${ecrAuthInput}\n`,
+  );
   const push = await runTool('docker', ['push', imageUri], process.cwd());
-  const inspect = await runTool('docker', ['inspect', '--format', '{{index .RepoDigests 0}}', imageUri], process.cwd()).catch(() => '');
+  const inspect = await runTool(
+    'docker',
+    ['inspect', '--format', '{{index .RepoDigests 0}}', imageUri],
+    process.cwd(),
+  ).catch(() => '');
   const digest = parseImageDigest(inspect);
 
   return {
@@ -551,7 +581,10 @@ function parseImageDigest(output: string): string | null {
   return match ? match[0].slice(1) : null;
 }
 
-async function executeAwsTerraformEcsPlan(operationId: string, input: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function executeAwsTerraformEcsPlan(
+  operationId: string,
+  input: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
   const targetSlug = stringField(input, 'targetSlug');
   const workspaceSlug = stringField(input, 'workspaceSlug');
   const environmentSlug = stringField(input, 'environmentSlug');
@@ -577,7 +610,10 @@ async function executeAwsTerraformEcsPlan(operationId: string, input: Record<str
   if (!workspace) throw new Error('AWS Terraform ECS workspace is not allowlisted.');
 
   const toolStatus = await detectTerraformTool();
-  if (toolStatus.status !== 'CONNECTED' || (toolStatus.tool !== 'terraform' && toolStatus.tool !== 'tofu')) {
+  if (
+    toolStatus.status !== 'CONNECTED' ||
+    (toolStatus.tool !== 'terraform' && toolStatus.tool !== 'tofu')
+  ) {
     throw new Error(toolStatus.message);
   }
 
@@ -623,11 +659,22 @@ async function executeAwsTerraformEcsPlan(operationId: string, input: Record<str
       'utf8',
     );
 
-    const init = await runTool(toolStatus.tool, ['init', '-input=false', '-no-color', `-backend-config=${backendPath}`], tempWorkspace);
+    const init = await runTool(
+      toolStatus.tool,
+      ['init', '-input=false', '-no-color', `-backend-config=${backendPath}`],
+      tempWorkspace,
+    );
     const validate = await runTool(toolStatus.tool, ['validate', '-no-color'], tempWorkspace);
     const plan = await runToolAllowExitCodes(
       toolStatus.tool,
-      ['plan', '-input=false', '-no-color', '-lock=true', '-detailed-exitcode', '-out=autoops.tfplan'],
+      [
+        'plan',
+        '-input=false',
+        '-no-color',
+        '-lock=true',
+        '-detailed-exitcode',
+        '-out=autoops.tfplan',
+      ],
       tempWorkspace,
       [0, 2],
     );
@@ -658,7 +705,10 @@ async function executeAwsTerraformEcsPlan(operationId: string, input: Record<str
       changeCount: safety.changeCount,
       destroyCount: safety.destroyCount,
       riskLevel: guardrails.riskLevel,
-      blockedReasons: [...safety.blockedReasons, ...guardrails.blockedReasons.map((reason) => reason.message)],
+      blockedReasons: [
+        ...safety.blockedReasons,
+        ...guardrails.blockedReasons.map((reason) => reason.message),
+      ],
       warnings: guardrails.warnings.map((warning) => warning.message),
       guardrails,
       applyEligible: safety.applyEligible && guardrails.applyEligible,
@@ -796,13 +846,18 @@ async function executeAwsTerraformEcsApplyGeneric(
       },
     });
     if (!sourcePlan) {
-      throw new Error(`AWS Terraform ECS apply source plan operation ${options.sourcePlanOperationId} not found.`);
+      throw new Error(
+        `AWS Terraform ECS apply source plan operation ${options.sourcePlanOperationId} not found.`,
+      );
     }
     if (sourcePlan.status !== OperationStatus.SUCCEEDED) {
       throw new Error('AWS Terraform ECS apply source plan was not successful.');
     }
 
-    const sourcePlanAgeSeconds = Math.max(0, Math.floor((Date.now() - sourcePlan.updatedAt.getTime()) / 1000));
+    const sourcePlanAgeSeconds = Math.max(
+      0,
+      Math.floor((Date.now() - sourcePlan.updatedAt.getTime()) / 1000),
+    );
     if (sourcePlanAgeSeconds > 24 * 60 * 60) {
       throw new Error('AWS Terraform ECS apply source plan is stale (older than 24 hours).');
     }
@@ -833,7 +888,9 @@ async function executeAwsTerraformEcsApplyGeneric(
       sourceRiskLevel === 'BLOCKED' ||
       sourceGuardrailStatus === 'BLOCKED'
     ) {
-      throw new Error('AWS Terraform ECS apply source plan is blocked by cost or blast-radius guardrails.');
+      throw new Error(
+        'AWS Terraform ECS apply source plan is blocked by cost or blast-radius guardrails.',
+      );
     }
     hasSourcePlan = true;
   }
@@ -842,7 +899,10 @@ async function executeAwsTerraformEcsApplyGeneric(
   if (!workspace) throw new Error('AWS Terraform ECS workspace is not allowlisted.');
 
   const toolStatus = await detectTerraformTool();
-  if (toolStatus.status !== 'CONNECTED' || (toolStatus.tool !== 'terraform' && toolStatus.tool !== 'tofu')) {
+  if (
+    toolStatus.status !== 'CONNECTED' ||
+    (toolStatus.tool !== 'terraform' && toolStatus.tool !== 'tofu')
+  ) {
     throw new Error(toolStatus.message);
   }
 
@@ -889,11 +949,22 @@ async function executeAwsTerraformEcsApplyGeneric(
       'utf8',
     );
 
-    const init = await runTool(toolStatus.tool, ['init', '-input=false', '-no-color', `-backend-config=${backendPath}`], tempWorkspace);
+    const init = await runTool(
+      toolStatus.tool,
+      ['init', '-input=false', '-no-color', `-backend-config=${backendPath}`],
+      tempWorkspace,
+    );
     const validate = await runTool(toolStatus.tool, ['validate', '-no-color'], tempWorkspace);
     const plan = await runToolAllowExitCodes(
       toolStatus.tool,
-      ['plan', '-input=false', '-no-color', '-lock=true', '-detailed-exitcode', '-out=autoops.tfplan'],
+      [
+        'plan',
+        '-input=false',
+        '-no-color',
+        '-lock=true',
+        '-detailed-exitcode',
+        '-out=autoops.tfplan',
+      ],
       tempWorkspace,
       [0, 2],
     );
@@ -925,7 +996,9 @@ async function executeAwsTerraformEcsApplyGeneric(
         safety.applyEligible !== true ||
         safety.riskLevel === 'HIGH'
       ) {
-        throw new Error('New plan summary does not match approved plan summary or has destroy/high risk actions.');
+        throw new Error(
+          'New plan summary does not match approved plan summary or has destroy/high risk actions.',
+        );
       }
     } else {
       if (safety.destroyCount > 0 || safety.applyEligible !== true || safety.riskLevel === 'HIGH') {
@@ -941,7 +1014,10 @@ async function executeAwsTerraformEcsApplyGeneric(
 
     const applyCompletedAt = new Date().toISOString();
 
-    let ecsVerification: AwsEcsVerificationSummary = { status: 'SKIPPED', message: 'AWS clients not created' };
+    let ecsVerification: AwsEcsVerificationSummary = {
+      status: 'SKIPPED',
+      message: 'AWS clients not created',
+    };
     try {
       const region = process.env.AWS_REGION?.trim() || stateRegion;
       const ecs = new ECSClient({ region });
@@ -957,7 +1033,9 @@ async function executeAwsTerraformEcsApplyGeneric(
         const servicesList = await ecs.send(new ListServicesCommand({ cluster: clusterArn }));
         const serviceArns = servicesList.serviceArns ?? [];
 
-        const servicesDetails: NonNullable<AwsEcsVerificationSummary['clusters']>[number]['services'] = [];
+        const servicesDetails: NonNullable<
+          AwsEcsVerificationSummary['clusters']
+        >[number]['services'] = [];
         if (serviceArns.length > 0) {
           const servicesDesc = await ecs.send(
             new DescribeServicesCommand({
@@ -1037,7 +1115,11 @@ async function executeAwsTerraformEcsApplyGeneric(
     });
 
     return {
-      action: options.rolledBackFromReleaseId ? 'ecs-rollback' : options.promotedFromReleaseId ? 'ecs-promote' : 'ecs-apply',
+      action: options.rolledBackFromReleaseId
+        ? 'ecs-rollback'
+        : options.promotedFromReleaseId
+          ? 'ecs-promote'
+          : 'ecs-apply',
       operationId,
       targetSlug,
       environmentSlug,
@@ -1053,7 +1135,9 @@ async function executeAwsTerraformEcsApplyGeneric(
       result: 'succeeded',
       ecsVerification,
       approvalReference: `Approved by user ID: ${approvedByUserId ?? 'unknown'} at ${approvedAt.toISOString()}`,
-      safeOutputSummary: summarizeCommandOutput(`${init}\n${validate}\n${plan.output}\n${applyOutput}`),
+      safeOutputSummary: summarizeCommandOutput(
+        `${init}\n${validate}\n${plan.output}\n${applyOutput}`,
+      ),
       status: 'completed',
       completedAt: applyCompletedAt,
     };
@@ -1077,7 +1161,10 @@ async function executeTerraformOperation(
   if (!workspace) throw new Error('Terraform workspace is not allowlisted.');
 
   const toolStatus = await detectTerraformTool();
-  if (toolStatus.status !== 'CONNECTED' || (toolStatus.tool !== 'terraform' && toolStatus.tool !== 'tofu')) {
+  if (
+    toolStatus.status !== 'CONNECTED' ||
+    (toolStatus.tool !== 'terraform' && toolStatus.tool !== 'tofu')
+  ) {
     throw new Error(toolStatus.message);
   }
 
@@ -1097,7 +1184,11 @@ async function executeTerraformOperation(
   const tempWorkspace = path.join(tempRoot, workspace.slug);
   try {
     await cp(workspace.absolutePath, tempWorkspace, { recursive: true });
-    const init = await runTool(toolStatus.tool, ['init', '-backend=false', '-input=false', '-no-color'], tempWorkspace);
+    const init = await runTool(
+      toolStatus.tool,
+      ['init', '-backend=false', '-input=false', '-no-color'],
+      tempWorkspace,
+    );
     const args =
       action === 'validate'
         ? ['validate', '-no-color']
@@ -1178,7 +1269,8 @@ async function runTool(command: string, args: string[], cwd: string): Promise<st
     const record = toRecord(error);
     const stdout = typeof record.stdout === 'string' ? record.stdout : '';
     const stderr = typeof record.stderr === 'string' ? record.stderr : '';
-    const message = error instanceof Error ? error.message : 'Infrastructure tool execution failed.';
+    const message =
+      error instanceof Error ? error.message : 'Infrastructure tool execution failed.';
     throw new Error(summarizeCommandOutput(`${message}\n${stdout}\n${stderr}`, 1_000));
   }
 }
@@ -1206,7 +1298,8 @@ async function runToolAllowExitCodes(
     if (allowedExitCodes.includes(code)) {
       return { output: `${stdout}\n${stderr}`, exitCode: code };
     }
-    const message = error instanceof Error ? error.message : 'Infrastructure tool execution failed.';
+    const message =
+      error instanceof Error ? error.message : 'Infrastructure tool execution failed.';
     throw new Error(summarizeCommandOutput(`${message}\n${stdout}\n${stderr}`, 1_000));
   }
 }
@@ -1227,7 +1320,12 @@ function safeToolEnv(): NodeJS.ProcessEnv {
   };
 }
 
-async function runToolWithInput(command: string, args: string[], cwd: string, input: string): Promise<string> {
+async function runToolWithInput(
+  command: string,
+  args: string[],
+  cwd: string,
+  input: string,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
@@ -1248,11 +1346,13 @@ async function runToolWithInput(command: string, args: string[], cwd: string, in
 
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf8');
-      if (stdout.length > getInfrastructureOutputLimit() * 4) stdout = stdout.slice(-getInfrastructureOutputLimit() * 4);
+      if (stdout.length > getInfrastructureOutputLimit() * 4)
+        stdout = stdout.slice(-getInfrastructureOutputLimit() * 4);
     });
     child.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
-      if (stderr.length > getInfrastructureOutputLimit() * 4) stderr = stderr.slice(-getInfrastructureOutputLimit() * 4);
+      if (stderr.length > getInfrastructureOutputLimit() * 4)
+        stderr = stderr.slice(-getInfrastructureOutputLimit() * 4);
     });
     child.on('error', (error) => {
       clearTimeout(timer);
@@ -1264,14 +1364,27 @@ async function runToolWithInput(command: string, args: string[], cwd: string, in
         resolve(`${stdout}\n${stderr}`);
         return;
       }
-      reject(new Error(summarizeCommandOutput(`Tool failed with exit code ${code}.\n${stdout}\n${stderr}`, 1_000)));
+      reject(
+        new Error(
+          summarizeCommandOutput(
+            `Tool failed with exit code ${code}.\n${stdout}\n${stderr}`,
+            1_000,
+          ),
+        ),
+      );
     });
     child.stdin.write(input);
     child.stdin.end();
   });
 }
 
-async function triggerJenkinsBuild(input: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function triggerJenkinsBuild(
+  input: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const configuration = getWorkerJenkinsConfiguration();
+  if (!configuration) {
+    throw new Error('Jenkins is disabled or not configured for the worker.');
+  }
   const jobName = stringField(input, 'jobName');
   const allowedJobs = parseAllowedJobs(process.env.JENKINS_ALLOWED_JOBS);
   if (!allowedJobs.length) {
@@ -1281,7 +1394,7 @@ async function triggerJenkinsBuild(input: Record<string, unknown>): Promise<Reco
     throw new Error('Jenkins job is not allowlisted for AutoOps triggering.');
   }
   const parameters = toStringRecord(input.parameters);
-  const client = new WorkerJenkinsClient();
+  const client = new WorkerJenkinsClient(configuration);
   const trigger = await client.triggerBuild(jobName, parameters);
   const startedAt = Date.now();
 
@@ -1323,7 +1436,8 @@ async function triggerJenkinsBuild(input: Record<string, unknown>): Promise<Reco
     triggerAccepted: true,
     queueUrl: trigger.queueUrl,
     buildVerified: false,
-    message: 'Jenkins build was queued, but no executable build was observed before the poll timeout.',
+    message:
+      'Jenkins build was queued, but no executable build was observed before the poll timeout.',
   };
 }
 
@@ -1347,7 +1461,32 @@ type JenkinsCrumb = {
   crumb: string;
 };
 
-class WorkerJenkinsClient {
+export type WorkerJenkinsConfiguration = {
+  baseUrl: string;
+  username: string;
+  token: import('@autoops/utils').SecretValue;
+  timeoutMs: number;
+  pollTimeoutMs: number;
+  pollIntervalMs: number;
+};
+
+export function getWorkerJenkinsConfiguration(): WorkerJenkinsConfiguration | null {
+  if (!env.JENKINS_INTEGRATION_ENABLED) return null;
+  const baseUrl = process.env.JENKINS_URL?.trim().replace(/\/+$/, '');
+  const username = process.env.JENKINS_USERNAME?.trim();
+  const token = getWorkerJenkinsApiToken();
+  if (!baseUrl || !username || !token) return null;
+  return {
+    baseUrl,
+    username,
+    token,
+    timeoutMs: positiveNumberEnv('JENKINS_REQUEST_TIMEOUT_MS', 10_000),
+    pollTimeoutMs: positiveNumberEnv('JENKINS_TRIGGER_POLL_TIMEOUT_MS', 120_000),
+    pollIntervalMs: positiveNumberEnv('JENKINS_TRIGGER_POLL_INTERVAL_MS', 2_000),
+  };
+}
+
+export class WorkerJenkinsClient {
   readonly baseUrl: string;
   readonly username: string;
   readonly token: string;
@@ -1355,19 +1494,13 @@ class WorkerJenkinsClient {
   readonly pollTimeoutMs: number;
   readonly pollIntervalMs: number;
 
-  constructor() {
-    const baseUrl = process.env.JENKINS_URL?.trim().replace(/\/+$/, '');
-    const username = process.env.JENKINS_USERNAME?.trim();
-    const token = process.env.JENKINS_API_TOKEN?.trim();
-    if (!baseUrl || !username || !token) {
-      throw new Error('Jenkins is not configured for the worker.');
-    }
-    this.baseUrl = baseUrl;
-    this.username = username;
-    this.token = token;
-    this.timeoutMs = positiveNumberEnv('JENKINS_REQUEST_TIMEOUT_MS', 10_000);
-    this.pollTimeoutMs = positiveNumberEnv('JENKINS_TRIGGER_POLL_TIMEOUT_MS', 120_000);
-    this.pollIntervalMs = positiveNumberEnv('JENKINS_TRIGGER_POLL_INTERVAL_MS', 2_000);
+  constructor(configuration: WorkerJenkinsConfiguration) {
+    this.baseUrl = configuration.baseUrl;
+    this.username = configuration.username;
+    this.token = configuration.token.revealForUse();
+    this.timeoutMs = configuration.timeoutMs;
+    this.pollTimeoutMs = configuration.pollTimeoutMs;
+    this.pollIntervalMs = configuration.pollIntervalMs;
   }
 
   async triggerBuild(
@@ -1393,7 +1526,9 @@ class WorkerJenkinsClient {
   }
 
   async getQueueItem(queueUrl: string): Promise<JenkinsQueueItem> {
-    return this.getJson<JenkinsQueueItem>(`${queueUrl.replace(/\/+$/, '')}/api/json?tree=cancelled,executable[number,url]`);
+    return this.getJson<JenkinsQueueItem>(
+      `${queueUrl.replace(/\/+$/, '')}/api/json?tree=cancelled,executable[number,url]`,
+    );
   }
 
   async getBuild(jobName: string, buildNumber: number): Promise<JenkinsBuildResult> {
@@ -1452,9 +1587,7 @@ class WorkerJenkinsClient {
 
 function toStringRecord(value: unknown): Record<string, string> {
   const record = toRecord(value);
-  return Object.fromEntries(
-    Object.entries(record).map(([key, item]) => [key, String(item)]),
-  );
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, String(item)]));
 }
 
 function positiveNumberEnv(key: string, fallback: number): number {

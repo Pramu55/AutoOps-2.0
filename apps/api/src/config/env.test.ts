@@ -3,13 +3,8 @@ import { describe, expect, it } from 'vitest';
 process.env.NODE_ENV = 'test';
 process.env.DATABASE_URL = 'postgresql://autoops:autoops_dev@localhost:5432/autoops';
 process.env.REDIS_URL = 'redis://localhost:6379';
-process.env[`JWT_${'SECRET'}`] = 'test-access-secret-at-least-32-characters';
-process.env[`JWT_REFRESH_${'SECRET'}`] = 'test-refresh-secret-at-least-32-characters';
 
 const { parseEnv } = await import('./env.js');
-
-const strongAccessSecret = 'prod-access-secret-with-strong-random-value-12345';
-const strongRefreshSecret = 'prod-refresh-secret-with-strong-random-value-67890';
 
 function baseEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   return {
@@ -19,8 +14,6 @@ function baseEnv(overrides: Record<string, string | undefined> = {}): NodeJS.Pro
     CORS_ORIGINS: 'https://app.example.invalid',
     DATABASE_URL: 'postgresql://autoops:strong-password@postgres:5432/autoops',
     REDIS_URL: 'redis://redis:6379',
-    JWT_SECRET: strongAccessSecret,
-    JWT_REFRESH_SECRET: strongRefreshSecret,
     ...overrides,
   };
 }
@@ -49,8 +42,6 @@ describe('environment validation', () => {
       NODE_ENV: 'development',
       DATABASE_URL: 'postgresql://autoops:autoops_dev@localhost:5432/autoops',
       REDIS_URL: 'redis://localhost:6379',
-      JWT_SECRET: 'local-placeholder-access-secret-32-chars',
-      JWT_REFRESH_SECRET: 'local-placeholder-refresh-secret-32-chars',
     });
 
     expect(parsed.API_PUBLIC_URL).toBe('http://localhost:4000');
@@ -187,22 +178,9 @@ describe('environment validation', () => {
     ).toEqual(['https://app.example.invalid', 'https://admin.example.invalid']);
   });
 
-  it('production rejects placeholder JWT secrets', () => {
-    expectEnvError(
-      baseEnv({ JWT_SECRET: 'replace-me-access-secret-with-32-chars' }),
-      'JWT_SECRET',
-      'non-placeholder',
-    );
-  });
-
-  it('production rejects identical JWT access and refresh secrets', () => {
-    expectEnvError(
-      baseEnv({
-        JWT_SECRET: strongAccessSecret,
-        JWT_REFRESH_SECRET: strongAccessSecret,
-      }),
-      'JWT_REFRESH_SECRET',
-      'different from JWT_SECRET',
-    );
+  it('defaults the SecretProvider to backward-compatible environment mode', () => {
+    const parsed = parseEnv(baseEnv());
+    expect(parsed.SECRET_PROVIDER_MODE).toBe('env');
+    expect(parsed.SECRET_PROVIDER_ROOT).toBe('/run/secrets/autoops');
   });
 });

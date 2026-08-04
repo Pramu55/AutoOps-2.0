@@ -1,6 +1,8 @@
 import type { Request, Response } from 'express';
 import { prisma } from '@autoops/database';
+import type { SecretProviderReadiness } from '@autoops/utils';
 import { redis } from '../../lib/redis.js';
+import { getSecretProviderReadiness } from '../../config/application-secrets.js';
 
 type HealthResponse = {
   status: 'ok';
@@ -16,6 +18,10 @@ type ReadyResponse = {
     postgres: ReadyCheckStatus;
     redis: ReadyCheckStatus;
   };
+  secretProvider: Pick<
+    SecretProviderReadiness,
+    'mode' | 'status' | 'requiredMissingCount' | 'optionalUnavailableCount'
+  >;
 };
 
 export class HealthController {
@@ -47,10 +53,12 @@ export class HealthController {
     }
 
     const isReady = checks.postgres === 'ok' && checks.redis === 'ok';
+    const secretProvider = getSecretProviderReadiness();
 
     res.status(isReady ? 200 : 503).json({
       status: isReady ? 'ready' : 'not_ready',
       checks,
+      secretProvider,
     });
   };
 }
