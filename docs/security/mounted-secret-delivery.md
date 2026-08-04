@@ -12,7 +12,10 @@ explicit core overlay, which changes secret delivery only for the API and
 worker:
 
 - `docker-compose.secrets-core.yml` mounts API JWT files and sets both API and
-  worker `SECRET_PROVIDER_MODE=file` with root `/run/secrets/autoops`.
+  worker `SECRET_PROVIDER_MODE=file` with root `/run/secrets/autoops`. It
+  replaces the base `.env` with the required external, non-secret
+  `AUTOOPS_FILE_MODE_ENV_FILE` and explicitly removes the four migrated
+  application-secret variables from both service environments.
 - `docker-compose.secrets-github.yml` is an additional API-only GitHub Actions
   token mount. Use it only when GitHub Actions is enabled through approved
   non-secret configuration.
@@ -21,10 +24,20 @@ worker:
   disabled unless separately approved.
 
 The core overlay requires external host-file path variables for `jwt-access`
-and `jwt-refresh`. Optional integration overlays require their own external
-path variable. Compose bind mounts are read-only and refuse to create missing
-host paths. Keep host files outside the tracked repository; never place them in
-an image, build argument, label, command, or Compose file.
+and `jwt-refresh`, plus `AUTOOPS_FILE_MODE_ENV_FILE` for the non-secret
+runtime configuration normally supplied by `.env`. Optional integration
+overlays require their own external path variable. Compose bind mounts are
+read-only and refuse to create missing host paths. Keep every host file outside
+the tracked repository; never place them in an image, build argument, label,
+command, or Compose file.
+
+The core overlay uses Compose's `!override` tag to replace, rather than append
+to, the base `env_file` list. Null environment entries remove inherited
+`JWT_SECRET`, `JWT_REFRESH_SECRET`, `GITHUB_ACTIONS_TOKEN`, and
+`JENKINS_API_TOKEN`. Consequently, the API receives JWT values only from its
+two mounted files in file mode, while the worker receives neither JWT nor
+GitHub credentials. The GitHub file is mounted only by its API overlay; the
+Jenkins file is mounted only by its dedicated API-and-worker overlay.
 
 ## Fixed mounted filenames
 
@@ -46,10 +59,21 @@ even if the optional Jenkins overlay is not selected.
 ## Structural validation
 
 `scripts/validate-mounted-secret-delivery.ps1` validates metadata only. It
-checks configured path variables, regular-file type, fixed filename mapping,
-duplicate source paths, tracked/ignored repository placement, and Jenkins
-overlay gating. It never opens a secret file or prints content, length, hash,
-prefix, or suffix. Its `-SelfTest` mode uses only temporary empty files.
+accepts a normalized overlay set, for example `-Overlay core,github,jenkins`;
+`core` is implied when an optional overlay is selected. It rejects duplicate or
+unknown selections. An enabled GitHub or Jenkins integration requires its
+matching overlay and source path. Conversely, selecting an optional credential
+overlay while that integration is disabled is rejected to avoid needless
+credential exposure.
+
+The validator checks configured path variables, regular-file type, fixed
+filename mapping, duplicate canonical source paths, and integration/overlay
+agreement. It rejects final-file and parent-directory symbolic links,
+junctions, reparse points, and repository-contained canonical targets before
+any Git tracking check. It never opens a secret file or prints content, length,
+hash, prefix, suffix, or path. Its `-RunSelfTest` mode uses only temporary empty
+files and includes deterministic metadata-seam coverage for link-target
+bypass rejection.
 
 Run the validator before any controlled activation and use `docker compose
 config` with the selected explicit overlay(s). These checks render structure
