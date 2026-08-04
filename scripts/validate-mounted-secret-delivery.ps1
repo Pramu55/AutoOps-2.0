@@ -238,7 +238,16 @@ function Test-PathContainsGitMetadata([string]$Path) {
   }
 }
 
-function Invoke-GitQuietly([string]$WorkingDirectory, [string[]]$Arguments) {
+function Get-GitArgumentVector([string]$WorkingDirectory, [string[]]$Arguments, [switch]$LiteralPathspecs) {
+  $vector = New-Object System.Collections.Generic.List[string]
+  if ($LiteralPathspecs) { $vector.Add('--literal-pathspecs') }
+  $vector.Add('-C')
+  $vector.Add($WorkingDirectory)
+  foreach ($argument in $Arguments) { $vector.Add($argument) }
+  return @{ Arguments = [string[]]$vector.ToArray(); UsesLiteralPathspecs = $LiteralPathspecs.IsPresent }
+}
+
+function Invoke-GitQuietly([string]$WorkingDirectory, [string[]]$Arguments, [switch]$LiteralPathspecs) {
   $isolationVariables = @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM')
   $saved = @{}
   foreach ($name in $isolationVariables) {
@@ -251,8 +260,9 @@ function Invoke-GitQuietly([string]$WorkingDirectory, [string[]]$Arguments) {
   try {
     $ErrorActionPreference = 'Continue'
     if ($null -ne $nativePreferenceVariable) { $PSNativeCommandUseErrorActionPreference = $false }
-    $output = @(& git -C $WorkingDirectory @Arguments 2>$null)
-    return @{ Invoked = $true; ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine) }
+    $invocation = Get-GitArgumentVector $WorkingDirectory $Arguments -LiteralPathspecs:$LiteralPathspecs
+    $output = @(& git @($invocation.Arguments) 2>$null)
+    return @{ Invoked = $true; ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine); UsesLiteralPathspecs = $invocation.UsesLiteralPathspecs }
   } catch {
     return @{ Invoked = $false; ExitCode = $null; Output = $null }
   } finally {
@@ -288,12 +298,16 @@ function Get-SourceGitWorktreeStatus([string]$CanonicalPath) {
     return 'UNKNOWN'
   }
 
-  $trackingProbe = Invoke-GitQuietly $worktreeRoot @('ls-files', '--error-unmatch', '--', $relativePath)
+  $trackingProbe = Invoke-GitQuietly $worktreeRoot @('ls-files', '--error-unmatch', '--', $relativePath) -LiteralPathspecs
   if (-not $trackingProbe.Invoked) { return 'UNKNOWN' }
   if ($trackingProbe.ExitCode -eq 0) { return 'TRACKED' }
   if ($trackingProbe.ExitCode -ne 1) { return 'UNKNOWN' }
 
-  $ignoreProbe = Invoke-GitQuietly $worktreeRoot @('check-ignore', '-q', '--', $relativePath)
+  # check-ignore rejects --literal-pathspecs on the installed Git version.
+  # Prefixing the worktree-relative name with ./ prevents a leading : from
+  # being parsed as pathspec magic while retaining the literal pathname.
+  $literalIgnorePath = "./$relativePath"
+  $ignoreProbe = Invoke-GitQuietly $worktreeRoot @('check-ignore', '-q', '--', $literalIgnorePath)
   if (-not $ignoreProbe.Invoked) { return 'UNKNOWN' }
   if ($ignoreProbe.ExitCode -eq 0) { return 'UNTRACKED_IGNORED' }
   if ($ignoreProbe.ExitCode -eq 1) { return 'UNTRACKED_NOT_IGNORED' }
@@ -525,6 +539,13 @@ function Invoke-SelfTest {
     $env:JENKINS_INTEGRATION_ENABLED = 'true'
 
     $passed = $true
+    $literalLsFiles = Get-GitArgumentVector $temporaryRoot @('ls-files', '--error-unmatch', '--', ':(top)literal/jwt-access') -LiteralPathspecs
+    $literalCheckIgnore = Get-GitArgumentVector $temporaryRoot @('check-ignore', '-q', '--', './:(top)literal/jwt-access')
+    $literalVectorValid = $literalLsFiles.UsesLiteralPathspecs -and
+      $literalCheckIgnore.Arguments[-1].StartsWith('./', [StringComparison]::Ordinal) -and
+      $literalLsFiles.Arguments[0] -eq '--literal-pathspecs'
+    if (-not $literalVectorValid) { $passed = $false }
+    Write-Result 'SELF_TEST_LITERAL_PATHSPEC_ARGUMENTS' $(if ($literalVectorValid) { 'PASS' } else { 'FAIL' }) $literalVectorValid
     $outsideGitStatus = Get-SourceGitWorktreeStatus $runtimeFile
     if ($outsideGitStatus -ne 'OUTSIDE') { $passed = $false }
     Write-Result 'SELF_TEST_GIT_OUTSIDE' $outsideGitStatus ($outsideGitStatus -eq 'OUTSIDE')
@@ -629,6 +650,7 @@ function Invoke-SelfTest {
     $nestedRepository = Join-Path $outerRepository 'nested-repository'
     $worktreeRepository = Join-Path $temporaryGitRoot 'worktree-repository'
     $neighborWorktree = Join-Path $temporaryGitRoot 'neighbor-worktree'
+    $literalMagicRepository = Join-Path $temporaryGitRoot 'literal-pathspec-repository'
     New-Item -ItemType Directory -Path $temporaryGitRoot | Out-Null
     $gitTestStage = 'INITIALIZE'
     try {
@@ -636,6 +658,25 @@ function Invoke-SelfTest {
         New-Item -ItemType Directory -Path $repository -Force | Out-Null
         $null = & git -C $repository init -q 2>$null
         if ($LASTEXITCODE -ne 0) { throw 'Temporary Git repository initialization failed.' }
+      }
+
+      if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)) {
+        $gitTestStage = 'LITERAL_MAGIC'
+        New-Item -ItemType Directory -Path $literalMagicRepository -Force | Out-Null
+        $null = Invoke-GitQuietly $literalMagicRepository @('init', '-q')
+        $magicDirectory = Join-Path $literalMagicRepository ':(top)literal'
+        New-Item -ItemType Directory -Path $magicDirectory | Out-Null
+        $magicSource = Join-Path $magicDirectory 'jwt-access'
+        New-Item -ItemType File -Path $magicSource | Out-Null
+        [IO.File]::WriteAllText((Join-Path $literalMagicRepository '.gitignore'), 'literal/jwt-access', [Text.UTF8Encoding]::new($false))
+        $relativeMagicSource = ':(top)literal/jwt-access'
+        $literalAdd = Invoke-GitQuietly $literalMagicRepository @('add', '--', $relativeMagicSource) -LiteralPathspecs
+        if (-not $literalAdd.Invoked -or $literalAdd.ExitCode -ne 0) { throw 'Temporary literal pathspec staging failed.' }
+        $originalJwtAccess = $env:AUTOOPS_SECRET_JWT_ACCESS_FILE
+        $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $magicSource
+        if (Test-Overlay @('core', 'github', 'jenkins') $null) { $passed = $false }
+        $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $originalJwtAccess
+        Write-Result 'SELF_TEST_LITERAL_PATHSPEC_LINUX' 'REJECTED' $true
       }
 
       $trackedSource = Join-Path $trackedRepository 'jwt-access'

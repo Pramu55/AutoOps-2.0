@@ -91,6 +91,12 @@ exit-status checks are then evaluated against each source's own discovered
 worktree: tracked sources are rejected, while untracked sources inside a
 worktree are accepted only when ignored. Normal sources outside every Git
 worktree remain valid; ambiguous Git metadata or command failures fail closed.
+For source-specific `ls-files` probes, Git is invoked with
+`--literal-pathspecs` before the worktree selection. `check-ignore` rejects
+that global mode on the supported Git version, so its relative pathname is
+anchored with `./`; this prevents a leading `:` from being parsed as pathspec
+magic. The validator relies on Git exit statuses and never prints the source
+path or worktree root.
 
 It never opens a mounted secret file or prints content, length, hash, prefix,
 suffix, filesystem identifiers, or paths. Its `-RunSelfTest` mode uses only
