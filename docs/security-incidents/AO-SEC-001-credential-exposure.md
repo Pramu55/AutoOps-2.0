@@ -2,17 +2,20 @@
 
 ## Incident metadata
 
-| Field                      | Value                               |
-| -------------------------- | ----------------------------------- |
-| Incident ID                | AO-SEC-001                          |
-| Detected                   | 2026-08-03                          |
-| Project                    | AutoOps                             |
-| Severity                   | HIGH                                |
-| Current status             | PARTIALLY CLOSED                    |
-| Local remediation          | COMPLETE                            |
-| Remote provider revocation | PENDING                             |
-| Remediation branch         | `security/ao-sec-001-local-closure` |
-| Remediation commit         | `9b898b6`                           |
+| Field                              | Value                               |
+| ---------------------------------- | ----------------------------------- |
+| Incident ID                        | AO-SEC-001                          |
+| Detected                           | 2026-08-03                          |
+| Project                            | AutoOps                             |
+| Severity                           | HIGH                                |
+| Current status                     | PARTIALLY CLOSED                    |
+| Local remediation                  | COMPLETE                            |
+| GitHub remote remediation          | COMPLETE                            |
+| Jenkins active exposure            | CONTAINED                           |
+| Jenkins controller-side revocation | NOT VERIFIED                        |
+| Preserved Jenkins state            | QUARANTINED                         |
+| Remediation branch                 | `security/ao-sec-001-local-closure` |
+| Remediation commit                 | `9b898b6`                           |
 
 ## Summary
 
@@ -29,9 +32,15 @@ printed, copied into evidence, committed, or reused during remediation.
 The identified credentials could have been exposed to a person or process able
 to inspect the local `.env` file or affected container environment.
 
-This remediation did not establish unauthorized use of any credential. Remote
-GitHub and Jenkins revocation and provider-side verification remain required
-before the incident can be fully closed.
+This remediation did not establish unauthorized use of any credential. GitHub
+remote revocation, available token-management activity review, and validation
+of a least-privilege replacement are complete. The available review found no
+suspicious token-management action, but it does not prove that the previous
+token was never misused.
+
+Jenkins controller-side revocation remains unverified. Latent risk exists only
+if the quarantined Jenkins state is restored before the previous Jenkins API
+token is revoked from the recovered issuing controller.
 
 No verified AWS resource access, AWS mutation, public deployment change, Git
 history rewrite or cloud infrastructure change occurred as part of this work.
@@ -48,15 +57,24 @@ history rewrite or cloud infrastructure change occurred as part of this work.
 - Hard-coded PostgreSQL credentials in `docker-compose.yml`
 - Hard-coded Grafana credentials in `docker-compose.yml`
 
-### Pending remote action
+### Completed GitHub remote actions
 
-- Revoke the previous GitHub personal access token through GitHub.
-- Review provider-side token activity where available.
-- Create a least-privilege replacement only when the integration is intentionally
-  re-enabled.
-- Revoke the previous Jenkins API token when the Jenkins controller is available.
-- Create a least-privilege Jenkins replacement only when the integration is
-  intentionally re-enabled.
+- Revoked the previous fine-grained GitHub tokens.
+- Revoked the previous GitHub classic token.
+- Reviewed available GitHub token-management activity; no suspicious
+  token-management action was observed in the reviewed log.
+- Created and validated a repository-scoped least-privilege replacement with
+  Actions read-only and required Metadata read-only permissions.
+- Re-enabled the GitHub Actions integration only after revocation, replacement,
+  and validation; it is connected.
+
+### Remaining Jenkins action
+
+- Revoke the previous Jenkins API token from a safely recovered issuing
+  controller.
+- Do not enable the AutoOps Jenkins integration, publish Jenkins, or trigger a
+  Jenkins job before that revocation is verified.
+- Any replacement Jenkins credential requires separate authorization.
 
 No replacement token may be committed, pasted into chat, stored in incident
 evidence, or included in screenshots.
@@ -75,14 +93,18 @@ Grafana credentials.
 1. Rotated the local PostgreSQL application password.
 2. Rotated the local Grafana administrator password.
 3. Generated distinct replacement JWT access and refresh secrets.
-4. Cleared local GitHub token configuration.
-5. Disabled the GitHub integration pending remote revocation and replacement.
-6. Cleared local Jenkins token configuration.
-7. Disabled the Jenkins integration pending controller availability, revocation
-   and replacement.
-8. Preserved all replacement values only in the ignored local `.env`.
-9. Recreated only the API, worker and Grafana services.
-10. Preserved PostgreSQL and Redis data and protected Docker volumes.
+4. Cleared local GitHub token configuration and disabled the GitHub integration
+   during initial containment.
+5. Revoked the previous GitHub tokens, reviewed available token-management
+   activity, and validated a repository-scoped least-privilege replacement.
+6. Re-enabled the GitHub Actions integration only after the completed GitHub
+   remediation and validation; the integration is connected.
+7. Cleared local Jenkins token configuration.
+8. Kept the Jenkins integration disabled pending safe controller recovery and
+   verified revocation of the previous Jenkins API token.
+9. Preserved all replacement values only in the ignored local `.env`.
+10. Recreated only the API, worker and Grafana services.
+11. Preserved PostgreSQL and Redis data and protected Docker volumes.
 
 ## Source hardening completed
 
@@ -148,7 +170,10 @@ managed or mounted-file secret-provider boundary for all runtime components.
 ### Completed
 
 - Rotate local affected credentials.
-- Disable integrations whose remote tokens remain pending.
+- Disable GitHub during initial containment, then re-enable it only after
+  revocation, least-privilege replacement, and validation completed.
+- Keep Jenkins disabled because controller-side revocation of the previous
+  Jenkins API token remains unverified.
 - Remove fixed PostgreSQL and Grafana credentials from tracked Compose.
 - Require sensitive local values through ignored configuration.
 - Validate runtime health after targeted service recreation.
@@ -170,25 +195,34 @@ managed or mounted-file secret-provider boundary for all runtime components.
 
 ## Closure criteria
 
-AO-SEC-001 may be marked fully closed only after:
+### Completed closure evidence
 
-1. The previous GitHub PAT is remotely revoked.
-2. GitHub provider-side status or activity is reviewed where available.
-3. The previous Jenkins API token is remotely revoked when Jenkins is available.
-4. Both integrations remain disabled until approved fresh credentials exist.
-5. Any fresh credentials use least privilege and remain only in approved local
-   or managed secret storage.
-6. Re-enabled integrations return a secret-safe successful status.
-7. Full AutoOps release checks pass.
-8. The final pull request contains no credential values or unsafe evidence.
+- GitHub remote revocation is complete.
+- Available GitHub token-management activity was reviewed.
+- The repository-scoped least-privilege GitHub replacement was validated.
+- The GitHub Actions integration is connected safely.
+- Local credential rotations and source hardening are complete.
+- Repository secret scanning and applicable release checks passed.
+
+### Remaining closure blocker
+
+The previous Jenkins API token must be revoked from the issuing controller only
+after separately approved, safe recovery of the quarantined Jenkins state.
+
+### Continuing security gates
+
+- Do not enable the AutoOps Jenkins integration before verified revocation.
+- Do not publish Jenkins beyond localhost before verified revocation.
+- Do not execute Jenkins jobs before verified revocation.
+- Do not include secret values or unsafe evidence in the final pull request.
 
 ## Current conclusion
 
 Local exposure containment and source hardening are complete.
 
-GitHub remediation is complete: previous GitHub tokens were revoked, the
-least-privilege replacement was validated, and the GitHub Actions integration
-is connected.
+GitHub remediation is complete: previous GitHub tokens were revoked, available
+token-management activity was reviewed, the least-privilege replacement was
+validated, and the GitHub Actions integration is connected.
 
 The incident remains `PARTIALLY CLOSED` because controller-side revocation of
 the previous Jenkins API token cannot be safely verified.
@@ -211,7 +245,7 @@ intentionally stopped rather than risking the preserved controller state.
 Both original and backup Jenkins volumes remain detached and quarantined, and
 port 8080 remains closed. The AutoOps Jenkins integration remains disabled,
 and sanitized configuration verification confirms the local Jenkins token is
-absent or empty. No replacement Jenkins token was generated.
+empty. No replacement Jenkins token was generated.
 
 The previous Jenkins API token was not controller-side revoked because the
 issuing controller could not be safely recovered. Active exposure is contained,
