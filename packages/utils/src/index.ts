@@ -5,6 +5,7 @@ export * from './async.js';
 export * from './ids.js';
 export * from './metadata.js';
 export * from './redact.js';
+export * from './secret-provider.js';
 
 export * from './infrastructure-catalog.js';
 export * from './aws-ecr-catalog.js';

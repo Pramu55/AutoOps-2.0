@@ -2,27 +2,12 @@ import net from 'node:net';
 import { z } from 'zod';
 import { loadEnv } from '@autoops/utils';
 
-const PLACEHOLDER_SECRET_PATTERNS = [
-  /change-me/i,
-  /replace-me/i,
-  /please-change/i,
-  /local-only/i,
-  /autoops_dev/i,
-  /^secret$/i,
-  /^password$/i,
-  /^default$/i,
-];
-
 const BLOCKED_PUBLIC_HOSTNAMES = new Set([
   'localhost',
   '0.0.0.0',
   '127.0.0.1',
   'host.docker.internal',
 ]);
-
-function isPlaceholderSecret(value: string): boolean {
-  return PLACEHOLDER_SECRET_PATTERNS.some((pattern) => pattern.test(value));
-}
 
 function parseUrl(value: string): URL | null {
   try {
@@ -186,10 +171,34 @@ const envSchema = z
     DATABASE_URL: z.string().url(),
     REDIS_URL: z.string().url(),
 
-    JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
-    JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 characters'),
+    SECRET_PROVIDER_MODE: z.enum(['env', 'file']).default('env'),
+    SECRET_PROVIDER_ROOT: z.string().min(1).default('/run/secrets/autoops'),
+
     JWT_ACCESS_TTL: z.string().default('15m'),
     JWT_REFRESH_TTL: z.string().default('7d'),
+
+    GITHUB_ACTIONS_ENABLED: z
+      .string()
+      .optional()
+      .default('false')
+      .transform((value) => value === 'true' || value === '1'),
+    GITHUB_REPOSITORY_OWNER: z.string().default('Pramu55'),
+    GITHUB_REPOSITORY_NAME: z.string().default('AutoOps-2.0'),
+    GITHUB_ACTIONS_ALLOWED_WORKFLOWS: z
+      .string()
+      .default('ci.yml')
+      .transform((value) =>
+        value
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ),
+
+    JENKINS_INTEGRATION_ENABLED: z
+      .string()
+      .optional()
+      .default('false')
+      .transform((value) => value === 'true' || value === '1'),
 
     ARGON2_MEMORY_COST: z.coerce.number().int().min(8192).default(19456),
     ARGON2_TIME_COST: z.coerce.number().int().min(1).default(2),
@@ -250,24 +259,6 @@ const envSchema = z
       for (const origin of value.CORS_ORIGINS) {
         validateProductionCorsOrigin(ctx, origin);
       }
-    }
-
-    for (const key of ['JWT_SECRET', 'JWT_REFRESH_SECRET'] as const) {
-      if (isPlaceholderSecret(value[key])) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [key],
-          message: `${key} must be a strong non-placeholder value in production`,
-        });
-      }
-    }
-
-    if (value.JWT_SECRET === value.JWT_REFRESH_SECRET) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['JWT_REFRESH_SECRET'],
-        message: 'JWT_REFRESH_SECRET must be different from JWT_SECRET in production',
-      });
     }
   });
 

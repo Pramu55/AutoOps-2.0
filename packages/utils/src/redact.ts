@@ -1,3 +1,5 @@
+import { SecretValue } from './secret-provider.js';
+
 const REDACTED = '[REDACTED]';
 
 const SENSITIVE_KEY_PARTS = [
@@ -24,9 +26,23 @@ export function redactSecrets<T>(value: T): T | string {
   const seen = new WeakSet<object>();
 
   function visit(input: unknown): unknown {
+    if (input instanceof SecretValue) return REDACTED;
     if (input === null || typeof input !== 'object') return input;
     if (seen.has(input)) return '[Circular]';
     seen.add(input);
+
+    if (input instanceof URL) {
+      const copy = new URL(input.toString());
+      if (copy.username || copy.password) {
+        copy.username = REDACTED;
+        copy.password = REDACTED;
+      }
+      return copy.toString();
+    }
+
+    if (input instanceof Error) {
+      return { name: input.name, message: REDACTED };
+    }
 
     if (Array.isArray(input)) {
       return input.map((item) => visit(item));

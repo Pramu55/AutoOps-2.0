@@ -6,8 +6,10 @@ import { logger } from './lib/logger.js';
 import { disconnectRedis } from './lib/redis.js';
 import { prisma } from '@autoops/database';
 import { createSocketServer } from './realtime/socket.js';
+import { initializeApplicationSecrets } from './config/application-secrets.js';
 
 async function bootstrap(): Promise<void> {
+  await initializeApplicationSecrets();
   const app = createApp();
   const httpServer = createServer(app);
   const io = createSocketServer(httpServer);

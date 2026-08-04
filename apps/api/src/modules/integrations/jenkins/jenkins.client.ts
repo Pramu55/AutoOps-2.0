@@ -1,4 +1,5 @@
 import { ProviderConnectionStatus } from '@autoops/types';
+import { getJenkinsApiToken } from '../../../config/application-secrets.js';
 
 export interface JenkinsConfig {
   configured: boolean;
@@ -36,7 +37,7 @@ export class JenkinsRequestError extends Error {
 export function getJenkinsConfiguration(): JenkinsConfig {
   const rawUrl = process.env.JENKINS_URL?.trim();
   const username = process.env.JENKINS_USERNAME?.trim();
-  const token = process.env.JENKINS_API_TOKEN?.trim();
+  const token = getJenkinsApiToken()?.revealForUse();
   const timeoutMs = numberEnv('JENKINS_REQUEST_TIMEOUT_MS', 10_000);
   const triggerPollTimeoutMs = numberEnv('JENKINS_TRIGGER_POLL_TIMEOUT_MS', 120_000);
   const triggerPollIntervalMs = numberEnv('JENKINS_TRIGGER_POLL_INTERVAL_MS', 2_000);
@@ -102,7 +103,8 @@ export function parseAllowedJobs(value: string | undefined): string[] {
 export function classifyJenkinsError(error: unknown): ProviderConnectionStatus {
   if (error instanceof JenkinsRequestError) return error.status;
   if (error instanceof TypeError) return ProviderConnectionStatus.UNREACHABLE;
-  if (error instanceof Error && error.name === 'AbortError') return ProviderConnectionStatus.UNREACHABLE;
+  if (error instanceof Error && error.name === 'AbortError')
+    return ProviderConnectionStatus.UNREACHABLE;
   return ProviderConnectionStatus.UNKNOWN_ERROR;
 }
 
@@ -118,7 +120,11 @@ export class JenkinsClient {
   constructor(private readonly config = getJenkinsConfiguration()) {}
 
   get baseUrl(): string {
-    if (!this.config.baseUrl) throw new JenkinsRequestError('Jenkins is not configured.', ProviderConnectionStatus.NOT_CONFIGURED);
+    if (!this.config.baseUrl)
+      throw new JenkinsRequestError(
+        'Jenkins is not configured.',
+        ProviderConnectionStatus.NOT_CONFIGURED,
+      );
     return this.config.baseUrl;
   }
 
@@ -162,7 +168,11 @@ export class JenkinsClient {
       return null;
     } catch (error) {
       if (error instanceof JenkinsRequestError && error.httpStatus === 404) return null;
-      if (error instanceof JenkinsRequestError && error.status === ProviderConnectionStatus.FORBIDDEN) return null;
+      if (
+        error instanceof JenkinsRequestError &&
+        error.status === ProviderConnectionStatus.FORBIDDEN
+      )
+        return null;
       throw error;
     }
   }
@@ -197,7 +207,10 @@ export class JenkinsClient {
       const response = await fetch(url, {
         method,
         headers: {
-          Authorization: basicAuthHeader(this.config.username, process.env.JENKINS_API_TOKEN ?? ''),
+          Authorization: basicAuthHeader(
+            this.config.username,
+            getJenkinsApiToken()?.revealForUse() ?? '',
+          ),
           Accept: 'application/json',
           ...options.headers,
         },
@@ -221,8 +234,12 @@ export class JenkinsClient {
       try {
         return { data: JSON.parse(text) as T, headers: response.headers, status: response.status };
       } catch {
-        if (options.tolerateEmptyBody) return { data: {} as T, headers: response.headers, status: response.status };
-        throw new JenkinsRequestError('Jenkins returned invalid JSON.', ProviderConnectionStatus.UNKNOWN_ERROR);
+        if (options.tolerateEmptyBody)
+          return { data: {} as T, headers: response.headers, status: response.status };
+        throw new JenkinsRequestError(
+          'Jenkins returned invalid JSON.',
+          ProviderConnectionStatus.UNKNOWN_ERROR,
+        );
       }
     } finally {
       clearTimeout(timeout);
@@ -255,6 +272,6 @@ function numberEnv(key: string, fallback: number): number {
 }
 
 function redactJenkinsSecrets(message: string): string {
-  const token = process.env.JENKINS_API_TOKEN;
-  return token ? message.replaceAll(token, '[REDACTED]') : message;
+  void message;
+  return 'Jenkins request failed.';
 }
