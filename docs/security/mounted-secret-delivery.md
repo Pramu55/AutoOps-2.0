@@ -66,9 +66,14 @@ external `AUTOOPS_FILE_MODE_ENV_FILE`, not from ambient shell variables. This
 matches the file-mode Compose `env_file` source and prevents a shell from
 silently changing validation behavior.
 
-The runtime file parser reads only the two allowlisted enablement keys,
-`GITHUB_ACTIONS_ENABLED` and `JENKINS_INTEGRATION_ENABLED`. Missing keys use
-the application's exact `false` default; duplicate or invalid values fail.
+The runtime file parser inspects every assignment only for exact, ordinal-case
+duplicate detection, but retains and interprets values only for the exact
+allowlisted enablement keys `GITHUB_ACTIONS_ENABLED` and
+`JENKINS_INTEGRATION_ENABLED`. Lowercase or mixed-case variants are ordinary
+Linux environment keys and do not enable an integration. Missing exact keys
+use the application's exact `false` default. Duplicate assignments for every
+runtime key are rejected before allowlist filtering, so unrelated duplicate
+configuration cannot pass.
 The runtime file must not contain any migrated application-secret key. When an
 integration is enabled, its matching overlay and source path are required;
 when disabled, selecting its optional credential overlay fails to prevent
@@ -81,7 +86,11 @@ junctions, reparse points, and repository-contained canonical targets before
 any Git tracking check. Every source, including the non-secret runtime file,
 must have exactly one filesystem hard link; unavailable or multiply-linked
 metadata fails closed. Windows uses read-only handle metadata, Linux uses the
-runtime `stat` metadata API, and unsupported platforms fail closed.
+runtime `stat` metadata API, and unsupported platforms fail closed. Git
+exit-status checks are then evaluated against each source's own discovered
+worktree: tracked sources are rejected, while untracked sources inside a
+worktree are accepted only when ignored. Normal sources outside every Git
+worktree remain valid; ambiguous Git metadata or command failures fail closed.
 
 It never opens a mounted secret file or prints content, length, hash, prefix,
 suffix, filesystem identifiers, or paths. Its `-RunSelfTest` mode uses only

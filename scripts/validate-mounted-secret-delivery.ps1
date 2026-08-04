@@ -26,6 +26,11 @@ $contracts = @{
 
 $runtimeEnablementKeys = @('GITHUB_ACTIONS_ENABLED', 'JENKINS_INTEGRATION_ENABLED')
 $migratedSecretKeys = @('JWT_SECRET', 'JWT_REFRESH_SECRET', 'GITHUB_ACTIONS_TOKEN', 'JENKINS_API_TOKEN')
+$ordinalComparer = [System.StringComparer]::Ordinal
+$runtimeEnablementKeySet = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
+$migratedSecretKeySet = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
+foreach ($key in $runtimeEnablementKeys) { $null = $runtimeEnablementKeySet.Add($key) }
+foreach ($key in $migratedSecretKeys) { $null = $migratedSecretKeySet.Add($key) }
 
 function Write-Result([string]$Name, [string]$Status, [bool]$Passed) {
   # Host output is intentionally kept outside the PowerShell success pipeline so
@@ -37,11 +42,16 @@ function Test-WithinPath([string]$Candidate, [string]$Root) {
   $trimCharacters = [char[]]@('\', '/')
   $normalizedCandidate = [IO.Path]::GetFullPath($Candidate).TrimEnd($trimCharacters)
   $normalizedRoot = [IO.Path]::GetFullPath($Root).TrimEnd($trimCharacters)
-  if ($normalizedCandidate.Equals($normalizedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+  $comparison = if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
+    [StringComparison]::OrdinalIgnoreCase
+  } else {
+    [StringComparison]::Ordinal
+  }
+  if ($normalizedCandidate.Equals($normalizedRoot, $comparison)) {
     return $true
   }
   $prefix = $normalizedRoot + [IO.Path]::DirectorySeparatorChar
-  return $normalizedCandidate.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+  return $normalizedCandidate.StartsWith($prefix, $comparison)
 }
 
 function Initialize-SafeFileLinkCountApi {
@@ -218,6 +228,78 @@ function Get-SourceMetadata([string]$SourcePath) {
   }
 }
 
+function Test-PathContainsGitMetadata([string]$Path) {
+  $current = [IO.Path]::GetFullPath($Path)
+  while ($true) {
+    if (Test-Path -LiteralPath (Join-Path $current '.git')) { return $true }
+    $parent = [IO.Directory]::GetParent($current)
+    if ($null -eq $parent -or $parent.FullName -eq $current) { return $false }
+    $current = $parent.FullName
+  }
+}
+
+function Invoke-GitQuietly([string]$WorkingDirectory, [string[]]$Arguments) {
+  $isolationVariables = @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM')
+  $saved = @{}
+  foreach ($name in $isolationVariables) {
+    $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+  }
+  $savedErrorActionPreference = $ErrorActionPreference
+  $nativePreferenceVariable = Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+  $savedNativePreference = if ($null -ne $nativePreferenceVariable) { $nativePreferenceVariable.Value } else { $null }
+  try {
+    $ErrorActionPreference = 'Continue'
+    if ($null -ne $nativePreferenceVariable) { $PSNativeCommandUseErrorActionPreference = $false }
+    $output = @(& git -C $WorkingDirectory @Arguments 2>$null)
+    return @{ Invoked = $true; ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine) }
+  } catch {
+    return @{ Invoked = $false; ExitCode = $null; Output = $null }
+  } finally {
+    $ErrorActionPreference = $savedErrorActionPreference
+    if ($null -ne $nativePreferenceVariable) { $PSNativeCommandUseErrorActionPreference = $savedNativePreference }
+    foreach ($name in $isolationVariables) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+  }
+}
+
+function Get-SourceGitWorktreeStatus([string]$CanonicalPath) {
+  $parent = [IO.Path]::GetDirectoryName($CanonicalPath)
+  if ([string]::IsNullOrWhiteSpace($parent)) { return 'UNKNOWN' }
+
+  $worktreeProbe = Invoke-GitQuietly $parent @('rev-parse', '--show-toplevel')
+  if (-not $worktreeProbe.Invoked) { return 'UNKNOWN' }
+  if ($worktreeProbe.ExitCode -ne 0) {
+    # A non-zero Git probe is accepted as outside a worktree only when the
+    # ancestor chain has no Git metadata. This catches broken nested/worktree
+    # metadata as an ambiguity instead of treating it as untracked.
+    if (Test-PathContainsGitMetadata $parent) { return 'UNKNOWN' }
+    return 'OUTSIDE'
+  }
+
+  $worktreeRoot = $worktreeProbe.Output.Trim()
+  if ([string]::IsNullOrWhiteSpace($worktreeRoot)) { return 'UNKNOWN' }
+  try {
+    $worktreeRoot = [IO.Path]::GetFullPath($worktreeRoot)
+    if (-not (Test-WithinPath $CanonicalPath $worktreeRoot)) { return 'UNKNOWN' }
+    $trimCharacters = [char[]]@('\', '/')
+    $relativePath = $CanonicalPath.Substring($worktreeRoot.TrimEnd($trimCharacters).Length).TrimStart($trimCharacters)
+    if ([string]::IsNullOrWhiteSpace($relativePath)) { return 'UNKNOWN' }
+  } catch {
+    return 'UNKNOWN'
+  }
+
+  $trackingProbe = Invoke-GitQuietly $worktreeRoot @('ls-files', '--error-unmatch', '--', $relativePath)
+  if (-not $trackingProbe.Invoked) { return 'UNKNOWN' }
+  if ($trackingProbe.ExitCode -eq 0) { return 'TRACKED' }
+  if ($trackingProbe.ExitCode -ne 1) { return 'UNKNOWN' }
+
+  $ignoreProbe = Invoke-GitQuietly $worktreeRoot @('check-ignore', '-q', '--', $relativePath)
+  if (-not $ignoreProbe.Invoked) { return 'UNKNOWN' }
+  if ($ignoreProbe.ExitCode -eq 0) { return 'UNTRACKED_IGNORED' }
+  if ($ignoreProbe.ExitCode -eq 1) { return 'UNTRACKED_NOT_IGNORED' }
+  return 'UNKNOWN'
+}
+
 function Test-SourceFile([hashtable]$Contract, [string]$RepositoryRoot, [hashtable]$MetadataOverride) {
   $sourcePath = [Environment]::GetEnvironmentVariable($Contract.Variable)
   if ([string]::IsNullOrWhiteSpace($sourcePath)) {
@@ -256,10 +338,21 @@ function Test-SourceFile([hashtable]$Contract, [string]$RepositoryRoot, [hashtab
   # path used for repository containment and Git-tracking checks.
   $canonicalPath = [IO.Path]::GetFullPath($metadata.CanonicalPath)
   if (Test-WithinPath $canonicalPath $RepositoryRoot) {
-    $trimCharacters = [char[]]@('\', '/')
-    $relative = $canonicalPath.Substring(([IO.Path]::GetFullPath($RepositoryRoot).TrimEnd($trimCharacters)).Length).TrimStart($trimCharacters)
-    $null = & git -C $RepositoryRoot ls-files --error-unmatch -- $relative 2>$null
-    Write-Result $Contract.Variable $(if ($LASTEXITCODE -eq 0) { 'TRACKED' } else { 'REPOSITORY_PATH' }) $false
+    Write-Result $Contract.Variable 'REPOSITORY_PATH' $false
+    return @{ Passed = $false; CanonicalPath = $canonicalPath }
+  }
+
+  $gitWorktreeStatus = if ($metadata.ContainsKey('GitWorktreeStatus')) { $metadata.GitWorktreeStatus } else { Get-SourceGitWorktreeStatus $canonicalPath }
+  if ($gitWorktreeStatus -eq 'TRACKED') {
+    Write-Result $Contract.Variable 'GIT_TRACKED' $false
+    return @{ Passed = $false; CanonicalPath = $canonicalPath }
+  }
+  if ($gitWorktreeStatus -eq 'UNTRACKED_NOT_IGNORED') {
+    Write-Result $Contract.Variable 'GIT_UNTRACKED_NOT_IGNORED' $false
+    return @{ Passed = $false; CanonicalPath = $canonicalPath }
+  }
+  if ($gitWorktreeStatus -eq 'UNKNOWN') {
+    Write-Result $Contract.Variable 'GIT_STATUS_UNAVAILABLE' $false
     return @{ Passed = $false; CanonicalPath = $canonicalPath }
   }
 
@@ -302,10 +395,9 @@ function ConvertTo-ApplicationBoolean([string]$Value) {
 }
 
 function Read-RuntimeEnablement([string]$RuntimeConfigurationPath) {
-  $states = @{
-    GITHUB_ACTIONS_ENABLED = @{ Defined = $false; Enabled = $false }
-    JENKINS_INTEGRATION_ENABLED = @{ Defined = $false; Enabled = $false }
-  }
+  $states = [System.Collections.Generic.Dictionary[string, object]]::new($ordinalComparer)
+  foreach ($key in $runtimeEnablementKeys) { $states.Add($key, @{ Defined = $false; Enabled = $false }) }
+  $seenKeys = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
   $reader = $null
   try {
     $reader = [IO.File]::OpenText($RuntimeConfigurationPath)
@@ -318,15 +410,15 @@ function Read-RuntimeEnablement([string]$RuntimeConfigurationPath) {
         return @{ Valid = $false }
       }
       $key = $match.Groups['key'].Value
-      if ($migratedSecretKeys -contains $key) {
+      if (-not $seenKeys.Add($key)) {
+        Write-Result 'RUNTIME_CONFIGURATION' 'DUPLICATE_KEY' $false
+        return @{ Valid = $false }
+      }
+      if ($migratedSecretKeySet.Contains($key)) {
         Write-Result 'RUNTIME_CONFIGURATION' 'MIGRATED_SECRET_KEY' $false
         return @{ Valid = $false }
       }
-      if ($runtimeEnablementKeys -notcontains $key) { continue }
-      if ($states[$key].Defined) {
-        Write-Result $key 'DUPLICATE' $false
-        return @{ Valid = $false }
-      }
+      if (-not $runtimeEnablementKeySet.Contains($key)) { continue }
       $state = ConvertTo-ApplicationBoolean $match.Groups['value'].Value.Trim()
       if (-not $state.Valid) {
         Write-Result $key 'INVALID' $false
@@ -345,7 +437,7 @@ function Read-RuntimeEnablement([string]$RuntimeConfigurationPath) {
     Write-Result $key $(if ($states[$key].Enabled) { 'ENABLED' } else { 'DISABLED' }) $true
   }
   Write-Result 'RUNTIME_CONFIGURATION' 'VALID' $true
-  return @{ Valid = $true; Github = $states.GITHUB_ACTIONS_ENABLED; Jenkins = $states.JENKINS_INTEGRATION_ENABLED }
+  return @{ Valid = $true; Github = $states['GITHUB_ACTIONS_ENABLED']; Jenkins = $states['JENKINS_INTEGRATION_ENABLED'] }
 }
 
 function Test-Overlay([string[]]$RequestedOverlay, [hashtable]$MetadataOverrides) {
@@ -433,6 +525,9 @@ function Invoke-SelfTest {
     $env:JENKINS_INTEGRATION_ENABLED = 'true'
 
     $passed = $true
+    $outsideGitStatus = Get-SourceGitWorktreeStatus $runtimeFile
+    if ($outsideGitStatus -ne 'OUTSIDE') { $passed = $false }
+    Write-Result 'SELF_TEST_GIT_OUTSIDE' $outsideGitStatus ($outsideGitStatus -eq 'OUTSIDE')
     Set-TemporaryRuntimeConfiguration $runtimeFile @()
     if (-not (Test-Overlay @('core') $null)) { $passed = $false }
     Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false')
@@ -464,6 +559,8 @@ function Invoke-SelfTest {
 
     foreach ($invalidRuntime in @(
         @('GITHUB_ACTIONS_ENABLED=true', 'GITHUB_ACTIONS_ENABLED=false'),
+        @('DATABASE_URL=value-one', 'DATABASE_URL=value-two'),
+        @('UNRELATED_VALUE=value-one', 'UNRELATED_VALUE=value-two'),
         @('GITHUB_ACTIONS_ENABLED=enabled', 'JENKINS_INTEGRATION_ENABLED=false'),
         @('JWT_SECRET=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false'),
         @('JWT_REFRESH_SECRET=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false'),
@@ -472,6 +569,19 @@ function Invoke-SelfTest {
       )) {
       Set-TemporaryRuntimeConfiguration $runtimeFile $invalidRuntime
       if (Test-Overlay @('core') $null) { $passed = $false }
+    }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('UNRELATED_VALUE=value-one')
+    if (-not (Test-Overlay @('core') $null)) { $passed = $false }
+    foreach ($caseSensitiveRuntime in @(
+        @{ Lines = @('github_actions_enabled=true'); Overlay = @('github') },
+        @{ Lines = @('Github_Actions_Enabled=true'); Overlay = @('github') },
+        @{ Lines = @('jenkins_integration_enabled=true'); Overlay = @('jenkins') },
+        @{ Lines = @('Jenkins_Integration_Enabled=true'); Overlay = @('jenkins') },
+        @{ Lines = @('GITHUB_ACTIONS_ENABLED=false', 'github_actions_enabled=true'); Overlay = @('github') },
+        @{ Lines = @('JENKINS_INTEGRATION_ENABLED=false', 'jenkins_integration_enabled=true'); Overlay = @('jenkins') }
+      )) {
+      Set-TemporaryRuntimeConfiguration $runtimeFile $caseSensitiveRuntime.Lines
+      if (Test-Overlay $caseSensitiveRuntime.Overlay $null) { $passed = $false }
     }
     Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=true', 'JENKINS_INTEGRATION_ENABLED=true')
 
@@ -487,6 +597,8 @@ function Invoke-SelfTest {
     if ((Test-SourceFile $contracts.core[0] ((git rev-parse --show-toplevel).Trim()) $repositoryHardLinkMetadata).Passed) { $passed = $false }
     $repositoryMetadata = @{ Exists = $true; MetadataAvailable = $true; IsRegularFile = $true; LeafName = 'jwt-access'; CanonicalPath = (Join-Path ((git rev-parse --show-toplevel).Trim()) 'package.json'); HasReparsePoint = $false; LinkCountKnown = $true; LinkCount = 1 }
     if ((Test-SourceFile $contracts.core[0] ((git rev-parse --show-toplevel).Trim()) $repositoryMetadata).Passed) { $passed = $false }
+    $unknownGitMetadata = @{ Exists = $true; MetadataAvailable = $true; IsRegularFile = $true; LeafName = 'jwt-access'; CanonicalPath = (Join-Path $temporaryRoot 'jwt-access'); HasReparsePoint = $false; LinkCountKnown = $true; LinkCount = 1; GitWorktreeStatus = 'UNKNOWN' }
+    if ((Test-SourceFile $contracts.core[0] ((git rev-parse --show-toplevel).Trim()) $unknownGitMetadata).Passed) { $passed = $false }
 
     $hardLinkRoot = Join-Path $temporaryRoot 'hard-link-test'
     New-Item -ItemType Directory -Path $hardLinkRoot | Out-Null
@@ -507,6 +619,85 @@ function Invoke-SelfTest {
       # The deterministic metadata-seam assertion above remains mandatory on
       # platforms that do not expose unprivileged hard-link creation.
       Write-Result 'SELF_TEST_HARD_LINK' 'UNAVAILABLE' $true
+    }
+
+    $temporaryGitRoot = Join-Path $temporaryRoot 'git-worktree-tests'
+    $trackedRepository = Join-Path $temporaryGitRoot 'tracked-repository'
+    $untrackedRepository = Join-Path $temporaryGitRoot 'untracked-repository'
+    $ignoredRepository = Join-Path $temporaryGitRoot 'ignored-repository'
+    $outerRepository = Join-Path $temporaryGitRoot 'outer-repository'
+    $nestedRepository = Join-Path $outerRepository 'nested-repository'
+    $worktreeRepository = Join-Path $temporaryGitRoot 'worktree-repository'
+    $neighborWorktree = Join-Path $temporaryGitRoot 'neighbor-worktree'
+    New-Item -ItemType Directory -Path $temporaryGitRoot | Out-Null
+    $gitTestStage = 'INITIALIZE'
+    try {
+      foreach ($repository in @($trackedRepository, $untrackedRepository, $ignoredRepository, $outerRepository, $nestedRepository, $worktreeRepository)) {
+        New-Item -ItemType Directory -Path $repository -Force | Out-Null
+        $null = & git -C $repository init -q 2>$null
+        if ($LASTEXITCODE -ne 0) { throw 'Temporary Git repository initialization failed.' }
+      }
+
+      $trackedSource = Join-Path $trackedRepository 'jwt-access'
+      $gitTestStage = 'TRACKED'
+      New-Item -ItemType File -Path $trackedSource | Out-Null
+      $null = & git -C $trackedRepository add -- 'jwt-access' 2>$null
+      if ($LASTEXITCODE -ne 0) { throw 'Temporary Git staging failed.' }
+      $originalJwtAccess = $env:AUTOOPS_SECRET_JWT_ACCESS_FILE
+      $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $trackedSource
+      if (Test-Overlay @('core', 'github', 'jenkins') $null) { $passed = $false }
+      $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $originalJwtAccess
+
+      $untrackedSource = Join-Path $untrackedRepository 'jwt-access'
+      $gitTestStage = 'UNTRACKED'
+      New-Item -ItemType File -Path $untrackedSource | Out-Null
+      $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $untrackedSource
+      if (Test-Overlay @('core', 'github', 'jenkins') $null) { $passed = $false }
+      $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $originalJwtAccess
+
+      [IO.File]::WriteAllText((Join-Path $ignoredRepository '.gitignore'), 'jwt-access', [Text.UTF8Encoding]::new($false))
+      $gitTestStage = 'IGNORED'
+      $ignoredSource = Join-Path $ignoredRepository 'jwt-access'
+      New-Item -ItemType File -Path $ignoredSource | Out-Null
+      $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $ignoredSource
+      if (-not (Test-Overlay @('core', 'github', 'jenkins') $null)) { $passed = $false }
+      $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $originalJwtAccess
+
+      $nestedSource = Join-Path $nestedRepository 'jwt-access'
+      $gitTestStage = 'NESTED'
+      New-Item -ItemType File -Path $nestedSource | Out-Null
+      $null = & git -C $nestedRepository add -- 'jwt-access' 2>$null
+      if ($LASTEXITCODE -ne 0) { throw 'Temporary nested Git staging failed.' }
+      $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $nestedSource
+      if (Test-Overlay @('core', 'github', 'jenkins') $null) { $passed = $false }
+      $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $originalJwtAccess
+
+      $worktreeSource = Join-Path $worktreeRepository 'jwt-access'
+      $gitTestStage = 'WORKTREE_COMMIT'
+      New-Item -ItemType File -Path $worktreeSource | Out-Null
+      $null = & git -C $worktreeRepository add -- 'jwt-access' 2>$null
+      if ($LASTEXITCODE -ne 0) { throw 'Temporary worktree staging failed.' }
+      $null = & git -C $worktreeRepository -c user.name=AutoOpsTest -c user.email=autoops-test@example.invalid commit -qm 'test' 2>$null
+      if ($LASTEXITCODE -ne 0) { throw 'Temporary worktree commit failed.' }
+      $gitTestStage = 'WORKTREE_ADD'
+      $worktreeAdd = Invoke-GitQuietly $worktreeRepository @('worktree', 'add', '--detach', $neighborWorktree, 'HEAD')
+      if (-not $worktreeAdd.Invoked -or $worktreeAdd.ExitCode -ne 0) { throw 'Temporary neighboring worktree creation failed.' }
+      $gitTestStage = 'WORKTREE_STATUS'
+      $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = (Join-Path $neighborWorktree 'jwt-access')
+      $neighborStatus = Get-SourceGitWorktreeStatus $env:AUTOOPS_SECRET_JWT_ACCESS_FILE
+      if ($neighborStatus -ne 'TRACKED') { $passed = $false }
+      $gitTestStage = 'WORKTREE_SOURCE_VALIDATION'
+      if ((Test-SourceFile $contracts.core[0] ((git rev-parse --show-toplevel).Trim()) $null).Passed) { $passed = $false }
+      $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $originalJwtAccess
+      Write-Result 'SELF_TEST_GIT_WORKTREE' 'PASS' $true
+    } catch {
+      $passed = $false
+      Write-Result 'SELF_TEST_GIT_WORKTREE' $gitTestStage $false
+    } finally {
+      $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = Join-Path $temporaryRoot 'jwt-access'
+      if (Test-Path -LiteralPath $neighborWorktree) {
+        $null = Invoke-GitQuietly $worktreeRepository @('worktree', 'remove', '--force', $neighborWorktree)
+      }
     }
 
     Write-Result 'SELF_TEST' 'STRUCTURAL' $passed
