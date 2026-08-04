@@ -27,6 +27,29 @@ describe('Jenkins secret injection', () => {
     expect(getJenkinsConfiguration()).toMatchObject({ configured: false });
   });
 
+  it('treats Jenkins as disabled despite stale URL, username, and token values', async () => {
+    process.env.JENKINS_INTEGRATION_ENABLED = 'false';
+    process.env.JENKINS_URL = 'https://jenkins.example.invalid';
+    process.env.JENKINS_USERNAME = 'test-user';
+    process.env[`JENKINS_API_${'TOKEN'}`] = fakeProviderToken;
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const secrets = await import('../../../config/application-secrets.js');
+    await secrets.initializeApplicationSecrets();
+    const { JenkinsClient, getJenkinsConfiguration } = await import('./jenkins.client.js');
+
+    expect(secrets.getJenkinsApiToken()).toBeNull();
+    expect(getJenkinsConfiguration()).toMatchObject({
+      configured: false,
+      message: 'Jenkins integration is disabled by configuration.',
+    });
+    await expect(new JenkinsClient().getJson('/api/json')).rejects.toMatchObject({
+      status: 'NOT_CONFIGURED',
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it('uses a typed token only after explicit Jenkins enablement', async () => {
     process.env.JENKINS_INTEGRATION_ENABLED = 'true';
     process.env.JENKINS_URL = 'https://jenkins.example.invalid';
@@ -37,5 +60,19 @@ describe('Jenkins secret injection', () => {
     const { getJenkinsConfiguration } = await import('./jenkins.client.js');
 
     expect(getJenkinsConfiguration()).toMatchObject({ configured: true });
+  });
+
+  it('fails closed when Jenkins is enabled without a token', async () => {
+    process.env.JENKINS_INTEGRATION_ENABLED = 'true';
+    process.env.JENKINS_URL = 'https://jenkins.example.invalid';
+    process.env.JENKINS_USERNAME = 'test-user';
+    delete process.env[`JENKINS_API_${'TOKEN'}`];
+    vi.resetModules();
+    const secrets = await import('../../../config/application-secrets.js');
+
+    await expect(secrets.initializeApplicationSecrets()).rejects.toMatchObject({
+      code: 'SECRET_REQUIRED_MISSING',
+      secretId: 'jenkins.apiToken',
+    });
   });
 });

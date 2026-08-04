@@ -1,5 +1,6 @@
 import { ProviderConnectionStatus } from '@autoops/types';
 import { getJenkinsApiToken } from '../../../config/application-secrets.js';
+import { env } from '../../../config/env.js';
 
 export interface JenkinsConfig {
   configured: boolean;
@@ -35,13 +36,25 @@ export class JenkinsRequestError extends Error {
 }
 
 export function getJenkinsConfiguration(): JenkinsConfig {
-  const rawUrl = process.env.JENKINS_URL?.trim();
-  const username = process.env.JENKINS_USERNAME?.trim();
-  const token = getJenkinsApiToken()?.revealForUse();
   const timeoutMs = numberEnv('JENKINS_REQUEST_TIMEOUT_MS', 10_000);
   const triggerPollTimeoutMs = numberEnv('JENKINS_TRIGGER_POLL_TIMEOUT_MS', 120_000);
   const triggerPollIntervalMs = numberEnv('JENKINS_TRIGGER_POLL_INTERVAL_MS', 2_000);
   const allowedJobs = parseAllowedJobs(process.env.JENKINS_ALLOWED_JOBS);
+
+  if (!env.JENKINS_INTEGRATION_ENABLED) {
+    return {
+      configured: false,
+      allowedJobs,
+      timeoutMs,
+      triggerPollTimeoutMs,
+      triggerPollIntervalMs,
+      message: 'Jenkins integration is disabled by configuration.',
+    };
+  }
+
+  const rawUrl = process.env.JENKINS_URL?.trim();
+  const username = process.env.JENKINS_USERNAME?.trim();
+  const token = getJenkinsApiToken()?.revealForUse();
 
   if (!rawUrl) {
     return {

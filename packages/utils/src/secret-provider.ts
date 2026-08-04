@@ -1,4 +1,5 @@
-import { promises as fs } from 'node:fs';
+import { constants as fsConstants, promises as fs, type BigIntStats } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 
 const REDACTED = '[REDACTED]';
@@ -148,6 +149,14 @@ export interface CreateSecretProviderOptions {
   environment?: NodeJS.ProcessEnv;
   fileRoot?: string;
   production?: boolean;
+  /** Internal test seam for deterministic filesystem race verification. */
+  fileSystem?: MountedSecretFileSystem;
+}
+
+export interface MountedSecretFileSystem {
+  realpath(path: string): Promise<string>;
+  open(path: string, flags: number): Promise<FileHandle>;
+  stat(path: string, options: { bigint: true }): Promise<BigIntStats>;
 }
 
 abstract class BaseSecretProvider implements SecretProvider {
@@ -240,6 +249,7 @@ class MountedFileSecretProvider extends BaseSecretProvider {
   constructor(
     private readonly root: string,
     production: boolean,
+    private readonly fileSystem: MountedSecretFileSystem,
   ) {
     super(production);
   }
@@ -250,59 +260,85 @@ class MountedFileSecretProvider extends BaseSecretProvider {
   ): Promise<SecretValue | null> {
     try {
       this.assertRegistered(descriptor);
-      const root = await fs.realpath(this.root);
+      const root = await canonicalizeRoot(this.root, descriptor, this.mode, this.fileSystem);
       const candidate = path.resolve(root, descriptor.fileName);
       if (!isWithinRoot(root, candidate)) {
         throw new SecretProviderError('SECRET_FILE_OUTSIDE_ROOT', descriptor.id, this.mode);
       }
 
+      let handle: FileHandle;
       try {
-        await fs.lstat(candidate);
+        handle = await this.fileSystem.open(candidate, fsConstants.O_RDONLY);
       } catch (error) {
         if (isMissing(error)) return this.absent(descriptor, requirement);
         throw new SecretProviderError('SECRET_FILE_READ_FAILED', descriptor.id, this.mode);
       }
 
-      let resolved: string;
       try {
-        resolved = await fs.realpath(candidate);
-      } catch (error) {
-        if (isMissing(error)) return this.absent(descriptor, requirement);
-        throw new SecretProviderError('SECRET_FILE_READ_FAILED', descriptor.id, this.mode);
-      }
+        const openedMetadata = await handle.stat({ bigint: true });
+        if (!openedMetadata.isFile()) {
+          throw new SecretProviderError('SECRET_FILE_INVALID_TYPE', descriptor.id, this.mode);
+        }
 
-      if (!isWithinRoot(root, resolved)) {
-        throw new SecretProviderError('SECRET_FILE_OUTSIDE_ROOT', descriptor.id, this.mode);
-      }
+        // A path can be retargeted after open.  Re-resolve it only to prove that
+        // the open descriptor still names the same contained object; read only
+        // through the already opened descriptor after that proof succeeds.
+        const canonicalTarget = await this.fileSystem.realpath(candidate);
+        if (!isWithinRoot(root, canonicalTarget)) {
+          throw new SecretProviderError('SECRET_FILE_OUTSIDE_ROOT', descriptor.id, this.mode);
+        }
+        const canonicalMetadata = await this.fileSystem.stat(canonicalTarget, { bigint: true });
+        if (!canonicalMetadata.isFile() || !sameFileIdentity(openedMetadata, canonicalMetadata)) {
+          throw new SecretProviderError('SECRET_FILE_READ_FAILED', descriptor.id, this.mode);
+        }
 
-      let metadata;
-      try {
-        metadata = await fs.lstat(resolved);
-      } catch {
-        throw new SecretProviderError('SECRET_FILE_READ_FAILED', descriptor.id, this.mode);
+        let value: string;
+        try {
+          value = await handle.readFile({ encoding: 'utf8' });
+        } catch {
+          throw new SecretProviderError('SECRET_FILE_READ_FAILED', descriptor.id, this.mode);
+        }
+        if (value.includes('\0')) {
+          throw new SecretProviderError('SECRET_FILE_READ_FAILED', descriptor.id, this.mode);
+        }
+        if (descriptor.stripSingleTrailingNewline) {
+          value = value.replace(/\r?\n$/, '');
+        }
+        return this.resolved(value, descriptor, requirement);
+      } finally {
+        await handle.close().catch(() => undefined);
       }
-      if (!metadata.isFile()) {
-        throw new SecretProviderError('SECRET_FILE_INVALID_TYPE', descriptor.id, this.mode);
-      }
-
-      let value: string;
-      try {
-        value = await fs.readFile(resolved, 'utf8');
-      } catch {
-        throw new SecretProviderError('SECRET_FILE_READ_FAILED', descriptor.id, this.mode);
-      }
-      if (value.includes('\0')) {
-        throw new SecretProviderError('SECRET_FILE_READ_FAILED', descriptor.id, this.mode);
-      }
-      if (descriptor.stripSingleTrailingNewline) {
-        value = value.replace(/\r?\n$/, '');
-      }
-      return this.resolved(value, descriptor, requirement);
     } catch (error) {
       if (error instanceof SecretProviderError) throw error;
       throw new SecretProviderError('SECRET_RESOLUTION_FAILED', descriptor.id, this.mode);
     }
   }
+}
+
+async function canonicalizeRoot(
+  root: string,
+  descriptor: SecretDescriptor,
+  mode: SecretProviderMode,
+  fileSystem: MountedSecretFileSystem,
+): Promise<string> {
+  try {
+    return await fileSystem.realpath(root);
+  } catch {
+    throw new SecretProviderError('SECRET_FILE_READ_FAILED', descriptor.id, mode);
+  }
+}
+
+function sameFileIdentity(opened: BigIntStats, canonical: BigIntStats): boolean {
+  // Node exposes device/inode identity on every supported runtime.  Refuse to
+  // use a path fallback if either identity is unavailable or not a bigint.
+  return (
+    typeof opened.dev === 'bigint' &&
+    typeof opened.ino === 'bigint' &&
+    typeof canonical.dev === 'bigint' &&
+    typeof canonical.ino === 'bigint' &&
+    opened.dev === canonical.dev &&
+    opened.ino === canonical.ino
+  );
 }
 
 function isMissing(error: unknown): boolean {
@@ -331,6 +367,10 @@ export function createSecretProvider(options: CreateSecretProviderOptions): Secr
   if (mode === 'env')
     return new EnvironmentSecretProvider(options.environment ?? process.env, production);
   if (mode === 'file')
-    return new MountedFileSecretProvider(options.fileRoot ?? '/run/secrets/autoops', production);
+    return new MountedFileSecretProvider(
+      options.fileRoot ?? '/run/secrets/autoops',
+      production,
+      options.fileSystem ?? fs,
+    );
   throw new SecretProviderError('SECRET_PROVIDER_MODE_INVALID', undefined, mode);
 }

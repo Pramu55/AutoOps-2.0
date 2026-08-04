@@ -9,10 +9,12 @@ import type http from 'node:http';
 import { createOperationsWorker, OPERATIONS_QUEUE } from './queues/operations.queue.js';
 import { createSystemWorker, SYSTEM_QUEUE } from './queues/system.queue.js';
 import { createWorkerHeartbeatRegistry } from './runtime/worker-heartbeat.js';
+import { initializeWorkerSecrets } from './config/application-secrets.js';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  await initializeWorkerSecrets();
   logger.info('AutoOps Worker starting…');
 
   // Validate DB connection
@@ -66,7 +68,7 @@ async function main(): Promise<void> {
   }
 
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
-  process.on('SIGINT',  () => void shutdown('SIGINT'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
 
   process.on('unhandledRejection', (reason) => {
     logger.error({ reason }, 'Unhandled promise rejection');

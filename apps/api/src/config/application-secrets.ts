@@ -57,10 +57,10 @@ export async function initializeApplicationSecrets(): Promise<SecretProviderRead
     getSecretDescriptor('githubActions.token'),
     env.GITHUB_ACTIONS_ENABLED ? 'required' : 'optional',
   );
-  const jenkinsApiToken = await provider.resolve(
-    getSecretDescriptor('jenkins.apiToken'),
-    env.JENKINS_INTEGRATION_ENABLED ? 'required' : 'optional',
-  );
+  // A disabled integration must not resolve or retain a stale credential.
+  const jenkinsApiToken = env.JENKINS_INTEGRATION_ENABLED
+    ? await provider.resolve(getSecretDescriptor('jenkins.apiToken'), 'required')
+    : null;
 
   if (!jwtAccess || !jwtRefresh) {
     throw new Error('Secret provider did not resolve required JWT configuration.');
@@ -87,7 +87,7 @@ export function getGitHubActionsToken(): SecretValue | null {
 }
 
 export function getJenkinsApiToken(): SecretValue | null {
-  return getResolved().jenkinsApiToken;
+  return env.JENKINS_INTEGRATION_ENABLED ? getResolved().jenkinsApiToken : null;
 }
 
 export function getSecretProviderReadiness(): SecretProviderReadiness {

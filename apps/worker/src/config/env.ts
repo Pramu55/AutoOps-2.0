@@ -10,6 +10,13 @@ const envSchema = z.object({
 
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
+  SECRET_PROVIDER_MODE: z.enum(['env', 'file']).default('env'),
+  SECRET_PROVIDER_ROOT: z.string().default('/run/secrets/autoops'),
+  JENKINS_INTEGRATION_ENABLED: z
+    .string()
+    .optional()
+    .default('false')
+    .transform((value) => value === 'true' || value === '1'),
 
   // Concurrency per queue
   DEPLOYMENTS_CONCURRENCY: z.coerce.number().int().min(1).default(5),
@@ -20,5 +27,5 @@ const envSchema = z.object({
 export type Env = z.infer<typeof envSchema>;
 export const env: Env = loadEnv(envSchema);
 export const isProd = env.NODE_ENV === 'production';
-export const isDev  = env.NODE_ENV === 'development';
+export const isDev = env.NODE_ENV === 'development';
 export const isTest = env.NODE_ENV === 'test';

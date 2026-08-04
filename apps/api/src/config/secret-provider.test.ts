@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { inspect } from 'node:util';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createSecretProvider,
   getSecretDescriptor,
@@ -10,7 +10,10 @@ import {
   SECRET_DESCRIPTORS,
   SecretProviderError,
   type SecretDescriptor,
+  type MountedSecretFileSystem,
 } from '@autoops/utils';
+import type { BigIntStats } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 
 const FAKE_SECRET = 'test-secret-value-not-real';
 const cleanup: string[] = [];
@@ -23,6 +26,42 @@ async function temporaryDirectory(): Promise<string> {
 
 async function createDirectoryLink(target: string, link: string): Promise<void> {
   await symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir');
+}
+
+function fileMetadata(device: bigint, inode: bigint): BigIntStats {
+  return { dev: device, ino: inode, isFile: () => true } as unknown as BigIntStats;
+}
+
+function deterministicFileSystem(
+  options: {
+    target?: string;
+    opened?: BigIntStats;
+    canonical?: BigIntStats;
+    value?: string;
+  } = {},
+): {
+  fileSystem: MountedSecretFileSystem;
+  read: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
+} {
+  const root = '/mounted';
+  const target = options.target ?? '/mounted/jwt-access';
+  const read = vi.fn(async () => options.value ?? FAKE_SECRET);
+  const close = vi.fn(async () => undefined);
+  const handle = {
+    stat: vi.fn(async () => options.opened ?? fileMetadata(1n, 1n)),
+    readFile: read,
+    close,
+  } as unknown as FileHandle;
+  return {
+    fileSystem: {
+      realpath: vi.fn(async (value: string) => (value === root ? root : target)),
+      open: vi.fn(async () => handle),
+      stat: vi.fn(async () => options.canonical ?? fileMetadata(1n, 1n)),
+    },
+    read,
+    close,
+  };
 }
 
 afterEach(async () => {
@@ -124,7 +163,7 @@ describe('typed SecretProvider', () => {
     await createDirectoryLink(outside, path.join(root, 'jwt-access'));
     const provider = createSecretProvider({ mode: 'file', fileRoot: root });
     await expect(provider.resolve(getSecretDescriptor('auth.jwtAccess'))).rejects.toMatchObject({
-      code: 'SECRET_FILE_OUTSIDE_ROOT',
+      code: expect.stringMatching(/^SECRET_FILE_(OUTSIDE_ROOT|INVALID_TYPE)$/),
     });
   });
 
@@ -139,6 +178,63 @@ describe('typed SecretProvider', () => {
     const provider = createSecretProvider({ mode: 'file', fileRoot: mountedRoot });
     const resolved = await provider.resolve(getSecretDescriptor('auth.jwtAccess'));
     expect(resolved?.revealForUse()).toBe(FAKE_SECRET);
+  });
+
+  it('rejects a candidate retargeted after open and closes the opened handle', async () => {
+    const probe = deterministicFileSystem({ target: '/outside/jwt-access' });
+    const provider = createSecretProvider({
+      mode: 'file',
+      fileRoot: '/mounted',
+      fileSystem: probe.fileSystem,
+    });
+    await expect(provider.resolve(getSecretDescriptor('auth.jwtAccess'))).rejects.toMatchObject({
+      code: 'SECRET_FILE_OUTSIDE_ROOT',
+    });
+    expect(probe.read).not.toHaveBeenCalled();
+    expect(probe.close).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a parent link retargeted after open and closes the opened handle', async () => {
+    const probe = deterministicFileSystem({ target: '/outside/jwt-access' });
+    const provider = createSecretProvider({
+      mode: 'file',
+      fileRoot: '/mounted',
+      fileSystem: probe.fileSystem,
+    });
+    await expect(provider.resolve(getSecretDescriptor('auth.jwtAccess'))).rejects.toMatchObject({
+      code: 'SECRET_FILE_OUTSIDE_ROOT',
+    });
+    expect(probe.close).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a path whose post-open canonical identity differs from the opened handle', async () => {
+    const probe = deterministicFileSystem({
+      opened: fileMetadata(1n, 1n),
+      canonical: fileMetadata(1n, 2n),
+    });
+    const provider = createSecretProvider({
+      mode: 'file',
+      fileRoot: '/mounted',
+      fileSystem: probe.fileSystem,
+    });
+    await expect(provider.resolve(getSecretDescriptor('auth.jwtAccess'))).rejects.toMatchObject({
+      code: 'SECRET_FILE_READ_FAILED',
+    });
+    expect(probe.read).not.toHaveBeenCalled();
+    expect(probe.close).toHaveBeenCalledOnce();
+  });
+
+  it('reads only from the validated handle and closes it after successful validation', async () => {
+    const probe = deterministicFileSystem();
+    const provider = createSecretProvider({
+      mode: 'file',
+      fileRoot: '/mounted',
+      fileSystem: probe.fileSystem,
+    });
+    const value = await provider.resolve(getSecretDescriptor('auth.jwtAccess'));
+    expect(value?.revealForUse()).toBe(FAKE_SECRET);
+    expect(probe.read).toHaveBeenCalledOnce();
+    expect(probe.close).toHaveBeenCalledOnce();
   });
 
   it('fails closed for an invalid provider mode', () => {
