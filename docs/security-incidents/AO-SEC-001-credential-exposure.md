@@ -186,5 +186,41 @@ AO-SEC-001 may be marked fully closed only after:
 
 Local exposure containment and source hardening are complete.
 
-The incident remains `PARTIALLY CLOSED` because remote GitHub and Jenkins token
-revocation has not yet been verified.
+GitHub remediation is complete: previous GitHub tokens were revoked, the
+least-privilege replacement was validated, and the GitHub Actions integration
+is connected.
+
+The incident remains `PARTIALLY CLOSED` because controller-side revocation of
+the previous Jenkins API token cannot be safely verified.
+
+## Jenkins containment and quarantine — 2026-08-04
+
+The original Jenkins controller container was not present. A high-confidence
+preserved Jenkins-home Docker volume was discovered, and a separate backup
+volume was created and preserved before any recovery action.
+
+An exact compatible local Jenkins image was identified. Jenkins was never
+started during discovery, backup, or verification. No setup wizard, plugin
+migration, job execution, or security-setting change occurred.
+
+Completed aggregate source-versus-backup measurements matched. Final backup
+acceptance was blocked by an unresolved measurement-tooling inconsistency; no
+proven source-versus-backup data mismatch was found. The recovery effort was
+intentionally stopped rather than risking the preserved controller state.
+
+Both original and backup Jenkins volumes remain detached and quarantined, and
+port 8080 remains closed. The AutoOps Jenkins integration remains disabled,
+and sanitized configuration verification confirms the local Jenkins token is
+absent or empty. No replacement Jenkins token was generated.
+
+The previous Jenkins API token was not controller-side revoked because the
+issuing controller could not be safely recovered. Active exposure is contained,
+but latent restoration risk remains: restoring preserved state could restore
+the token until it is revoked from the recovered original controller.
+
+AO-SEC-001 remains `PARTIALLY CLOSED`.
+
+Restoring either Jenkins volume requires a separately approved,
+backup-preserving recovery procedure. The previous Jenkins API token must be
+revoked before enabling the AutoOps Jenkins integration, publishing Jenkins
+beyond localhost, or triggering any Jenkins job.
