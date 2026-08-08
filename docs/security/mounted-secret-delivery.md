@@ -152,6 +152,32 @@ Run the validator before any controlled activation and use `docker compose
 config` with the selected explicit overlay(s). These checks render structure
 only; they do not start, stop, recreate, or activate containers.
 
+## Audited transfer preparation
+
+`scripts/prepare-mounted-secret-transfer.ps1` is the maintained operator tool
+for a separately authorized preparation of external file-mode artifacts. It
+does not activate Compose, recreate a service, or read a mounted secret file.
+Its synthetic mode is the required qualification path and is covered by
+`pnpm test:mounted-secret-transfer`. An opt-in local qualification adds a
+disposable synthetic source container to test the fixed Docker adapter without
+querying a live AutoOps service. The controlled runtime-source adapter is
+present for a separately approved change window only; it captures a named
+environment value in redirected process memory and never writes it to command
+arguments, console output, logs, Git, or a repository file.
+
+The tool stages every output beside its final destination, applies output-file
+ACL and metadata checks without changing the script's own ACL, and commits the
+set transactionally. It rejects an existing target without reading or
+overwriting it. A failure removes only stage/final artifacts created during the
+current invocation. Diagnostics are limited to phase names and symbolic error
+codes. `runtime.env` serialization is deterministic and retains only the
+validator's non-secret contract; empty AWS account/region and empty provider
+inventory IDs are omitted so the established Compose fallback remains
+authoritative. The tool always writes GitHub enabled and Jenkins disabled for
+the approved `core,sensitive-env,github` selection. Real transfer remains a
+separate explicit operational authorization and tool availability never
+activates file mode.
+
 ## Host filesystem guidance
 
 Use a dedicated external directory with ownership readable by the relevant

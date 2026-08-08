@@ -27,6 +27,7 @@
     "check:secrets": "powershell -ExecutionPolicy Bypass -File scripts/scan-secrets.ps1",
     "check:secrets:linux": "bash scripts/scan-secrets.sh",
     "test:mounted-secret-delivery": "powershell -ExecutionPolicy Bypass -File scripts/test-mounted-secret-delivery.ps1",
+    "test:mounted-secret-transfer": "powershell -ExecutionPolicy Bypass -File scripts/test-mounted-secret-transfer.ps1",
     "check:container-hardening": "node scripts/validate-container-hardening.mjs",
     "check:terraform-foundation": "node scripts/validate-terraform-foundation.mjs",
     "check:aws-proof-infrastructure": "node scripts/validate-aws-proof-infrastructure.mjs",
