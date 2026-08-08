@@ -56,10 +56,18 @@ credential-bearing settings: `DATABASE_URL`, `REDIS_URL`,
 approved provider migration exists. The four migrated keys are forbidden in
 both files.
 
-The compatibility overlay resets the inherited Compose `DATABASE_URL` and
-`REDIS_URL` environment mappings for API and worker. This makes the values in
-the second `sensitive.env` file authoritative after the non-secret
-`runtime.env` file. `GOOGLE_APPLICATION_CREDENTIALS` is an allowed non-secret
+Because Compose `environment` mappings override `env_file` values, the
+compatibility overlay deliberately replaces each current API/worker environment
+map with the same non-sensitive base mappings, provider-inventory fallback and
+secret-provider settings, while omitting only `DATABASE_URL` and `REDIS_URL`.
+The second `sensitive.env` file is therefore authoritative for those two keys,
+and the existing provider-inventory fallback/default remains intact. A
+structural test compares every preserved base mapping other than those two
+keys, guarding against a later base-map addition being silently dropped. The
+established Compose-level provider-inventory override remains available through
+its explicit Compose variable; an `env_file` cannot override an `environment`
+mapping because Compose gives the mapping higher precedence.
+`GOOGLE_APPLICATION_CREDENTIALS` is an allowed non-secret
 runtime path/reference only; this delivery correction does not mount, read, or
 validate the referenced GCP credential content. GitHub remains enabled through
 its dedicated API-only mounted-token overlay, while Jenkins remains disabled.
@@ -100,8 +108,12 @@ Linux environment keys and do not enable an integration. Missing exact keys
 use the application's exact `false` default. Duplicate assignments for every
 runtime key are rejected before allowlist filtering, so unrelated duplicate
 configuration cannot pass. The sensitive file accepts only its documented
-transitional credential allowlist, requires syntactically present values, and
-never retains or displays them. Duplicate keys across the two files,
+transitional credential allowlist. It requires exactly one non-empty,
+non-interpolated `DATABASE_URL` and `REDIS_URL`; unquoted or double-quoted
+Compose interpolation syntax, effectively empty quoted values, and blank
+assignments fail closed without revealing the assignment value. Single-quoted
+values retain Docker Compose's literal semantics. The validator never retains
+or displays sensitive values. Duplicate keys across the two files,
 non-secret keys in the sensitive file, sensitive keys in the runtime file, and
 migrated keys in either file fail closed.
 The runtime file must not contain any migrated application-secret key. When an

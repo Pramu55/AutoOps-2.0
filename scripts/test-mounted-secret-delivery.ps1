@@ -38,12 +38,22 @@ function Test-SensitiveEnvironmentAuthoritative($Service, [string]$DatabaseUrl, 
     ($Service.environment.REDIS_URL -eq $RedisUrl)
 }
 
+function Test-BaseRuntimeEnvironmentPreserved($BaseService, $SensitiveService, [string[]]$Keys) {
+  foreach ($key in $Keys) {
+    $baseProperty = $BaseService.environment.PSObject.Properties[$key]
+    $sensitiveProperty = $SensitiveService.environment.PSObject.Properties[$key]
+    if ($null -eq $baseProperty -or $null -eq $sensitiveProperty -or $sensitiveProperty.Value -ne $baseProperty.Value) { return $false }
+  }
+  return $true
+}
+
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "autoops-mounted-secret-compose-test-$([guid]::NewGuid())"
 $variables = @(
   'AUTOOPS_FILE_MODE_ENV_FILE', 'AUTOOPS_SECRET_JWT_ACCESS_FILE',
   'AUTOOPS_SECRET_JWT_REFRESH_FILE', 'AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE',
   'AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE', 'AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE', 'GITHUB_ACTIONS_ENABLED',
-  'JENKINS_INTEGRATION_ENABLED', 'DATABASE_URL', 'REDIS_URL'
+  'JENKINS_INTEGRATION_ENABLED', 'DATABASE_URL', 'REDIS_URL',
+  'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS'
 )
 $original = @{}
 foreach ($variable in $variables) { $original[$variable] = [Environment]::GetEnvironmentVariable($variable) }
@@ -62,10 +72,14 @@ try {
   $sensitiveRedisUrl = 'redis://dummy.invalid:6379'
   $ambientDatabaseUrl = 'postgresql://ambient:ambient@ambient.invalid:5432/ambient'
   $ambientRedisUrl = 'redis://ambient.invalid:6380'
+  $providerInventoryDefault = 'autoops-demo,pramod-s-ss-workspace'
+  $providerInventoryOverride = 'test-provider-inventory'
   Set-Content -LiteralPath $env:AUTOOPS_FILE_MODE_ENV_FILE -Value @('GITHUB_ACTIONS_ENABLED=true', 'JENKINS_INTEGRATION_ENABLED=false')
   Set-Content -LiteralPath $env:AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE -Value @("DATABASE_URL=$sensitiveDatabaseUrl", "REDIS_URL=$sensitiveRedisUrl")
   $env:DATABASE_URL = $ambientDatabaseUrl
   $env:REDIS_URL = $ambientRedisUrl
+  $env:PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS = ''
+  $env:PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS = ''
 
   $default = Get-ComposeModel @('docker-compose.yml')
   $core = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml')
@@ -90,7 +104,15 @@ try {
   # Compose resolves env_file into environment in the rendered JSON. Verify the
   # compatibility overlay's two explicit source entries and their order instead.
   Assert-Condition 'SENSITIVE_ENV_ORDER' (($compatibilityOverlay.IndexOf($runtimeMarker, [System.StringComparison]::Ordinal) -ge 0) -and ($compatibilityOverlay.IndexOf($sensitiveMarker, [System.StringComparison]::Ordinal) -gt $compatibilityOverlay.IndexOf($runtimeMarker, [System.StringComparison]::Ordinal)) -and (([regex]::Matches($compatibilityOverlay, [regex]::Escape($runtimeMarker))).Count -eq 2) -and (([regex]::Matches($compatibilityOverlay, [regex]::Escape($sensitiveMarker))).Count -eq 2))
-  Assert-Condition 'SENSITIVE_ENV_BASE_MAPPINGS_RESET' ((([regex]::Matches($compatibilityOverlay, 'environment:\s*!override')).Count -eq 2) -and -not ($compatibilityOverlay -match 'DATABASE_URL:|REDIS_URL:'))
+  Assert-Condition 'SENSITIVE_ENV_BASE_MAPPINGS_EXPLICITLY_PRESERVED' (([regex]::Matches($compatibilityOverlay, 'environment:\s*!override')).Count -eq 2)
+  Assert-Condition 'SENSITIVE_ENV_ONLY_DATABASE_REDIS_YIELD_TO_ENV_FILE' (-not ($compatibilityOverlay -match 'DATABASE_URL:|REDIS_URL:'))
+  $apiPreservedRuntimeKeys = @('NODE_ENV', 'API_PORT', 'DOCKER_SOCKET_PATH', 'INFRA_TERRAFORM_ROOT', 'INFRA_ANSIBLE_ROOT', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS')
+  $workerPreservedRuntimeKeys = @('NODE_ENV', 'WORKER_PORT', 'DOCKER_SOCKET_PATH', 'INFRA_TERRAFORM_ROOT', 'INFRA_ANSIBLE_ROOT', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS')
+  Assert-Condition 'SENSITIVE_ENV_OTHER_BASE_RUNTIME_MAPPINGS_PRESERVED' ((Test-BaseRuntimeEnvironmentPreserved $default.services.api $sensitive.services.api $apiPreservedRuntimeKeys) -and (Test-BaseRuntimeEnvironmentPreserved $default.services.worker $sensitive.services.worker $workerPreservedRuntimeKeys))
+  Assert-Condition 'PROVIDER_INVENTORY_DEFAULT_PRESERVED' (($sensitive.services.api.environment.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS -eq $providerInventoryDefault) -and ($sensitive.services.worker.environment.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS -eq $providerInventoryDefault))
+  $env:PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS = $providerInventoryOverride
+  $sensitiveProviderOverride = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml', 'docker-compose.secrets-sensitive-env.yml')
+  Assert-Condition 'PROVIDER_INVENTORY_EXPLICIT_COMPOSE_OVERRIDE_PRESERVED' (($sensitiveProviderOverride.services.api.environment.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS -eq $providerInventoryOverride) -and ($sensitiveProviderOverride.services.worker.environment.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS -eq $providerInventoryOverride))
   Assert-Condition 'CORE_API_MIGRATED_ENV_REMOVED' (Test-MigratedEnvironmentAbsent $core.services.api)
   Assert-Condition 'CORE_WORKER_MIGRATED_ENV_REMOVED' (Test-MigratedEnvironmentAbsent $core.services.worker)
   Assert-Condition 'API_CORE_MOUNTS_ONLY_JWT' (Test-MountTargets $core.services.api @('/run/secrets/autoops/jwt-access', '/run/secrets/autoops/jwt-refresh'))

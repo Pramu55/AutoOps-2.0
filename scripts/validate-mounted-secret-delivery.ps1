@@ -69,15 +69,18 @@ $sensitiveRuntimeKeys = @(
   'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN',
   'AZURE_CLIENT_SECRET'
 )
+$requiredSensitiveRuntimeKeys = @('DATABASE_URL', 'REDIS_URL')
 $ordinalComparer = [System.StringComparer]::Ordinal
 $runtimeEnablementKeySet = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
 $migratedSecretKeySet = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
 $runtimeAllowedKeySet = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
 $sensitiveRuntimeKeySet = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
+$requiredSensitiveRuntimeKeySet = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
 foreach ($key in $runtimeEnablementKeys) { $null = $runtimeEnablementKeySet.Add($key) }
 foreach ($key in $migratedSecretKeys) { $null = $migratedSecretKeySet.Add($key) }
 foreach ($key in $runtimeAllowedKeys) { $null = $runtimeAllowedKeySet.Add($key) }
 foreach ($key in $sensitiveRuntimeKeys) { $null = $sensitiveRuntimeKeySet.Add($key) }
+foreach ($key in $requiredSensitiveRuntimeKeys) { $null = $requiredSensitiveRuntimeKeySet.Add($key) }
 
 function Write-Result([string]$Name, [string]$Status, [bool]$Passed) {
   # Host output is intentionally kept outside the PowerShell success pipeline so
@@ -509,6 +512,44 @@ function Read-RuntimeEnablement([string]$RuntimeConfigurationPath) {
   return @{ Valid = $true; Github = $states['GITHUB_ACTIONS_ENABLED']; Jenkins = $states['JENKINS_INTEGRATION_ENABLED']; Keys = $seenKeys }
 }
 
+function Test-SensitiveRuntimeValue([string]$RawValue) {
+  # Docker Compose interpolates unquoted and double-quoted env-file values.
+  # Treat any dollar sign in those forms as unsafe rather than consulting the
+  # caller's process environment. Single quotes are literal in Compose and
+  # may therefore carry a literal dollar sign without ambient substitution.
+  $value = $RawValue.Trim()
+  if ([string]::IsNullOrWhiteSpace($value) -or $value.StartsWith('#')) {
+    return @{ Valid = $false; Status = 'MISSING_VALUE' }
+  }
+
+  if ($value.StartsWith("'")) {
+    $match = [regex]::Match($value, "^'(?<content>(?:[^'\\]|\\.)*)'\\s*(?:#.*)?$")
+    if (-not $match.Success) { return @{ Valid = $false; Status = 'INVALID_VALUE' } }
+    if ([string]::IsNullOrWhiteSpace($match.Groups['content'].Value)) {
+      return @{ Valid = $false; Status = 'MISSING_VALUE' }
+    }
+    return @{ Valid = $true; Status = 'VALID' }
+  }
+
+  if ($value.StartsWith('"')) {
+    $match = [regex]::Match($value, '^"(?<content>(?:[^"\\]|\\.)*)"\s*(?:#.*)?$')
+    if (-not $match.Success) { return @{ Valid = $false; Status = 'INVALID_VALUE' } }
+    $content = $match.Groups['content'].Value
+    if ([string]::IsNullOrWhiteSpace($content)) { return @{ Valid = $false; Status = 'MISSING_VALUE' } }
+    if ($content.Contains('$')) { return @{ Valid = $false; Status = 'INTERPOLATION' } }
+    return @{ Valid = $true; Status = 'VALID' }
+  }
+
+  # In an unquoted Compose env-file value, a spaced inline comment is removed.
+  $effective = [regex]::Replace($value, '\s+#.*$', '').Trim()
+  if ([string]::IsNullOrWhiteSpace($effective)) { return @{ Valid = $false; Status = 'MISSING_VALUE' } }
+  if ($effective.Contains('"') -or $effective.Contains("'")) {
+    return @{ Valid = $false; Status = 'INVALID_VALUE' }
+  }
+  if ($effective.Contains('$')) { return @{ Valid = $false; Status = 'INTERPOLATION' } }
+  return @{ Valid = $true; Status = 'VALID' }
+}
+
 function Read-SensitiveRuntimeConfiguration([string]$SensitiveConfigurationPath, [System.Collections.Generic.HashSet[string]]$RuntimeKeys) {
   $seenKeys = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
   $reader = $null
@@ -543,8 +584,9 @@ function Read-SensitiveRuntimeConfiguration([string]$SensitiveConfigurationPath,
         Write-Result 'SENSITIVE_CONFIGURATION' 'UNKNOWN_KEY' $false
         return @{ Valid = $false }
       }
-      if ($match.Groups['value'].Length -eq 0) {
-        Write-Result $key 'MISSING_VALUE' $false
+      $valueValidation = Test-SensitiveRuntimeValue $match.Groups['value'].Value
+      if (-not $valueValidation.Valid) {
+        Write-Result $key $valueValidation.Status $false
         return @{ Valid = $false }
       }
     }
@@ -553,6 +595,12 @@ function Read-SensitiveRuntimeConfiguration([string]$SensitiveConfigurationPath,
     return @{ Valid = $false }
   } finally {
     if ($null -ne $reader) { $reader.Dispose() }
+  }
+  foreach ($requiredKey in $requiredSensitiveRuntimeKeys) {
+    if (-not $seenKeys.Contains($requiredKey)) {
+      Write-Result $requiredKey 'REQUIRED' $false
+      return @{ Valid = $false }
+    }
   }
   Write-Result 'SENSITIVE_CONFIGURATION' 'VALID' $true
   return @{ Valid = $true }
@@ -750,6 +798,42 @@ function Invoke-SelfTest {
       Set-TemporaryRuntimeConfiguration $sensitiveFile $invalidSensitive
       if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
     }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('DATABASE_URL=placeholder')
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder')
+    if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @($gcpAssignment)
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @($gcpAssignment)
+    if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false')
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder')
+    if (-not (Test-Overlay @('core', 'sensitive-env') $null)) { $passed = $false }
+    Write-Result 'SELF_TEST_SENSITIVE_REQUIRED_KEYS' 'PASS' $true
+    foreach ($invalidSensitiveValue in @(
+        @('DATABASE_URL=${DATABASE_URL}', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL="${DATABASE_URL}"', 'REDIS_URL=placeholder'),
+        @("DATABASE_URL=''", 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=""', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL= # intentionally empty', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=placeholder', 'REDIS_URL=${REDIS_URL}'),
+        @('DATABASE_URL=placeholder', 'REDIS_URL="${REDIS_URL:-placeholder}"')
+      )) {
+      Set-TemporaryRuntimeConfiguration $sensitiveFile $invalidSensitiveValue
+      if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    }
+    foreach ($missingRequiredSensitive in @(
+        @(),
+        @('DATABASE_URL=placeholder'),
+        @('REDIS_URL=placeholder'),
+        @('AWS_ACCESS_KEY_ID=placeholder'),
+        @('ARGOCD_AUTH_TOKEN=placeholder')
+      )) {
+      Set-TemporaryRuntimeConfiguration $sensitiveFile $missingRequiredSensitive
+      if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    }
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder', 'AWS_ACCESS_KEY_ID=placeholder')
+    if (-not (Test-Overlay @('core', 'sensitive-env') $null)) { $passed = $false }
+    Write-Result 'SELF_TEST_SENSITIVE_VALUE_AND_REQUIRED_KEYS' 'PASS' $true
     Set-TemporaryRuntimeConfiguration $runtimeFile @('DATABASE_URL=placeholder')
     Set-TemporaryRuntimeConfiguration $sensitiveFile @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder')
     if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
