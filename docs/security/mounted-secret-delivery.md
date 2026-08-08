@@ -110,10 +110,12 @@ runtime key are rejected before allowlist filtering, so unrelated duplicate
 configuration cannot pass. The sensitive file accepts only its documented
 transitional credential allowlist. It requires exactly one non-empty,
 non-interpolated `DATABASE_URL` and `REDIS_URL`; unquoted or double-quoted
-Compose interpolation syntax, effectively empty quoted values, and blank
-assignments fail closed without revealing the assignment value. Single-quoted
-values retain Docker Compose's literal semantics. The validator never retains
-or displays sensitive values. Duplicate keys across the two files,
+Compose interpolation syntax, effectively empty quoted values, blank
+assignments, and every double-quoted backslash escape fail closed without
+revealing the assignment value. This deliberately avoids reproducing Compose's
+escape decoder for sensitive material. Single-quoted values retain Docker
+Compose's literal semantics, including literal backslash text. The validator
+never retains or displays sensitive values. Duplicate keys across the two files,
 non-secret keys in the sensitive file, sensitive keys in the runtime file, and
 migrated keys in either file fail closed.
 The runtime file must not contain any migrated application-secret key. When an

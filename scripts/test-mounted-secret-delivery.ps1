@@ -47,6 +47,42 @@ function Test-BaseRuntimeEnvironmentPreserved($BaseService, $SensitiveService, [
   return $true
 }
 
+function Get-ComposeEnvironmentMappingKeys([string]$Path, [string]$ServiceName) {
+  $keys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+  $inService = $false
+  $inEnvironment = $false
+  foreach ($line in Get-Content -LiteralPath $Path) {
+    if ($line -match "^  $([regex]::Escape($ServiceName)):\s*$") {
+      $inService = $true
+      $inEnvironment = $false
+      continue
+    }
+    if (-not $inService) { continue }
+    if ($line -match '^  [A-Za-z0-9_-]+:\s*$') { break }
+    if ($line -match '^    environment:\s*(?:!override)?\s*$') {
+      $inEnvironment = $true
+      continue
+    }
+    if (-not $inEnvironment) { continue }
+    if ($line -match '^    \S') { $inEnvironment = $false; continue }
+    if ($line -match '^      (?<key>[A-Za-z_][A-Za-z0-9_]*):') {
+      $null = $keys.Add($Matches['key'])
+    }
+  }
+  return $keys
+}
+
+function Test-BaseEnvironmentDriftGuard($BaseKeys, $OverlayKeys) {
+  $approvedRemovedKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+  foreach ($key in @('DATABASE_URL', 'REDIS_URL')) {
+    $null = $approvedRemovedKeys.Add($key)
+  }
+  foreach ($baseKey in $BaseKeys) {
+    if (-not $approvedRemovedKeys.Contains($baseKey) -and -not $OverlayKeys.Contains($baseKey)) { return $false }
+  }
+  return $true
+}
+
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "autoops-mounted-secret-compose-test-$([guid]::NewGuid())"
 $variables = @(
   'AUTOOPS_FILE_MODE_ENV_FILE', 'AUTOOPS_SECRET_JWT_ACCESS_FILE',
@@ -109,6 +145,7 @@ try {
   $apiPreservedRuntimeKeys = @('NODE_ENV', 'API_PORT', 'DOCKER_SOCKET_PATH', 'INFRA_TERRAFORM_ROOT', 'INFRA_ANSIBLE_ROOT', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS')
   $workerPreservedRuntimeKeys = @('NODE_ENV', 'WORKER_PORT', 'DOCKER_SOCKET_PATH', 'INFRA_TERRAFORM_ROOT', 'INFRA_ANSIBLE_ROOT', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS')
   Assert-Condition 'SENSITIVE_ENV_OTHER_BASE_RUNTIME_MAPPINGS_PRESERVED' ((Test-BaseRuntimeEnvironmentPreserved $default.services.api $sensitive.services.api $apiPreservedRuntimeKeys) -and (Test-BaseRuntimeEnvironmentPreserved $default.services.worker $sensitive.services.worker $workerPreservedRuntimeKeys))
+  Assert-Condition 'SENSITIVE_ENV_BASE_ENVIRONMENT_DRIFT_GUARD' ((Test-BaseEnvironmentDriftGuard (Get-ComposeEnvironmentMappingKeys 'docker-compose.yml' 'api') (Get-ComposeEnvironmentMappingKeys 'docker-compose.secrets-sensitive-env.yml' 'api')) -and (Test-BaseEnvironmentDriftGuard (Get-ComposeEnvironmentMappingKeys 'docker-compose.yml' 'worker') (Get-ComposeEnvironmentMappingKeys 'docker-compose.secrets-sensitive-env.yml' 'worker')))
   Assert-Condition 'PROVIDER_INVENTORY_DEFAULT_PRESERVED' (($sensitive.services.api.environment.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS -eq $providerInventoryDefault) -and ($sensitive.services.worker.environment.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS -eq $providerInventoryDefault))
   $env:PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS = $providerInventoryOverride
   $sensitiveProviderOverride = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml', 'docker-compose.secrets-sensitive-env.yml')

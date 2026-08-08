@@ -523,9 +523,27 @@ function Test-SensitiveRuntimeValue([string]$RawValue) {
   }
 
   if ($value.StartsWith("'")) {
-    $match = [regex]::Match($value, "^'(?<content>(?:[^'\\]|\\.)*)'\\s*(?:#.*)?$")
-    if (-not $match.Success) { return @{ Valid = $false; Status = 'INVALID_VALUE' } }
-    if ([string]::IsNullOrWhiteSpace($match.Groups['content'].Value)) {
+    $closingQuote = -1
+    $escaped = $false
+    for ($index = 1; $index -lt $value.Length; $index += 1) {
+      $character = $value[$index]
+      if ($character -eq [char]92 -and -not $escaped) {
+        $escaped = $true
+        continue
+      }
+      if ($character -eq "'" -and -not $escaped) {
+        $closingQuote = $index
+        break
+      }
+      $escaped = $false
+    }
+    if ($closingQuote -lt 0) { return @{ Valid = $false; Status = 'INVALID_VALUE' } }
+    $trailing = $value.Substring($closingQuote + 1).TrimStart()
+    if (-not [string]::IsNullOrWhiteSpace($trailing) -and -not $trailing.StartsWith('#')) {
+      return @{ Valid = $false; Status = 'INVALID_VALUE' }
+    }
+    $content = $value.Substring(1, $closingQuote - 1)
+    if ([string]::IsNullOrWhiteSpace($content)) {
       return @{ Valid = $false; Status = 'MISSING_VALUE' }
     }
     return @{ Valid = $true; Status = 'VALID' }
@@ -536,6 +554,10 @@ function Test-SensitiveRuntimeValue([string]$RawValue) {
     if (-not $match.Success) { return @{ Valid = $false; Status = 'INVALID_VALUE' } }
     $content = $match.Groups['content'].Value
     if ([string]::IsNullOrWhiteSpace($content)) { return @{ Valid = $false; Status = 'MISSING_VALUE' } }
+    # Compose decodes supported backslash escapes in double-quoted env-file
+    # values. Reject them rather than attempting to emulate that parser for
+    # sensitive material, including escapes that could become whitespace.
+    if ($content.Contains('\')) { return @{ Valid = $false; Status = 'ESCAPE_SEQUENCE' } }
     if ($content.Contains('$')) { return @{ Valid = $false; Status = 'INTERPOLATION' } }
     return @{ Valid = $true; Status = 'VALID' }
   }
@@ -816,11 +838,23 @@ function Invoke-SelfTest {
         @('DATABASE_URL=', 'REDIS_URL=placeholder'),
         @('DATABASE_URL= # intentionally empty', 'REDIS_URL=placeholder'),
         @('DATABASE_URL=placeholder', 'REDIS_URL=${REDIS_URL}'),
-        @('DATABASE_URL=placeholder', 'REDIS_URL="${REDIS_URL:-placeholder}"')
+        @('DATABASE_URL=placeholder', 'REDIS_URL="${REDIS_URL:-placeholder}"'),
+        @('DATABASE_URL="\t"', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL="\n"', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL="\r"', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=" \t "', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=" \n "', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=" \r "', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL="\\"', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL="\""', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=placeholder', 'REDIS_URL="\t"')
       )) {
       Set-TemporaryRuntimeConfiguration $sensitiveFile $invalidSensitiveValue
       if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
     }
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @("DATABASE_URL='literal\t'", "REDIS_URL='literal\r'")
+    if (-not (Test-Overlay @('core', 'sensitive-env') $null)) { $passed = $false }
+    Write-Result 'SELF_TEST_SENSITIVE_DOUBLE_QUOTE_ESCAPES' 'PASS' $true
     foreach ($missingRequiredSensitive in @(
         @(),
         @('DATABASE_URL=placeholder'),
