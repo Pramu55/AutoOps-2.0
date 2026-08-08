@@ -812,6 +812,7 @@ function Invoke-SelfTest {
     foreach ($invalidSensitive in @(
         @('JWT_SECRET=placeholder'),
         @('DATABASE_URL=placeholder', 'DATABASE_URL=duplicate'),
+        @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder', 'REDIS_URL=duplicate'),
         @('LOG_LEVEL=info'),
         @($gcpAssignment),
         @('UNKNOWN_CREDENTIAL=placeholder'),
@@ -860,7 +861,8 @@ function Invoke-SelfTest {
         @('DATABASE_URL=placeholder'),
         @('REDIS_URL=placeholder'),
         @('AWS_ACCESS_KEY_ID=placeholder'),
-        @('ARGOCD_AUTH_TOKEN=placeholder')
+        @('ARGOCD_AUTH_TOKEN=placeholder'),
+        @('GRAFANA_API_TOKEN=placeholder')
       )) {
       Set-TemporaryRuntimeConfiguration $sensitiveFile $missingRequiredSensitive
       if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
