@@ -8,7 +8,11 @@ $ErrorActionPreference = 'Stop'
 $contracts = @{
   runtime = @{
     Variable = 'AUTOOPS_FILE_MODE_ENV_FILE'
-    FileName = $null
+    FileName = 'runtime.env'
+  }
+  sensitive = @{
+    Variable = 'AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE'
+    FileName = 'sensitive.env'
   }
   core = @(
     @{ Variable = 'AUTOOPS_SECRET_JWT_ACCESS_FILE'; FileName = 'jwt-access' },
@@ -26,11 +30,57 @@ $contracts = @{
 
 $runtimeEnablementKeys = @('GITHUB_ACTIONS_ENABLED', 'JENKINS_INTEGRATION_ENABLED')
 $migratedSecretKeys = @('JWT_SECRET', 'JWT_REFRESH_SECRET', 'GITHUB_ACTIONS_TOKEN', 'JENKINS_API_TOKEN')
+$runtimeAllowedKeys = @(
+  'NODE_ENV', 'LOG_LEVEL', 'STRICT_ENV_VALIDATION', 'API_PORT', 'API_HOST', 'API_PUBLIC_URL',
+  'CORS_ORIGINS', 'WORKER_PORT', 'WORKER_HOST', 'JWT_ACCESS_TTL', 'JWT_REFRESH_TTL',
+  'GITHUB_ACTIONS_ENABLED', 'GITHUB_REPOSITORY_OWNER', 'GITHUB_REPOSITORY_NAME',
+  'GITHUB_ACTIONS_ALLOWED_WORKFLOWS', 'JENKINS_INTEGRATION_ENABLED', 'ARGON2_MEMORY_COST',
+  'ARGON2_TIME_COST', 'ARGON2_PARALLELISM', 'RATE_LIMIT_WINDOW_MS', 'RATE_LIMIT_MAX',
+  'OPA_URL', 'OPA_POLICY_PATH', 'OPA_REQUEST_TIMEOUT_MS', 'OPA_ENFORCEMENT_MODE',
+  'JENKINS_ALLOWED_JOBS', 'POLICY_KUBERNETES_PROTECTED_NAMESPACES',
+  'POLICY_KUBERNETES_SCALE_APPROVAL_THRESHOLD', 'ARGOCD_URL', 'ARGOCD_USERNAME',
+  'ARGOCD_SKIP_TLS_VERIFY', 'ARGOCD_REQUEST_TIMEOUT_MS', 'DEPLOYMENTS_CONCURRENCY',
+  'BUILDS_CONCURRENCY', 'AI_CONCURRENCY', 'KUBERNETES_ALLOWED_NAMESPACES',
+  'KUBERNETES_MAX_REPLICAS', 'PROMETHEUS_URL', 'GRAFANA_URL', 'GRAFANA_PUBLIC_URL',
+  'AWS_INTEGRATION_ENABLED', 'AWS_REGION', 'AWS_ACCOUNT_ID', 'AWS_ALLOWED_DEPLOYMENT_WORKSPACES',
+  'AWS_TERRAFORM_STATE_BUCKET', 'AWS_TERRAFORM_STATE_DYNAMODB_TABLE',
+  'AWS_TERRAFORM_STATE_REGION', 'AWS_DEPLOYMENT_APPLY_ENABLED', 'AWS_ECR_PUSH_ENABLED',
+  'AWS_ECR_PRODUCTION_PUSH_REQUIRES_APPROVAL', 'AWS_ALLOWED_ACCOUNT_IDS', 'AWS_ALLOWED_REGIONS',
+  'AWS_MAX_PLAN_ADD_COUNT', 'AWS_MAX_PLAN_CHANGE_COUNT', 'AWS_MAX_MONTHLY_COST_DELTA_USD',
+  'AWS_MAX_FARGATE_CPU', 'AWS_MAX_FARGATE_MEMORY_MB', 'AWS_MAX_DESIRED_COUNT',
+  'AWS_BLOCK_PUBLIC_LOAD_BALANCER_BY_DEFAULT', 'AWS_ALLOW_PUBLIC_LOAD_BALANCER',
+  'AWS_COST_GUARDRAILS_ENABLED', 'AWS_BLAST_RADIUS_GUARDRAILS_ENABLED',
+  'API_INTERNAL_URL', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS',
+  'PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS',
+  'JENKINS_URL', 'JENKINS_USERNAME', 'JENKINS_REQUEST_TIMEOUT_MS',
+  'JENKINS_TRIGGER_POLL_TIMEOUT_MS', 'JENKINS_TRIGGER_POLL_INTERVAL_MS',
+  'DOCKER_SOCKET_PATH', 'DOCKER_HOST', 'AUTOOPS_MONITORED_DOCKER_COMPOSE_PROJECTS',
+  'KUBECONFIG', 'KUBERNETES_API_SERVER_OVERRIDE', 'KUBERNETES_TLS_SERVER_NAME_OVERRIDE',
+  'INFRA_AUTOMATION_ENABLED', 'INFRA_TERRAFORM_ROOT', 'INFRA_ANSIBLE_ROOT',
+  'INFRA_OPERATION_TIMEOUT_SECONDS', 'INFRA_EXPORT_OUTPUT_LIMIT',
+  'AWS_DEFAULT_TAG_OWNER', 'AWS_ECR_ALLOWED_REPOSITORIES', 'AWS_ECR_ALLOWED_BUILD_TARGETS',
+  'AZURE_INTEGRATION_ENABLED', 'AZURE_TENANT_ID', 'AZURE_CLIENT_ID',
+  'AZURE_SUBSCRIPTION_ID', 'GCP_INTEGRATION_ENABLED', 'GOOGLE_APPLICATION_CREDENTIALS'
+)
+$sensitiveRuntimeKeys = @(
+  'DATABASE_URL', 'REDIS_URL',
+  'ARGOCD_AUTH_TOKEN', 'ARGOCD_PASSWORD',
+  'GRAFANA_API_TOKEN',
+  'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN',
+  'AZURE_CLIENT_SECRET'
+)
+$requiredSensitiveRuntimeKeys = @('DATABASE_URL', 'REDIS_URL')
 $ordinalComparer = [System.StringComparer]::Ordinal
 $runtimeEnablementKeySet = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
 $migratedSecretKeySet = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
+$runtimeAllowedKeySet = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
+$sensitiveRuntimeKeySet = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
+$requiredSensitiveRuntimeKeySet = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
 foreach ($key in $runtimeEnablementKeys) { $null = $runtimeEnablementKeySet.Add($key) }
 foreach ($key in $migratedSecretKeys) { $null = $migratedSecretKeySet.Add($key) }
+foreach ($key in $runtimeAllowedKeys) { $null = $runtimeAllowedKeySet.Add($key) }
+foreach ($key in $sensitiveRuntimeKeys) { $null = $sensitiveRuntimeKeySet.Add($key) }
+foreach ($key in $requiredSensitiveRuntimeKeys) { $null = $requiredSensitiveRuntimeKeySet.Add($key) }
 
 function Write-Result([string]$Name, [string]$Status, [bool]$Passed) {
   # Host output is intentionally kept outside the PowerShell success pipeline so
@@ -375,7 +425,7 @@ function Test-SourceFile([hashtable]$Contract, [string]$RepositoryRoot, [hashtab
 }
 
 function Get-NormalizedOverlays([string[]]$Requested) {
-  $known = @('core', 'github', 'jenkins')
+  $known = @('core', 'sensitive-env', 'github', 'jenkins')
   $selected = New-Object System.Collections.Generic.List[string]
   $valid = $true
   foreach ($entry in $Requested) {
@@ -432,6 +482,14 @@ function Read-RuntimeEnablement([string]$RuntimeConfigurationPath) {
         Write-Result 'RUNTIME_CONFIGURATION' 'MIGRATED_SECRET_KEY' $false
         return @{ Valid = $false }
       }
+      if ($sensitiveRuntimeKeySet.Contains($key)) {
+        Write-Result 'RUNTIME_CONFIGURATION' 'SENSITIVE_KEY' $false
+        return @{ Valid = $false }
+      }
+      if (-not $runtimeAllowedKeySet.Contains($key)) {
+        Write-Result 'RUNTIME_CONFIGURATION' 'UNKNOWN_KEY' $false
+        return @{ Valid = $false }
+      }
       if (-not $runtimeEnablementKeySet.Contains($key)) { continue }
       $state = ConvertTo-ApplicationBoolean $match.Groups['value'].Value.Trim()
       if (-not $state.Valid) {
@@ -451,7 +509,123 @@ function Read-RuntimeEnablement([string]$RuntimeConfigurationPath) {
     Write-Result $key $(if ($states[$key].Enabled) { 'ENABLED' } else { 'DISABLED' }) $true
   }
   Write-Result 'RUNTIME_CONFIGURATION' 'VALID' $true
-  return @{ Valid = $true; Github = $states['GITHUB_ACTIONS_ENABLED']; Jenkins = $states['JENKINS_INTEGRATION_ENABLED'] }
+  return @{ Valid = $true; Github = $states['GITHUB_ACTIONS_ENABLED']; Jenkins = $states['JENKINS_INTEGRATION_ENABLED']; Keys = $seenKeys }
+}
+
+function Test-SensitiveRuntimeValue([string]$RawValue) {
+  # Docker Compose interpolates unquoted and double-quoted env-file values.
+  # Treat any dollar sign in those forms as unsafe rather than consulting the
+  # caller's process environment. Single quotes are literal in Compose and
+  # may therefore carry a literal dollar sign without ambient substitution.
+  $value = $RawValue.Trim()
+  if ([string]::IsNullOrWhiteSpace($value) -or $value.StartsWith('#')) {
+    return @{ Valid = $false; Status = 'MISSING_VALUE' }
+  }
+
+  if ($value.StartsWith("'")) {
+    $closingQuote = -1
+    $escaped = $false
+    for ($index = 1; $index -lt $value.Length; $index += 1) {
+      $character = $value[$index]
+      if ($character -eq [char]92 -and -not $escaped) {
+        $escaped = $true
+        continue
+      }
+      if ($character -eq "'" -and -not $escaped) {
+        $closingQuote = $index
+        break
+      }
+      $escaped = $false
+    }
+    if ($closingQuote -lt 0) { return @{ Valid = $false; Status = 'INVALID_VALUE' } }
+    $trailing = $value.Substring($closingQuote + 1).TrimStart()
+    if (-not [string]::IsNullOrWhiteSpace($trailing) -and -not $trailing.StartsWith('#')) {
+      return @{ Valid = $false; Status = 'INVALID_VALUE' }
+    }
+    $content = $value.Substring(1, $closingQuote - 1)
+    if ([string]::IsNullOrWhiteSpace($content)) {
+      return @{ Valid = $false; Status = 'MISSING_VALUE' }
+    }
+    return @{ Valid = $true; Status = 'VALID' }
+  }
+
+  if ($value.StartsWith('"')) {
+    $match = [regex]::Match($value, '^"(?<content>(?:[^"\\]|\\.)*)"\s*(?:#.*)?$')
+    if (-not $match.Success) { return @{ Valid = $false; Status = 'INVALID_VALUE' } }
+    $content = $match.Groups['content'].Value
+    if ([string]::IsNullOrWhiteSpace($content)) { return @{ Valid = $false; Status = 'MISSING_VALUE' } }
+    # Compose decodes supported backslash escapes in double-quoted env-file
+    # values. Reject them rather than attempting to emulate that parser for
+    # sensitive material, including escapes that could become whitespace.
+    if ($content.Contains('\')) { return @{ Valid = $false; Status = 'ESCAPE_SEQUENCE' } }
+    if ($content.Contains('$')) { return @{ Valid = $false; Status = 'INTERPOLATION' } }
+    return @{ Valid = $true; Status = 'VALID' }
+  }
+
+  # In an unquoted Compose env-file value, a spaced inline comment is removed.
+  $effective = [regex]::Replace($value, '\s+#.*$', '').Trim()
+  if ([string]::IsNullOrWhiteSpace($effective)) { return @{ Valid = $false; Status = 'MISSING_VALUE' } }
+  if ($effective.Contains('"') -or $effective.Contains("'")) {
+    return @{ Valid = $false; Status = 'INVALID_VALUE' }
+  }
+  if ($effective.Contains('$')) { return @{ Valid = $false; Status = 'INTERPOLATION' } }
+  return @{ Valid = $true; Status = 'VALID' }
+}
+
+function Read-SensitiveRuntimeConfiguration([string]$SensitiveConfigurationPath, [System.Collections.Generic.HashSet[string]]$RuntimeKeys) {
+  $seenKeys = [System.Collections.Generic.HashSet[string]]::new($ordinalComparer)
+  $reader = $null
+  try {
+    $reader = [IO.File]::OpenText($SensitiveConfigurationPath)
+    while (($rawLine = $reader.ReadLine()) -ne $null) {
+      $line = $rawLine.Trim().TrimStart([char]0xfeff)
+      if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) { continue }
+      $match = [regex]::Match($line, '^(?<key>[A-Za-z_][A-Za-z0-9_]*)=(?<value>.*)$')
+      if (-not $match.Success) {
+        Write-Result 'SENSITIVE_CONFIGURATION' 'INVALID_FORMAT' $false
+        return @{ Valid = $false }
+      }
+      $key = $match.Groups['key'].Value
+      if (-not $seenKeys.Add($key)) {
+        Write-Result 'SENSITIVE_CONFIGURATION' 'DUPLICATE_KEY' $false
+        return @{ Valid = $false }
+      }
+      if ($RuntimeKeys.Contains($key)) {
+        Write-Result 'SENSITIVE_CONFIGURATION' 'CROSS_FILE_DUPLICATE' $false
+        return @{ Valid = $false }
+      }
+      if ($migratedSecretKeySet.Contains($key)) {
+        Write-Result 'SENSITIVE_CONFIGURATION' 'MIGRATED_SECRET_KEY' $false
+        return @{ Valid = $false }
+      }
+      if ($runtimeAllowedKeySet.Contains($key)) {
+        Write-Result 'SENSITIVE_CONFIGURATION' 'NON_SECRET_KEY' $false
+        return @{ Valid = $false }
+      }
+      if (-not $sensitiveRuntimeKeySet.Contains($key)) {
+        Write-Result 'SENSITIVE_CONFIGURATION' 'UNKNOWN_KEY' $false
+        return @{ Valid = $false }
+      }
+      $valueValidation = Test-SensitiveRuntimeValue $match.Groups['value'].Value
+      if (-not $valueValidation.Valid) {
+        Write-Result $key $valueValidation.Status $false
+        return @{ Valid = $false }
+      }
+    }
+  } catch {
+    Write-Result 'SENSITIVE_CONFIGURATION' 'UNREADABLE' $false
+    return @{ Valid = $false }
+  } finally {
+    if ($null -ne $reader) { $reader.Dispose() }
+  }
+  foreach ($requiredKey in $requiredSensitiveRuntimeKeys) {
+    if (-not $seenKeys.Contains($requiredKey)) {
+      Write-Result $requiredKey 'REQUIRED' $false
+      return @{ Valid = $false }
+    }
+  }
+  Write-Result 'SENSITIVE_CONFIGURATION' 'VALID' $true
+  return @{ Valid = $true }
 }
 
 function Test-Overlay([string[]]$RequestedOverlay, [hashtable]$MetadataOverrides) {
@@ -468,6 +642,19 @@ function Test-Overlay([string[]]$RequestedOverlay, [hashtable]$MetadataOverrides
   if (-not $runtimeSource.Passed) { return $false }
   $runtime = Read-RuntimeEnablement $runtimeSource.CanonicalPath
   if (-not $runtime.Valid) { return $false }
+
+  if (-not ($selected -contains 'sensitive-env')) {
+    Write-Result 'SENSITIVE_ENV_OVERLAY' 'REQUIRED' $false
+    return $false
+  }
+  $sensitiveOverride = $null
+  if ($null -ne $MetadataOverrides -and $MetadataOverrides.ContainsKey($contracts.sensitive.Variable)) {
+    $sensitiveOverride = $MetadataOverrides[$contracts.sensitive.Variable]
+  }
+  $sensitiveSource = Test-SourceFile $contracts.sensitive $repositoryRoot $sensitiveOverride
+  if (-not $sensitiveSource.Passed) { return $false }
+  $sensitive = Read-SensitiveRuntimeConfiguration $sensitiveSource.CanonicalPath $runtime.Keys
+  if (-not $sensitive.Valid) { return $false }
 
   $integrations = @(
     @{ Name = 'GITHUB_ACTIONS_ENABLED'; Overlay = 'github'; State = $runtime.Github },
@@ -488,7 +675,7 @@ function Test-Overlay([string[]]$RequestedOverlay, [hashtable]$MetadataOverrides
   }
   if (-not $allPassed) { return $false }
 
-  $required = @($contracts.runtime) + @($contracts.core)
+  $required = @($contracts.runtime) + @($contracts.sensitive) + @($contracts.core)
   if ($selected -contains 'github') { $required += @($contracts.github) }
   if ($selected -contains 'jenkins') { $required += @($contracts.jenkins) }
   $seen = @{}
@@ -519,7 +706,7 @@ function Invoke-SelfTest {
   $variables = @(
     'AUTOOPS_FILE_MODE_ENV_FILE', 'AUTOOPS_SECRET_JWT_ACCESS_FILE',
     'AUTOOPS_SECRET_JWT_REFRESH_FILE', 'AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE',
-    'AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE', 'GITHUB_ACTIONS_ENABLED',
+    'AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE', 'AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE', 'GITHUB_ACTIONS_ENABLED',
     'JENKINS_INTEGRATION_ENABLED'
   )
   $original = @{}
@@ -529,14 +716,26 @@ function Invoke-SelfTest {
     foreach ($file in @('jwt-access', 'jwt-refresh', 'github-actions-token', 'jenkins-api-token')) {
       New-Item -ItemType File -Path (Join-Path $temporaryRoot $file) | Out-Null
     }
-    $runtimeFile = Join-Path $temporaryRoot 'file-mode.env'
+    $runtimeFile = Join-Path $temporaryRoot 'runtime.env'
+    $sensitiveFile = Join-Path $temporaryRoot 'sensitive.env'
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder', 'AWS_ACCESS_KEY_ID=placeholder')
     $env:AUTOOPS_FILE_MODE_ENV_FILE = $runtimeFile
+    $env:AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE = $sensitiveFile
     $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = Join-Path $temporaryRoot 'jwt-access'
     $env:AUTOOPS_SECRET_JWT_REFRESH_FILE = Join-Path $temporaryRoot 'jwt-refresh'
     $env:AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE = Join-Path $temporaryRoot 'github-actions-token'
     $env:AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE = Join-Path $temporaryRoot 'jenkins-api-token'
     $env:GITHUB_ACTIONS_ENABLED = 'true'
     $env:JENKINS_INTEGRATION_ENABLED = 'true'
+    $gcpKey = 'GOOGLE_APPLICATION_CREDENTIALS'
+    $gcpReference = '/temporary/dummy/reference.json'
+    $gcpAssignment = $gcpKey + '=' + $gcpReference
+    $gcpLowerAssignment = $gcpKey.ToLowerInvariant() + '=' + $gcpReference
+    $gcpMixedAssignment = ('Google' + $gcpKey.Substring(6).ToLowerInvariant()) + '=' + $gcpReference
+    $gcpDuplicateAssignments = @(
+      ($gcpKey + '=/temporary/dummy/one.json')
+      ($gcpKey + '=/temporary/dummy/two.json')
+    )
 
     $passed = $true
     $literalLsFiles = Get-GitArgumentVector $temporaryRoot @('ls-files', '--error-unmatch', '--', ':(top)literal/jwt-access') -LiteralPathspecs
@@ -550,32 +749,32 @@ function Invoke-SelfTest {
     if ($outsideGitStatus -ne 'OUTSIDE') { $passed = $false }
     Write-Result 'SELF_TEST_GIT_OUTSIDE' $outsideGitStatus ($outsideGitStatus -eq 'OUTSIDE')
     Set-TemporaryRuntimeConfiguration $runtimeFile @()
-    if (-not (Test-Overlay @('core') $null)) { $passed = $false }
+    if (Test-Overlay @('core') $null) { $passed = $false }
     Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false')
-    if (-not (Test-Overlay @('core') $null)) { $passed = $false }
+    if (-not (Test-Overlay @('core', 'sensitive-env') $null)) { $passed = $false }
 
     Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=true', 'JENKINS_INTEGRATION_ENABLED=false')
-    if (Test-Overlay @('core') $null) { $passed = $false }
-    if (-not (Test-Overlay @('github') $null)) { $passed = $false }
+    if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    if (-not (Test-Overlay @('github', 'sensitive-env') $null)) { $passed = $false }
     $env:AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE = $null
-    if (Test-Overlay @('github') $null) { $passed = $false }
+    if (Test-Overlay @('github', 'sensitive-env') $null) { $passed = $false }
     $env:AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE = Join-Path $temporaryRoot 'github-actions-token'
     Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false')
-    if (Test-Overlay @('github') $null) { $passed = $false }
+    if (Test-Overlay @('github', 'sensitive-env') $null) { $passed = $false }
 
     Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=true')
-    if (Test-Overlay @('core') $null) { $passed = $false }
-    if (-not (Test-Overlay @('jenkins') $null)) { $passed = $false }
+    if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    if (-not (Test-Overlay @('jenkins', 'sensitive-env') $null)) { $passed = $false }
     $env:AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE = $null
-    if (Test-Overlay @('jenkins') $null) { $passed = $false }
+    if (Test-Overlay @('jenkins', 'sensitive-env') $null) { $passed = $false }
     $env:AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE = Join-Path $temporaryRoot 'jenkins-api-token'
 
     Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=true', 'JENKINS_INTEGRATION_ENABLED=true')
-    if (-not (Test-Overlay @('core', 'github', 'jenkins') $null)) { $passed = $false }
+    if (-not (Test-Overlay @('core', 'sensitive-env', 'github', 'jenkins') $null)) { $passed = $false }
     $env:GITHUB_ACTIONS_ENABLED = 'false'; $env:JENKINS_INTEGRATION_ENABLED = 'false'
-    if (-not (Test-Overlay @('core', 'github', 'jenkins') $null)) { $passed = $false }
+    if (-not (Test-Overlay @('core', 'sensitive-env', 'github', 'jenkins') $null)) { $passed = $false }
     $env:GITHUB_ACTIONS_ENABLED = 'true'; $env:JENKINS_INTEGRATION_ENABLED = 'true'
-    if (Test-Overlay @('core', 'github', 'github', 'jenkins') $null) { $passed = $false }
+    if (Test-Overlay @('core', 'sensitive-env', 'github', 'github', 'jenkins') $null) { $passed = $false }
     if (Test-Overlay @('unknown') $null) { $passed = $false }
 
     foreach ($invalidRuntime in @(
@@ -586,20 +785,106 @@ function Invoke-SelfTest {
         @('JWT_SECRET=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false'),
         @('JWT_REFRESH_SECRET=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false'),
         @('GITHUB_ACTIONS_TOKEN=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false'),
-        @('JENKINS_API_TOKEN=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false')
+        @('JENKINS_API_TOKEN=placeholder', 'GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false'),
+        @($gcpLowerAssignment),
+        @($gcpMixedAssignment),
+        $gcpDuplicateAssignments
       )) {
       Set-TemporaryRuntimeConfiguration $runtimeFile $invalidRuntime
-      if (Test-Overlay @('core') $null) { $passed = $false }
+      if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
     }
-    Set-TemporaryRuntimeConfiguration $runtimeFile @('UNRELATED_VALUE=value-one')
-    if (-not (Test-Overlay @('core') $null)) { $passed = $false }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('LOG_LEVEL=info')
+    if (-not (Test-Overlay @('core', 'sensitive-env') $null)) { $passed = $false }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @(
+      'GCP_INTEGRATION_ENABLED=true',
+      $gcpAssignment
+    )
+    if (-not (Test-Overlay @('core', 'sensitive-env') $null)) { $passed = $false }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @(
+      'GCP_INTEGRATION_ENABLED=false',
+      $gcpAssignment
+    )
+    if (-not (Test-Overlay @('core', 'sensitive-env') $null)) { $passed = $false }
+
+    $env:AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE = $null
+    if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    $env:AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE = $sensitiveFile
+    foreach ($invalidSensitive in @(
+        @('JWT_SECRET=placeholder'),
+        @('DATABASE_URL=placeholder', 'DATABASE_URL=duplicate'),
+        @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder', 'REDIS_URL=duplicate'),
+        @('LOG_LEVEL=info'),
+        @($gcpAssignment),
+        @('UNKNOWN_CREDENTIAL=placeholder'),
+        @('DATABASE_URL=')
+      )) {
+      Set-TemporaryRuntimeConfiguration $sensitiveFile $invalidSensitive
+      if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('DATABASE_URL=placeholder')
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder')
+    if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @($gcpAssignment)
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @($gcpAssignment)
+    if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false')
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder')
+    if (-not (Test-Overlay @('core', 'sensitive-env') $null)) { $passed = $false }
+    Write-Result 'SELF_TEST_SENSITIVE_REQUIRED_KEYS' 'PASS' $true
+    foreach ($invalidSensitiveValue in @(
+        @('DATABASE_URL=${DATABASE_URL}', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL="${DATABASE_URL}"', 'REDIS_URL=placeholder'),
+        @("DATABASE_URL=''", 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=""', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL= # intentionally empty', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=placeholder', 'REDIS_URL=${REDIS_URL}'),
+        @('DATABASE_URL=placeholder', 'REDIS_URL="${REDIS_URL:-placeholder}"'),
+        @('DATABASE_URL="\t"', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL="\n"', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL="\r"', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=" \t "', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=" \n "', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=" \r "', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL="\\"', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL="\""', 'REDIS_URL=placeholder'),
+        @('DATABASE_URL=placeholder', 'REDIS_URL="\t"')
+      )) {
+      Set-TemporaryRuntimeConfiguration $sensitiveFile $invalidSensitiveValue
+      if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    }
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @("DATABASE_URL='literal\t'", "REDIS_URL='literal\r'")
+    if (-not (Test-Overlay @('core', 'sensitive-env') $null)) { $passed = $false }
+    Write-Result 'SELF_TEST_SENSITIVE_DOUBLE_QUOTE_ESCAPES' 'PASS' $true
+    foreach ($missingRequiredSensitive in @(
+        @(),
+        @('DATABASE_URL=placeholder'),
+        @('REDIS_URL=placeholder'),
+        @('AWS_ACCESS_KEY_ID=placeholder'),
+        @('ARGOCD_AUTH_TOKEN=placeholder'),
+        @('GRAFANA_API_TOKEN=placeholder')
+      )) {
+      Set-TemporaryRuntimeConfiguration $sensitiveFile $missingRequiredSensitive
+      if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    }
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder', 'AWS_ACCESS_KEY_ID=placeholder')
+    if (-not (Test-Overlay @('core', 'sensitive-env') $null)) { $passed = $false }
+    Write-Result 'SELF_TEST_SENSITIVE_VALUE_AND_REQUIRED_KEYS' 'PASS' $true
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('DATABASE_URL=placeholder')
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder')
+    if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @($gcpAssignment)
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @($gcpAssignment)
+    if (Test-Overlay @('core', 'sensitive-env') $null) { $passed = $false }
+    Set-TemporaryRuntimeConfiguration $runtimeFile @('GITHUB_ACTIONS_ENABLED=false', 'JENKINS_INTEGRATION_ENABLED=false')
+    Set-TemporaryRuntimeConfiguration $sensitiveFile @('DATABASE_URL=placeholder', 'REDIS_URL=placeholder')
     foreach ($caseSensitiveRuntime in @(
-        @{ Lines = @('github_actions_enabled=true'); Overlay = @('github') },
-        @{ Lines = @('Github_Actions_Enabled=true'); Overlay = @('github') },
-        @{ Lines = @('jenkins_integration_enabled=true'); Overlay = @('jenkins') },
-        @{ Lines = @('Jenkins_Integration_Enabled=true'); Overlay = @('jenkins') },
-        @{ Lines = @('GITHUB_ACTIONS_ENABLED=false', 'github_actions_enabled=true'); Overlay = @('github') },
-        @{ Lines = @('JENKINS_INTEGRATION_ENABLED=false', 'jenkins_integration_enabled=true'); Overlay = @('jenkins') }
+        @{ Lines = @('github_actions_enabled=true'); Overlay = @('github', 'sensitive-env') },
+        @{ Lines = @('Github_Actions_Enabled=true'); Overlay = @('github', 'sensitive-env') },
+        @{ Lines = @('jenkins_integration_enabled=true'); Overlay = @('jenkins', 'sensitive-env') },
+        @{ Lines = @('Jenkins_Integration_Enabled=true'); Overlay = @('jenkins', 'sensitive-env') },
+        @{ Lines = @('GITHUB_ACTIONS_ENABLED=false', 'github_actions_enabled=true'); Overlay = @('github', 'sensitive-env') },
+        @{ Lines = @('JENKINS_INTEGRATION_ENABLED=false', 'jenkins_integration_enabled=true'); Overlay = @('jenkins', 'sensitive-env') }
       )) {
       Set-TemporaryRuntimeConfiguration $runtimeFile $caseSensitiveRuntime.Lines
       if (Test-Overlay $caseSensitiveRuntime.Overlay $null) { $passed = $false }
@@ -633,7 +918,7 @@ function Invoke-SelfTest {
       New-Item -ItemType HardLink -Path $hardLinkSource -Target $hardLinkTarget -ErrorAction Stop | Out-Null
       $originalJwtAccess = $env:AUTOOPS_SECRET_JWT_ACCESS_FILE
       $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $hardLinkSource
-      if (Test-Overlay @('core', 'github', 'jenkins') $null) { $passed = $false }
+      if (Test-Overlay @('core', 'sensitive-env', 'github', 'jenkins') $null) { $passed = $false }
       $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $originalJwtAccess
       Write-Result 'SELF_TEST_HARD_LINK' 'REJECTED' $true
     } catch {
@@ -674,7 +959,7 @@ function Invoke-SelfTest {
         if (-not $literalAdd.Invoked -or $literalAdd.ExitCode -ne 0) { throw 'Temporary literal pathspec staging failed.' }
         $originalJwtAccess = $env:AUTOOPS_SECRET_JWT_ACCESS_FILE
         $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $magicSource
-        if (Test-Overlay @('core', 'github', 'jenkins') $null) { $passed = $false }
+        if (Test-Overlay @('core', 'sensitive-env', 'github', 'jenkins') $null) { $passed = $false }
         $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $originalJwtAccess
         Write-Result 'SELF_TEST_LITERAL_PATHSPEC_LINUX' 'REJECTED' $true
       }
@@ -686,14 +971,14 @@ function Invoke-SelfTest {
       if ($LASTEXITCODE -ne 0) { throw 'Temporary Git staging failed.' }
       $originalJwtAccess = $env:AUTOOPS_SECRET_JWT_ACCESS_FILE
       $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $trackedSource
-      if (Test-Overlay @('core', 'github', 'jenkins') $null) { $passed = $false }
+      if (Test-Overlay @('core', 'sensitive-env', 'github', 'jenkins') $null) { $passed = $false }
       $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $originalJwtAccess
 
       $untrackedSource = Join-Path $untrackedRepository 'jwt-access'
       $gitTestStage = 'UNTRACKED'
       New-Item -ItemType File -Path $untrackedSource | Out-Null
       $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $untrackedSource
-      if (Test-Overlay @('core', 'github', 'jenkins') $null) { $passed = $false }
+      if (Test-Overlay @('core', 'sensitive-env', 'github', 'jenkins') $null) { $passed = $false }
       $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $originalJwtAccess
 
       [IO.File]::WriteAllText((Join-Path $ignoredRepository '.gitignore'), 'jwt-access', [Text.UTF8Encoding]::new($false))
@@ -701,7 +986,7 @@ function Invoke-SelfTest {
       $ignoredSource = Join-Path $ignoredRepository 'jwt-access'
       New-Item -ItemType File -Path $ignoredSource | Out-Null
       $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $ignoredSource
-      if (-not (Test-Overlay @('core', 'github', 'jenkins') $null)) { $passed = $false }
+      if (-not (Test-Overlay @('core', 'sensitive-env', 'github', 'jenkins') $null)) { $passed = $false }
       $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $originalJwtAccess
 
       $nestedSource = Join-Path $nestedRepository 'jwt-access'
@@ -710,7 +995,7 @@ function Invoke-SelfTest {
       $null = & git -C $nestedRepository add -- 'jwt-access' 2>$null
       if ($LASTEXITCODE -ne 0) { throw 'Temporary nested Git staging failed.' }
       $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $nestedSource
-      if (Test-Overlay @('core', 'github', 'jenkins') $null) { $passed = $false }
+      if (Test-Overlay @('core', 'sensitive-env', 'github', 'jenkins') $null) { $passed = $false }
       $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = $originalJwtAccess
 
       $worktreeSource = Join-Path $worktreeRepository 'jwt-access'
