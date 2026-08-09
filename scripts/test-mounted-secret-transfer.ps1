@@ -27,10 +27,11 @@ function New-Fixture([string]$Root, [string[]]$RuntimeLines, [string[]]$Sensitiv
   [IO.File]::WriteAllText((Join-Path $Root 'jwt-refresh'), 'AUTOOPS_SYNTHETIC_JWT_REFRESH')
   [IO.File]::WriteAllText((Join-Path $Root 'github-actions-token'), 'AUTOOPS_SYNTHETIC_GITHUB_TOKEN')
 }
-function Invoke-Tool([string]$Source, [string]$Target, [string]$Failure = 'None', [string]$WorktreeProbeMode = 'Normal', [switch]$EnforceRuntimePermissions, [switch]$EmitSourceCaptureAudit) {
+function Invoke-Tool([string]$Source, [string]$Target, [string]$Failure = 'None', [string]$WorktreeProbeMode = 'Normal', [switch]$EnforceRuntimePermissions, [switch]$EmitSourceCaptureAudit, [string]$RuntimeNewline = 'None', [string]$RuntimeKey = 'LOG_LEVEL') {
   $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $tool, '-SourceMode', 'Synthetic', '-SyntheticSourceRoot', $Source, '-TargetRoot', $Target, '-TransactionId', 'synthetic-set', '-InjectFailure', $Failure, '-WorktreeProbeMode', $WorktreeProbeMode)
   if ($EnforceRuntimePermissions) { $arguments += '-EnforceRuntimePermissions' }
   if ($EmitSourceCaptureAudit) { $arguments += '-EmitSourceCaptureAudit' }
+  $arguments += @('-InjectRuntimeValueNewline', $RuntimeNewline, '-InjectedRuntimeKey', $RuntimeKey)
   $output = & powershell @arguments 2>&1
   return @{ ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine) }
 }
@@ -83,6 +84,12 @@ function Add-TestBroadAcl([string]$Path, [string]$SidText) {
   $broadRule = ('*{0}:(OI)(CI)M' -f $SidText)
   & icacls $Path /inheritance:r /grant:r $operatorRule /grant $broadRule | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'TEST_ACL_SETUP_FAILED' }
+}
+function Add-TestSidAcl([string]$Path, [string]$SidText, [Security.AccessControl.FileSystemRights]$Rights) {
+  $acl = Get-TestAcl $Path
+  $sid = [Security.Principal.SecurityIdentifier]::new($SidText)
+  $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, $Rights, [Security.AccessControl.AccessControlType]::Allow))
+  Set-TestAcl $Path $acl
 }
 function Test-RestrictedAcl([string]$Path) {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return $true }
@@ -210,6 +217,17 @@ try {
     $authenticatedResult = Invoke-RuntimeAdapter 'synthetic-source-never-contacted' $authenticatedRoot 'Normal' -EmitSourceCaptureAudit
     Assert-Condition 'TARGET_ROOT_AUTHENTICATED_USERS_MODIFY_REJECTED' ($authenticatedResult.ExitCode -ne 0 -and $authenticatedResult.Output.Contains('TARGET_ROOT_PERMISSIONS_UNSAFE'))
     Assert-Condition 'SOURCE_NOT_CAPTURED_ON_AUTHENTICATED_USERS_FAILURE' ($authenticatedResult.Output.Contains('SOURCE_ADAPTER_INVOCATIONS=0'))
+    foreach ($aclCase in @(
+      @{ Name='ACL_UNAPPROVED_CUSTOM_USER_REJECTED'; Sid='S-1-5-21-424242-424242-424242-1001'; Rights=[Security.AccessControl.FileSystemRights]::Read },
+      @{ Name='ACL_UNAPPROVED_CUSTOM_GROUP_REJECTED'; Sid='S-1-5-21-424242-424242-424242-1002'; Rights=[Security.AccessControl.FileSystemRights]::Write },
+      @{ Name='ACL_UNAPPROVED_DOMAIN_STYLE_PRINCIPAL_REJECTED'; Sid='S-1-5-21-424242-424242-424242-2001'; Rights=[Security.AccessControl.FileSystemRights]::Modify },
+      @{ Name='ACL_UNRESOLVABLE_IDENTITY_REJECTED'; Sid='S-1-5-21-424242-424242-424242-3001'; Rights=[Security.AccessControl.FileSystemRights]::FullControl }
+    )) {
+      $aclRoot = Join-Path $root ('permissions/' + $aclCase.Name); New-Item -ItemType Directory -Path $aclRoot -Force | Out-Null; Set-TestRestrictedAcl $aclRoot; Add-TestSidAcl $aclRoot $aclCase.Sid $aclCase.Rights
+      $aclResult = Invoke-RuntimeAdapter 'synthetic-source-never-contacted' $aclRoot 'Normal' -EmitSourceCaptureAudit
+      Assert-Condition $aclCase.Name ($aclResult.ExitCode -ne 0 -and $aclResult.Output.Contains('TARGET_ROOT_PERMISSIONS_UNSAFE'))
+      Assert-Condition "ACL_REJECTION_BEFORE_SOURCE_CAPTURE_$($aclCase.Name)" ($aclResult.Output.Contains('SOURCE_ADAPTER_INVOCATIONS=0'))
+    }
     $secureRoot = Join-Path $root 'permissions/secure-root'; New-Item -ItemType Directory -Path $secureRoot -Force | Out-Null; Set-TestRestrictedAcl $secureRoot
     $secureResult = Invoke-Tool $permissionSource $secureRoot 'None' 'Normal' -EnforceRuntimePermissions
     $secureSet = Get-PublishedSet $secureRoot
@@ -252,6 +270,24 @@ try {
     Assert-Condition "FAIL_CLOSED_$($case.Name)" ($result.ExitCode -ne 0)
     Assert-Condition "CLEANUP_$($case.Name)" (Test-NoPublishedSet $target)
   }
+  foreach ($runtimeNewlineCase in @(
+    @{ Name='RUNTIME_VALUE_CR_REJECTED'; Kind='CR'; Key='LOG_LEVEL' },
+    @{ Name='RUNTIME_VALUE_LF_REJECTED'; Kind='LF'; Key='LOG_LEVEL' },
+    @{ Name='RUNTIME_VALUE_CRLF_REJECTED'; Kind='CRLF'; Key='LOG_LEVEL' },
+    @{ Name='RUNTIME_ALLOWED_WORKFLOWS_CR_REJECTED'; Kind='CR'; Key='GITHUB_ACTIONS_ALLOWED_WORKFLOWS' },
+    @{ Name='RUNTIME_ALLOWED_WORKFLOWS_LF_REJECTED'; Kind='LF'; Key='GITHUB_ACTIONS_ALLOWED_WORKFLOWS' },
+    @{ Name='RUNTIME_GENERIC_ALLOWLIST_KEY_MULTILINE_REJECTED'; Kind='CRLF'; Key='OPA_URL' }
+  )) {
+    $caseRoot = Join-Path $root $runtimeNewlineCase.Name; $source = Join-Path $caseRoot 'source'; $target = Join-Path $caseRoot 'target'; New-Item -ItemType Directory -Path $target -Force | Out-Null
+    New-Fixture $source @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment)
+    $result = Invoke-Tool $source $target 'None' 'Normal' -RuntimeNewline $runtimeNewlineCase.Kind -RuntimeKey $runtimeNewlineCase.Key
+    Assert-Condition $runtimeNewlineCase.Name ($result.ExitCode -ne 0 -and $result.Output.Contains('ERROR_CODE=RUNTIME_VALUE_MULTILINE'))
+    Assert-Condition 'RUNTIME_MULTILINE_NO_PARTIAL_RUNTIME_ENV' (Test-NoPublishedSet $target)
+    Assert-Condition 'RUNTIME_MULTILINE_NO_TRANSACTION_PUBLICATION' (Test-NoPublishedSet $target)
+    foreach ($marker in $fakeMarkers) { Assert-Condition "RUNTIME_MULTILINE_NO_OUTPUT_LEAK_$($marker.Name)" (-not $result.Output.Contains($marker.Value)) }
+  }
+  $normalRuntimeTarget = Join-Path $root 'runtime-normal/target'; New-Item -ItemType Directory -Path $normalRuntimeTarget -Force | Out-Null
+  Assert-Condition 'RUNTIME_NORMAL_SINGLE_LINE_PASS' ((Invoke-Tool $validSource $normalRuntimeTarget).ExitCode -eq 0)
   foreach ($case in @(
     @{ Name='SENSITIVE_CR_REJECTED'; Sensitive=@(($databaseKey + '=synthetic' + [char]13 + 'value'),$syntheticRedisAssignment) },
     @{ Name='SENSITIVE_LF_REJECTED'; Sensitive=@(($databaseKey + '=synthetic' + [char]10 + 'value'),$syntheticRedisAssignment) },

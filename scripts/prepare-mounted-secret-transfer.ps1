@@ -13,6 +13,10 @@ param(
   [ValidateSet('Normal', 'GenericError', 'Ambiguous')]
   [string]$WorktreeProbeMode = 'Normal',
   [switch]$EnforceRuntimePermissions,
+  [ValidateSet('None', 'CR', 'LF', 'CRLF')]
+  [string]$InjectRuntimeValueNewline = 'None',
+  [ValidatePattern('^[A-Z][A-Z0-9_]*$')]
+  [string]$InjectedRuntimeKey = 'LOG_LEVEL',
   [switch]$EmitSourceCaptureAudit
 )
 
@@ -113,6 +117,9 @@ function Test-SensitiveValue([string]$RawValue) {
   $effective = [regex]::Replace($value, '\s+#.*$', '').Trim()
   return (-not [string]::IsNullOrWhiteSpace($effective)) -and -not $effective.Contains('"') -and -not $effective.Contains("'") -and -not $effective.Contains('$')
 }
+function Test-SingleLineRuntimeValue([string]$Value) {
+  return $Value.IndexOfAny([char[]]@(13, 10)) -lt 0
+}
 function Get-SyntheticValue([string]$Name) {
   $path = Join-Path $SyntheticSourceRoot $Name
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Fail-Safely 'SOURCE_MISSING' }
@@ -180,10 +187,12 @@ function Test-RestrictedRuntimePermissions([string]$Path, [bool]$RequireProtecte
     $acl = Get-RuntimeAcl $Path $isDirectory
     if ($RequireProtectedAcl -and -not $acl.AreAccessRulesProtected) { Fail-Safely $FailureCode }
     $operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $approvedSids = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($approvedSid in Get-ApprovedRuntimeSecurityIdentifiers) { $null = $approvedSids.Add($approvedSid) }
     $operatorAllowed = $false; $broadSids = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545')
     foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
       $sid = $rule.IdentityReference.Value
-      if ($broadSids -contains $sid -and $rule.AccessControlType -eq 'Allow') { Fail-Safely $FailureCode }
+      if ($rule.AccessControlType -eq 'Allow' -and -not $approvedSids.Contains($sid)) { Fail-Safely $FailureCode }
       if ($sid -eq $operatorSid -and $rule.AccessControlType -eq 'Allow' -and (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -ne 0)) { $operatorAllowed = $true }
     }
     if (-not $operatorAllowed) { Fail-Safely $FailureCode }
@@ -292,6 +301,11 @@ try {
     Get-RuntimeAssignmentMap $runtimeAllowedKeys
   }
   $runtimeSet = New-OrdinalSet $runtimeAllowedKeys; $sensitiveSet = New-OrdinalSet $sensitiveKeys; $migratedSet = New-OrdinalSet $migratedKeys
+  if ($InjectRuntimeValueNewline -ne 'None') {
+    if (-not $runtimeSet.Contains($InjectedRuntimeKey)) { Fail-Safely 'RUNTIME_KEY_INVALID' }
+    $newline = switch ($InjectRuntimeValueNewline) { 'CR' { [string][char]13 } 'LF' { [string][char]10 } 'CRLF' { [string]([char]13) + [char]10 } }
+    $runtime[$InjectedRuntimeKey] = 'synthetic' + $newline + 'value'
+  }
   foreach ($key in $runtime.Keys) {
     if ($sensitiveSet.Contains($key) -or $migratedSet.Contains($key) -or -not $runtimeSet.Contains($key)) { Fail-Safely 'RUNTIME_KEY_INVALID' }
   }
@@ -299,6 +313,7 @@ try {
   $runtimeLines = New-Object System.Collections.Generic.List[string]
   foreach ($key in $runtimeAllowedKeys) {
     if (-not $runtime.Contains($key)) { continue }
+    if (-not (Test-SingleLineRuntimeValue ([string]$runtime[$key])) ) { Fail-Safely 'RUNTIME_VALUE_MULTILINE' }
     if ($omitWhenEmpty -contains $key -and [string]::IsNullOrEmpty([string]$runtime[$key])) { continue }
     $runtimeLines.Add("$key=$($runtime[$key])")
   }
