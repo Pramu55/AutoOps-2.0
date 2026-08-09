@@ -166,14 +166,23 @@ function Get-ApprovedRuntimeSecurityIdentifiers() {
     'S-1-5-32-544' # BUILTIN\\Administrators
   )
 }
+function Get-RuntimeAcl([string]$Path, [bool]$IsDirectory) {
+  if ($IsDirectory) { return [IO.Directory]::GetAccessControl($Path) }
+  return [IO.File]::GetAccessControl($Path)
+}
+function Set-RuntimeAcl([string]$Path, [bool]$IsDirectory, [Security.AccessControl.FileSystemSecurity]$Acl) {
+  if ($IsDirectory) { [IO.Directory]::SetAccessControl($Path, $Acl); return }
+  [IO.File]::SetAccessControl($Path, $Acl)
+}
 function Test-RestrictedRuntimePermissions([string]$Path, [bool]$RequireProtectedAcl, [string]$FailureCode) {
   if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    $isDirectory = Test-Path -LiteralPath $Path -PathType Container
+    $acl = Get-RuntimeAcl $Path $isDirectory
     if ($RequireProtectedAcl -and -not $acl.AreAccessRulesProtected) { Fail-Safely $FailureCode }
     $operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $operatorAllowed = $false; $broadSids = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545')
-    foreach ($rule in $acl.Access) {
-      try { $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { Fail-Safely $FailureCode }
+    foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+      $sid = $rule.IdentityReference.Value
       if ($broadSids -contains $sid -and $rule.AccessControlType -eq 'Allow') { Fail-Safely $FailureCode }
       if ($sid -eq $operatorSid -and $rule.AccessControlType -eq 'Allow' -and (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -ne 0)) { $operatorAllowed = $true }
     }
@@ -185,17 +194,17 @@ function Test-RestrictedRuntimePermissions([string]$Path, [bool]$RequireProtecte
 function Set-InvocationRestrictedPermissions([string]$Path, [bool]$IsDirectory) {
   if (-not $requiresRuntimePermissions) { return }
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Fail-Safely 'PLATFORM_PERMISSION_MODEL_UNSUPPORTED' }
-  $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+  $acl = Get-RuntimeAcl $Path $IsDirectory
   # This function is called only for files/directories created by this invocation.
   $acl.SetAccessRuleProtection($true, $false)
-  foreach ($existingRule in @($acl.Access)) { $null = $acl.RemoveAccessRuleSpecific($existingRule) }
+  foreach ($existingRule in @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))) { $null = $acl.RemoveAccessRuleSpecific($existingRule) }
   $inheritance = if ($IsDirectory) { [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit } else { [Security.AccessControl.InheritanceFlags]::None }
   foreach ($sidText in Get-ApprovedRuntimeSecurityIdentifiers) {
     $sid = [Security.Principal.SecurityIdentifier]::new($sidText)
     $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
     $acl.AddAccessRule($rule)
   }
-  Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+  Set-RuntimeAcl $Path $IsDirectory $acl
   Test-RestrictedRuntimePermissions $Path $true 'ACL_POST_VERIFY_FAILED'
 }
 function Test-TargetRootSafe([string]$Candidate) {

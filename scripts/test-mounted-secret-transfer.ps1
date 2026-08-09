@@ -55,17 +55,28 @@ function Get-QuotedContractItems([string]$Path, [string]$Variable) {
 function Test-SameOrdinalSet([string[]]$Left, [string[]]$Right) {
   return (($Left | Sort-Object) -join "`n") -ceq (($Right | Sort-Object) -join "`n")
 }
+function Get-TestAcl([string]$Path) {
+  if (Test-Path -LiteralPath $Path -PathType Container) { return [IO.Directory]::GetAccessControl($Path) }
+  return [IO.File]::GetAccessControl($Path)
+}
+function Set-TestAcl([string]$Path, [Security.AccessControl.FileSystemSecurity]$Acl) {
+  if (Test-Path -LiteralPath $Path -PathType Container) { [IO.Directory]::SetAccessControl($Path, $Acl); return }
+  [IO.File]::SetAccessControl($Path, $Acl)
+}
+function Get-TestAclSddl([string]$Path) {
+  return (Get-TestAcl $Path).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
+}
 function Set-TestRestrictedAcl([string]$Path) {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return }
-  $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+  $acl = Get-TestAcl $Path
   $acl.SetAccessRuleProtection($true, $false)
-  foreach ($rule in @($acl.Access)) { $null = $acl.RemoveAccessRuleSpecific($rule) }
+  foreach ($rule in @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))) { $null = $acl.RemoveAccessRuleSpecific($rule) }
   $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
   foreach ($sidText in @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544')) {
     $sid = [Security.Principal.SecurityIdentifier]::new($sidText)
     $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow))
   }
-  Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+  Set-TestAcl $Path $acl
 }
 function Add-TestBroadAcl([string]$Path, [string]$SidText) {
   $operatorRule = ('{0}:(OI)(CI)F' -f $env:USERNAME)
@@ -75,12 +86,12 @@ function Add-TestBroadAcl([string]$Path, [string]$SidText) {
 }
 function Test-RestrictedAcl([string]$Path) {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return $true }
-  $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+  $acl = Get-TestAcl $Path
   if (-not $acl.AreAccessRulesProtected) { return $false }
   $operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
   $operatorAllowed = $false
-  foreach ($rule in $acl.Access) {
-    $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+  foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+    $sid = $rule.IdentityReference.Value
     if (@('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545') -contains $sid -and $rule.AccessControlType -eq 'Allow') { return $false }
     if ($sid -eq $operatorSid -and $rule.AccessControlType -eq 'Allow' -and (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -ne 0)) { $operatorAllowed = $true }
   }
@@ -190,11 +201,11 @@ try {
   if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
     $permissionSource = Join-Path $root 'permissions/source'; New-Fixture $permissionSource @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment)
     $broadRoot = Join-Path $root 'permissions/broad-root'; New-Item -ItemType Directory -Path $broadRoot -Force | Out-Null
-    $broadBefore = (Get-Acl -LiteralPath $broadRoot).Sddl
+    $broadBefore = Get-TestAclSddl $broadRoot
     $broadResult = Invoke-RuntimeAdapter 'synthetic-source-never-contacted' $broadRoot 'Normal' -EmitSourceCaptureAudit
     Assert-Condition 'TARGET_ROOT_BROAD_USERS_REJECTED' ($broadResult.ExitCode -ne 0 -and $broadResult.Output.Contains('TARGET_ROOT_PERMISSIONS_UNSAFE'))
     Assert-Condition 'TARGET_ROOT_PERMISSION_FAILURE_BEFORE_SOURCE_CAPTURE' ($broadResult.Output.Contains('SOURCE_ADAPTER_INVOCATIONS=0'))
-    Assert-Condition 'TARGET_ROOT_UNCHANGED_AFTER_REJECTION' ((Get-Acl -LiteralPath $broadRoot).Sddl -ceq $broadBefore)
+    Assert-Condition 'TARGET_ROOT_UNCHANGED_AFTER_REJECTION' ((Get-TestAclSddl $broadRoot) -ceq $broadBefore)
     $authenticatedRoot = Join-Path $root 'permissions/authenticated-users-root'; New-Item -ItemType Directory -Path $authenticatedRoot -Force | Out-Null; Set-TestRestrictedAcl $authenticatedRoot; Add-TestBroadAcl $authenticatedRoot 'S-1-5-11'
     $authenticatedResult = Invoke-RuntimeAdapter 'synthetic-source-never-contacted' $authenticatedRoot 'Normal' -EmitSourceCaptureAudit
     Assert-Condition 'TARGET_ROOT_AUTHENTICATED_USERS_MODIFY_REJECTED' ($authenticatedResult.ExitCode -ne 0 -and $authenticatedResult.Output.Contains('TARGET_ROOT_PERMISSIONS_UNSAFE'))
@@ -217,10 +228,10 @@ try {
     Assert-Condition 'PREEXISTING_SECURE_SETS_ACCEPTED' ($preexistingSecure.ExitCode -eq 0)
     $insecureSetsRoot = Join-Path $root 'permissions/insecure-preexisting-root'; New-Item -ItemType Directory -Path $insecureSetsRoot -Force | Out-Null; Set-TestRestrictedAcl $insecureSetsRoot
     $insecureSets = Join-Path $insecureSetsRoot 'sets'; New-Item -ItemType Directory -Path $insecureSets -Force | Out-Null
-    $insecureBefore = (Get-Acl -LiteralPath $insecureSets).Sddl
+    $insecureBefore = Get-TestAclSddl $insecureSets
     $preexistingInsecure = Invoke-RuntimeAdapter 'synthetic-source-never-contacted' $insecureSetsRoot 'Normal' -EmitSourceCaptureAudit
     Assert-Condition 'PREEXISTING_INSECURE_SETS_REJECTED' ($preexistingInsecure.ExitCode -ne 0 -and $preexistingInsecure.Output.Contains('EXISTING_TARGET_HIERARCHY_PERMISSIONS_UNSAFE'))
-    Assert-Condition 'PREEXISTING_SETS_NOT_AUTO_REPAIRED' ((Get-Acl -LiteralPath $insecureSets).Sddl -ceq $insecureBefore)
+    Assert-Condition 'PREEXISTING_SETS_NOT_AUTO_REPAIRED' ((Get-TestAclSddl $insecureSets) -ceq $insecureBefore)
     Assert-Condition 'SOURCE_NOT_CAPTURED_ON_PERMISSION_FAILURE' ($preexistingInsecure.Output.Contains('SOURCE_ADAPTER_INVOCATIONS=0'))
     $aclFailureRoot = Join-Path $root 'permissions/acl-failure-root'; New-Item -ItemType Directory -Path $aclFailureRoot -Force | Out-Null; Set-TestRestrictedAcl $aclFailureRoot
     $aclFailure = Invoke-Tool $permissionSource $aclFailureRoot 'Acl' 'Normal' -EnforceRuntimePermissions
