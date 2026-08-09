@@ -6,6 +6,8 @@ param(
   [string]$TargetRoot,
   [string]$SyntheticSourceRoot,
   [string]$RuntimeContainer = 'autoops-api',
+  [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_.-]*$')]
+  [string]$TransactionId = ([Guid]::NewGuid().ToString('N')),
   [ValidateSet('None', 'BeforeCommit', 'AfterFirstCommit', 'AfterAllCommits', 'Acl', 'Metadata', 'AtomicMove')]
   [string]$InjectFailure = 'None'
 )
@@ -75,11 +77,29 @@ function Read-AssignmentFile([string]$Path, [string]$Kind) {
   return $values
 }
 function Test-SensitiveValue([string]$RawValue) {
-  if ([string]::IsNullOrWhiteSpace($RawValue)) { return $false }
-  if ($RawValue -match '\$\{' -or $RawValue -match '\$[A-Za-z_]') { return $false }
-  if ($RawValue -match '^".*"$' -and $RawValue.Contains('\')) { return $false }
-  if (($RawValue -eq "''") -or ($RawValue -eq '""')) { return $false }
-  return $true
+  $value = $RawValue.Trim()
+  if ([string]::IsNullOrWhiteSpace($value) -or $value.StartsWith('#')) { return $false }
+  if ($value.StartsWith("'")) {
+    $closingQuote = -1; $escaped = $false
+    for ($index = 1; $index -lt $value.Length; $index += 1) {
+      $character = $value[$index]
+      if ($character -eq [char]92 -and -not $escaped) { $escaped = $true; continue }
+      if ($character -eq "'" -and -not $escaped) { $closingQuote = $index; break }
+      $escaped = $false
+    }
+    if ($closingQuote -lt 0) { return $false }
+    $trailing = $value.Substring($closingQuote + 1).TrimStart()
+    if (-not [string]::IsNullOrWhiteSpace($trailing) -and -not $trailing.StartsWith('#')) { return $false }
+    return -not [string]::IsNullOrWhiteSpace($value.Substring(1, $closingQuote - 1))
+  }
+  if ($value.StartsWith('"')) {
+    $match = [regex]::Match($value, '^"(?<content>(?:[^"\\]|\\.)*)"\s*(?:#.*)?$')
+    if (-not $match.Success) { return $false }
+    $content = $match.Groups['content'].Value
+    return (-not [string]::IsNullOrWhiteSpace($content)) -and -not $content.Contains('\') -and -not $content.Contains('$')
+  }
+  $effective = [regex]::Replace($value, '\s+#.*$', '').Trim()
+  return (-not [string]::IsNullOrWhiteSpace($effective)) -and -not $effective.Contains('"') -and -not $effective.Contains("'") -and -not $effective.Contains('$')
 }
 function Get-SyntheticValue([string]$Name) {
   $path = Join-Path $SyntheticSourceRoot $Name
@@ -123,15 +143,45 @@ function Get-FileMetadata([string]$Path) {
 }
 function Set-ArtifactAcl([string]$Path) {
   # Do not touch the script ACL. On non-Windows, inherited directory permissions are used.
-  if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+  if ($SourceMode -eq 'Runtime' -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
     $acl = Get-Acl -LiteralPath $Path
     $current = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $rule = [Security.AccessControl.FileSystemAccessRule]::new($current, 'FullControl', 'Allow')
     $acl.SetAccessRule($rule); Set-Acl -LiteralPath $Path -AclObject $acl
   }
 }
+function Test-TargetRootSafe([string]$Candidate) {
+  $checkpoint = 'INITIAL'
+  try {
+  if ([string]::IsNullOrWhiteSpace($Candidate) -or -not [IO.Path]::IsPathRooted($Candidate)) { Fail-Safely 'TARGET_ROOT_INVALID' }
+  $checkpoint = 'CANONICAL'; $root = [IO.Path]::GetFullPath($Candidate)
+  if (-not (Test-Path -LiteralPath $root -PathType Container)) { Fail-Safely 'TARGET_ROOT_MISSING' }
+  $checkpoint = 'PARENTS'; $current = $root
+  while ($true) {
+    $item = Get-Item -Force -LiteralPath $current -ErrorAction Stop
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { Fail-Safely 'TARGET_REPARSE_PATH' }
+    $parent = [IO.Directory]::GetParent($current)
+    if ($null -eq $parent -or $parent.FullName -eq $current) { break }
+    $current = $parent.FullName
+  }
+  $checkpoint = 'REPOSITORY'; $repositoryRoot = (& git -C $PSScriptRoot rev-parse --show-toplevel 2>$null).Trim()
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repositoryRoot)) { Fail-Safely 'REPOSITORY_ROOT_UNAVAILABLE' }
+  $checkpoint = 'CONTAINMENT'; $comparison = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+  $normalizedRepository = [IO.Path]::GetFullPath($repositoryRoot).TrimEnd('\', '/')
+  $normalizedRoot = $root.TrimEnd('\', '/')
+  if ($normalizedRoot.Equals($normalizedRepository, $comparison) -or $normalizedRoot.StartsWith($normalizedRepository + [IO.Path]::DirectorySeparatorChar, $comparison)) { Fail-Safely 'TARGET_REPOSITORY_CONTAINED' }
+  $checkpoint = 'WORKTREE'; $savedErrorActionPreference = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try { $worktreeOutput = @(& git -C $root rev-parse --show-toplevel 2>$null); $worktreeExitCode = $LASTEXITCODE } finally { $ErrorActionPreference = $savedErrorActionPreference }
+  $worktree = ([string]::Join('', [string[]]$worktreeOutput)).Trim()
+  if ($worktreeExitCode -eq 0 -or (Test-Path -LiteralPath (Join-Path $root '.git'))) { Fail-Safely 'TARGET_GIT_WORKTREE' }
+  return $root
+  } catch {
+    if ($_.Exception.Message -match '^[A-Z_]+$') { throw }
+    Fail-Safely ('TARGET_CHECK_' + $checkpoint)
+  }
+}
 function New-StagedFile([string]$Directory, [string]$Name, [string]$Value) {
-  $stage = Join-Path $Directory ('.' + $Name + '.' + [Guid]::NewGuid().ToString('N') + '.stage')
+  $stage = Join-Path $Directory $Name
   $encoding = [Text.UTF8Encoding]::new($false)
   $stream = [IO.FileStream]::new($stage, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
   try { $bytes = $encoding.GetBytes($Value); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
@@ -141,12 +191,16 @@ function New-StagedFile([string]$Directory, [string]$Name, [string]$Value) {
 $created = New-Object System.Collections.Generic.List[string]
 $staged = New-Object System.Collections.Generic.List[string]
 try {
-  if ([string]::IsNullOrWhiteSpace($TargetRoot) -or -not [IO.Path]::IsPathRooted($TargetRoot)) { Fail-Safely 'TARGET_ROOT_INVALID' }
-  $targetRootFull = [IO.Path]::GetFullPath($TargetRoot)
-  if (-not (Test-Path -LiteralPath $targetRootFull -PathType Container)) { Fail-Safely 'TARGET_ROOT_MISSING' }
+  $targetRootFull = Test-TargetRootSafe $TargetRoot
   Write-Phase 'INITIALIZE' $true
+  $setsRoot = Join-Path $targetRootFull 'sets'
+  if (-not (Test-Path -LiteralPath $setsRoot)) { New-Item -ItemType Directory -Path $setsRoot -ErrorAction Stop | Out-Null }
+  $stagingSet = Join-Path $setsRoot ('.' + $TransactionId + '.staging')
+  $publishedSet = Join-Path $setsRoot $TransactionId
+  if ((Test-Path -LiteralPath $stagingSet) -or (Test-Path -LiteralPath $publishedSet)) { Fail-Safely 'DESTINATION_EXISTS' }
+  New-Item -ItemType Directory -Path $stagingSet -ErrorAction Stop | Out-Null
+  $created.Add($stagingSet)
   $names = @('runtime.env', 'sensitive.env', 'jwt-access', 'jwt-refresh', 'github-actions-token')
-  foreach ($name in $names) { if (Test-Path -LiteralPath (Join-Path $targetRootFull $name)) { Fail-Safely 'DESTINATION_EXISTS' } }
   if ($SourceMode -eq 'Synthetic' -and [string]::IsNullOrWhiteSpace($SyntheticSourceRoot)) { Fail-Safely 'SYNTHETIC_SOURCE_REQUIRED' }
   Write-Phase 'SOURCE_DISCOVERY' $true
 
@@ -189,28 +243,25 @@ try {
   }
   if ($InjectFailure -eq 'BeforeCommit') { Fail-Safely 'INJECTED_FAILURE' }
   foreach ($name in $payloads.Keys) {
-    $stage = New-StagedFile $targetRootFull $name ([string]$payloads[$name]); $staged.Add($stage)
+    $stage = New-StagedFile $stagingSet $name ([string]$payloads[$name]); $staged.Add($stage)
     if ($InjectFailure -eq 'Acl') { Fail-Safely 'INJECTED_FAILURE' }
     Set-ArtifactAcl $stage
     if ($InjectFailure -eq 'Metadata') { Fail-Safely 'INJECTED_FAILURE' }
     $null = Get-FileMetadata $stage
   }
   Write-Phase 'ACL' $true; Write-Phase 'METADATA' $true
-  $index = 0
-  foreach ($name in $payloads.Keys) {
-    if ($InjectFailure -eq 'AtomicMove') { Fail-Safely 'INJECTED_FAILURE' }
-    Move-Item -LiteralPath $staged[$index] -Destination (Join-Path $targetRootFull $name) -ErrorAction Stop
-    $created.Add((Join-Path $targetRootFull $name)); $index++
-    if ($InjectFailure -eq 'AfterFirstCommit' -and $index -eq 1) { Fail-Safely 'INJECTED_FAILURE' }
-  }
-  if ($InjectFailure -eq 'AfterAllCommits') { Fail-Safely 'INJECTED_FAILURE' }
+  if ($InjectFailure -eq 'AtomicMove' -or $InjectFailure -eq 'AfterFirstCommit' -or $InjectFailure -eq 'AfterAllCommits') { Fail-Safely 'INJECTED_FAILURE' }
+  [IO.File]::WriteAllText((Join-Path $stagingSet '.published'), 'PUBLISHED', [Text.UTF8Encoding]::new($false))
+  if ($InjectFailure -eq 'BeforeCommit') { Fail-Safely 'INJECTED_FAILURE' }
+  Move-Item -LiteralPath $stagingSet -Destination $publishedSet -ErrorAction Stop
+  $created.Clear()
   Write-Phase 'COMMIT' $true
   $payloads.Clear(); Write-Phase 'CLEANUP' $true
   exit 0
 } catch {
   $code = if ($_.Exception.Message -match '^[A-Z_]+$') { $_.Exception.Message } else { 'TRANSFER_FAILED' }
   foreach ($path in $staged) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
-  foreach ($path in $created) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+  foreach ($path in $created) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue }
   [Console]::WriteLine("ERROR_CODE=$code")
   Write-Phase 'CLEANUP' $true
   exit 1

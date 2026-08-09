@@ -165,11 +165,13 @@ present for a separately approved change window only; it captures a named
 environment value in redirected process memory and never writes it to command
 arguments, console output, logs, Git, or a repository file.
 
-The tool stages every output beside its final destination, applies output-file
-ACL and metadata checks without changing the script's own ACL, and commits the
-set transactionally. It rejects an existing target without reading or
-overwriting it. A failure removes only stage/final artifacts created during the
-current invocation. Diagnostics are limited to phase names and symbolic error
+The tool validates an external target before any runtime-source capture, then
+creates a complete versioned set below `sets/<transaction-id>`. Artifacts are
+written only inside an unpublished staging directory; a published marker and a
+single same-filesystem directory rename make the complete set selectable.
+Abandoned staging directories are never activation candidates. It rejects an
+existing published set without reading or overwriting it. Diagnostics are
+limited to phase names and symbolic error
 codes. `runtime.env` serialization is deterministic and retains only the
 validator's non-secret contract; empty AWS account/region and empty provider
 inventory IDs are omitted so the established Compose fallback remains
