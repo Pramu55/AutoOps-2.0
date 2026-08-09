@@ -29,11 +29,11 @@ function New-Fixture([string]$Root, [string[]]$RuntimeLines, [string[]]$Sensitiv
   }
   foreach ($name in @('jwt-access','jwt-refresh','github-actions-token')) { [IO.File]::WriteAllText((Join-Path $Root $name), [string]$Artifacts[$name]) }
 }
-function Invoke-Tool([string]$Source, [string]$Target, [string]$Failure = 'None', [string]$WorktreeProbeMode = 'Normal', [switch]$EnforceRuntimePermissions, [switch]$EmitSourceCaptureAudit, [string]$RuntimeNewline = 'None', [string]$RuntimeKey = 'LOG_LEVEL', [string]$TestOwnerProbeMode = 'Normal', [string]$TestOwnerProbeScope = 'Any') {
+function Invoke-Tool([string]$Source, [string]$Target, [string]$Failure = 'None', [string]$WorktreeProbeMode = 'Normal', [switch]$EnforceRuntimePermissions, [switch]$EmitSourceCaptureAudit, [string]$RuntimeNewline = 'None', [string]$RuntimeKey = 'LOG_LEVEL', [string]$TestOwnerProbeMode = 'Normal', [string]$TestOwnerProbeScope = 'Any', [string]$TestAncestorOwnerProbeMode = 'Normal') {
   $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $tool, '-SourceMode', 'Synthetic', '-SyntheticSourceRoot', $Source, '-TargetRoot', $Target, '-TransactionId', 'synthetic-set', '-InjectFailure', $Failure, '-WorktreeProbeMode', $WorktreeProbeMode)
   if ($EnforceRuntimePermissions) { $arguments += '-EnforceRuntimePermissions' }
   if ($EmitSourceCaptureAudit) { $arguments += '-EmitSourceCaptureAudit' }
-  $arguments += @('-InjectRuntimeValueNewline', $RuntimeNewline, '-InjectedRuntimeKey', $RuntimeKey, '-TestOwnerProbeMode', $TestOwnerProbeMode, '-TestOwnerProbeScope', $TestOwnerProbeScope)
+  $arguments += @('-InjectRuntimeValueNewline', $RuntimeNewline, '-InjectedRuntimeKey', $RuntimeKey, '-TestOwnerProbeMode', $TestOwnerProbeMode, '-TestOwnerProbeScope', $TestOwnerProbeScope, '-TestAncestorOwnerProbeMode', $TestAncestorOwnerProbeMode, '-TestAncestorTrustAnchor', $root)
   $output = & powershell @arguments 2>&1
   return @{ ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine) }
 }
@@ -123,6 +123,7 @@ function Test-RestrictedAcl([string]$Path) {
 }
 
 $root = Join-Path ([IO.Path]::GetTempPath()) ('autoops-mounted-transfer-test-' + [Guid]::NewGuid().ToString('N'))
+if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { New-Item -ItemType Directory -Path $root -Force | Out-Null; Set-TestRestrictedAcl $root }
 try {
   $validatorContract = Join-Path $PSScriptRoot 'validate-mounted-secret-delivery.ps1'
   $toolContract = $tool
@@ -146,10 +147,15 @@ try {
   New-Item -ItemType Junction -Path $reparseParent -Target $reparseReal -ErrorAction Stop | Out-Null
   $reparseTargetResult = Invoke-RuntimeAdapter 'synthetic-source-never-contacted' $reparseParent
   Assert-Condition 'TARGET_REPARSE_PARENT_REJECTED' ($reparseTargetResult.ExitCode -ne 0 -and $reparseTargetResult.Output.Contains('TARGET_REPARSE_PATH'))
+  $ancestorReparseTarget = Join-Path $reparseParent 'target'; New-Item -ItemType Directory -Path (Join-Path $reparseReal 'target') -Force | Out-Null
+  $ancestorReparseResult = Invoke-RuntimeAdapter 'synthetic-source-never-contacted' $ancestorReparseTarget 'Normal' -EmitSourceCaptureAudit
+  Assert-Condition 'ANCESTOR_REPARSE_REJECTED' ($ancestorReparseResult.ExitCode -ne 0 -and $ancestorReparseResult.Output.Contains('TARGET_REPARSE_PATH'))
+  Assert-Condition 'ANCESTOR_FAILURE_BEFORE_SOURCE_CAPTURE_ANCESTOR_REPARSE_REJECTED' ($ancestorReparseResult.Output.Contains('SOURCE_ADAPTER_INVOCATIONS=0'))
   $setsReparseTarget = Join-Path $root 'sets-reparse-target'; New-Item -ItemType Directory -Path $setsReparseTarget -Force | Out-Null
   if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { Set-TestRestrictedAcl $setsReparseTarget }
   New-Item -ItemType Junction -Path (Join-Path $setsReparseTarget 'sets') -Target $reparseReal -ErrorAction Stop | Out-Null
-  $setsReparseResult = Invoke-RuntimeAdapter 'synthetic-source-never-contacted' $setsReparseTarget
+  $reparseSource = Join-Path $root 'reparse-source'; New-Fixture $reparseSource @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment)
+  $setsReparseResult = Invoke-Tool $reparseSource $setsReparseTarget 'None' 'Normal' -EnforceRuntimePermissions -EmitSourceCaptureAudit
   Assert-Condition 'TARGET_SETS_REPARSE_REJECTED' ($setsReparseResult.ExitCode -ne 0 -and $setsReparseResult.Output.Contains('TARGET_REPARSE_PATH'))
   Assert-Condition 'TARGET_SETS_CHECK_BEFORE_SOURCE_CAPTURE' (-not $setsReparseResult.Output.Contains('SOURCE_CAPTURE_FAILED'))
   $worktreeProbeSource = Join-Path $root 'worktree-probe/source'; New-Fixture $worktreeProbeSource @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment)
@@ -288,6 +294,51 @@ try {
       Assert-Condition $aclCase.Name ($aclResult.ExitCode -ne 0 -and $aclResult.Output.Contains('TARGET_ROOT_PERMISSIONS_UNSAFE'))
       Assert-Condition "ACL_REJECTION_BEFORE_SOURCE_CAPTURE_$($aclCase.Name)" ($aclResult.Output.Contains('SOURCE_ADAPTER_INVOCATIONS=0'))
     }
+    $ancestorSource = Join-Path $root 'permissions/ancestor-source'; New-Fixture $ancestorSource @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment)
+    $ancestorApprovedParent = Join-Path $root 'permissions/ancestor-approved-parent'; New-Item -ItemType Directory -Path $ancestorApprovedParent -Force | Out-Null; Set-TestRestrictedAcl $ancestorApprovedParent
+    $ancestorApprovedTarget = Join-Path $ancestorApprovedParent 'target'; New-Item -ItemType Directory -Path $ancestorApprovedTarget -Force | Out-Null; Set-TestRestrictedAcl $ancestorApprovedTarget
+    $ancestorApproved = Invoke-Tool $ancestorSource $ancestorApprovedTarget 'None' 'Normal' -EnforceRuntimePermissions
+    Assert-Condition 'ANCESTOR_APPROVED_SECURITY_PASS' ($ancestorApproved.ExitCode -eq 0)
+    Assert-Condition 'TARGET_ROOT_STRICT_ACL_POLICY_UNCHANGED' (Test-RestrictedAcl $ancestorApprovedTarget)
+    $unapprovedAncestorSid = 'S-1-5-21-424242-424242-424242-5002'
+    foreach ($ancestorCase in @(
+      @{ Name='ANCESTOR_UNAPPROVED_DELETE_ACCESS_REJECTED'; Rights=[Security.AccessControl.FileSystemRights]::Delete },
+      @{ Name='ANCESTOR_DELETE_SUBDIRECTORIES_ACCESS_REJECTED'; Rights=[Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles },
+      @{ Name='ANCESTOR_CHANGE_PERMISSIONS_REJECTED'; Rights=[Security.AccessControl.FileSystemRights]::ChangePermissions },
+      @{ Name='ANCESTOR_TAKE_OWNERSHIP_REJECTED'; Rights=[Security.AccessControl.FileSystemRights]::TakeOwnership },
+      @{ Name='ANCESTOR_MODIFY_REPLACEMENT_CAPABILITY_REJECTED'; Rights=[Security.AccessControl.FileSystemRights]::Modify },
+      @{ Name='ANCESTOR_FULLCONTROL_REPLACEMENT_CAPABILITY_REJECTED'; Rights=[Security.AccessControl.FileSystemRights]::FullControl }
+    )) {
+      $ancestorParent = Join-Path $root ('permissions/' + $ancestorCase.Name + '-parent'); New-Item -ItemType Directory -Path $ancestorParent -Force | Out-Null; Set-TestRestrictedAcl $ancestorParent; Add-TestSidAcl $ancestorParent $unapprovedAncestorSid $ancestorCase.Rights
+      $ancestorTarget = Join-Path $ancestorParent 'target'; New-Item -ItemType Directory -Path $ancestorTarget -Force | Out-Null; Set-TestRestrictedAcl $ancestorTarget
+      $ancestorBefore = Get-TestAclSddl $ancestorParent
+      $ancestorResult = Invoke-Tool $ancestorSource $ancestorTarget 'None' 'Normal' -EnforceRuntimePermissions -EmitSourceCaptureAudit
+      Assert-Condition $ancestorCase.Name ($ancestorResult.ExitCode -ne 0 -and $ancestorResult.Output.Contains('TARGET_ANCESTOR_PERMISSIONS_UNSAFE'))
+      Assert-Condition "ANCESTOR_FAILURE_BEFORE_SOURCE_CAPTURE_$($ancestorCase.Name)" ($ancestorResult.Output.Contains('SOURCE_ADAPTER_INVOCATIONS=0'))
+      Assert-Condition "ANCESTOR_TARGET_UNCHANGED_ON_REJECTION_$($ancestorCase.Name)" (Test-NoPublishedSet $ancestorTarget)
+      Assert-Condition "ANCESTOR_NO_ACL_MUTATION_ON_REJECTION_$($ancestorCase.Name)" ((Get-TestAclSddl $ancestorParent) -ceq $ancestorBefore)
+    }
+    $ancestorReadParent = Join-Path $root 'permissions/ancestor-read-parent'; New-Item -ItemType Directory -Path $ancestorReadParent -Force | Out-Null; Set-TestRestrictedAcl $ancestorReadParent; Add-TestSidAcl $ancestorReadParent $unapprovedAncestorSid ([Security.AccessControl.FileSystemRights]::ReadAndExecute)
+    $ancestorReadTarget = Join-Path $ancestorReadParent 'target'; New-Item -ItemType Directory -Path $ancestorReadTarget -Force | Out-Null; Set-TestRestrictedAcl $ancestorReadTarget
+    $ancestorRead = Invoke-Tool $ancestorSource $ancestorReadTarget 'None' 'Normal' -EnforceRuntimePermissions
+    Assert-Condition 'ANCESTOR_UNAPPROVED_READ_ONLY_PASS' ($ancestorRead.ExitCode -eq 0)
+    foreach ($ancestorOwnerCase in @(
+      @{ Name='ANCESTOR_UNAPPROVED_OWNER_REJECTED'; Mode='Unapproved'; Expected=$false },
+      @{ Name='ANCESTOR_UNRESOLVABLE_SECURITY_REJECTED'; Mode='Unresolvable'; Expected=$false },
+      @{ Name='ANCESTOR_OWNER_APPROVED_SYSTEM_PASS'; Mode='ApprovedSystem'; Expected=$true },
+      @{ Name='ANCESTOR_OWNER_APPROVED_ADMINISTRATORS_PASS'; Mode='ApprovedAdministrators'; Expected=$true }
+    )) {
+      $ancestorOwnerParent = Join-Path $root ('permissions/' + $ancestorOwnerCase.Name + '-parent'); New-Item -ItemType Directory -Path $ancestorOwnerParent -Force | Out-Null; Set-TestRestrictedAcl $ancestorOwnerParent
+      $ancestorOwnerTarget = Join-Path $ancestorOwnerParent 'target'; New-Item -ItemType Directory -Path $ancestorOwnerTarget -Force | Out-Null; Set-TestRestrictedAcl $ancestorOwnerTarget
+      $ancestorOwnerBefore = Get-TestAclSddl $ancestorOwnerParent
+      $ancestorOwnerResult = Invoke-Tool $ancestorSource $ancestorOwnerTarget 'None' 'Normal' -EnforceRuntimePermissions -EmitSourceCaptureAudit -TestAncestorOwnerProbeMode $ancestorOwnerCase.Mode
+      Assert-Condition $ancestorOwnerCase.Name (($ancestorOwnerResult.ExitCode -eq 0) -eq $ancestorOwnerCase.Expected)
+      if (-not $ancestorOwnerCase.Expected) {
+        Assert-Condition "ANCESTOR_FAILURE_BEFORE_SOURCE_CAPTURE_$($ancestorOwnerCase.Name)" ($ancestorOwnerResult.Output.Contains('SOURCE_ADAPTER_INVOCATIONS=0'))
+        Assert-Condition "ANCESTOR_TARGET_UNCHANGED_ON_REJECTION_$($ancestorOwnerCase.Name)" (Test-NoPublishedSet $ancestorOwnerTarget)
+        Assert-Condition "ANCESTOR_NO_ACL_MUTATION_ON_REJECTION_$($ancestorOwnerCase.Name)" ((Get-TestAclSddl $ancestorOwnerParent) -ceq $ancestorOwnerBefore)
+      }
+    }
     $secureRoot = Join-Path $root 'permissions/secure-root'; New-Item -ItemType Directory -Path $secureRoot -Force | Out-Null; Set-TestRestrictedAcl $secureRoot
     $secureResult = Invoke-Tool $permissionSource $secureRoot 'None' 'Normal' -EnforceRuntimePermissions
     $secureSet = Get-PublishedSet $secureRoot
@@ -327,7 +378,7 @@ try {
     $insecureSetsRoot = Join-Path $root 'permissions/insecure-preexisting-root'; New-Item -ItemType Directory -Path $insecureSetsRoot -Force | Out-Null; Set-TestRestrictedAcl $insecureSetsRoot
     $insecureSets = Join-Path $insecureSetsRoot 'sets'; New-Item -ItemType Directory -Path $insecureSets -Force | Out-Null
     $insecureBefore = Get-TestAclSddl $insecureSets
-    $preexistingInsecure = Invoke-RuntimeAdapter 'synthetic-source-never-contacted' $insecureSetsRoot 'Normal' -EmitSourceCaptureAudit
+    $preexistingInsecure = Invoke-Tool $permissionSource $insecureSetsRoot 'None' 'Normal' -EnforceRuntimePermissions -EmitSourceCaptureAudit
     Assert-Condition 'PREEXISTING_INSECURE_SETS_REJECTED' ($preexistingInsecure.ExitCode -ne 0 -and $preexistingInsecure.Output.Contains('EXISTING_TARGET_HIERARCHY_PERMISSIONS_UNSAFE'))
     Assert-Condition 'PREEXISTING_SETS_NOT_AUTO_REPAIRED' ((Get-TestAclSddl $insecureSets) -ceq $insecureBefore)
     Assert-Condition 'SOURCE_NOT_CAPTURED_ON_PERMISSION_FAILURE' ($preexistingInsecure.Output.Contains('SOURCE_ADAPTER_INVOCATIONS=0'))

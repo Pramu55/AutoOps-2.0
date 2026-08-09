@@ -22,6 +22,11 @@ param(
   [string]$TestOwnerProbeMode = 'Normal',
   [ValidateSet('Any', 'Sets')]
   [string]$TestOwnerProbeScope = 'Any',
+  # Synthetic-only test seam. Runtime mode always uses resolved filesystem owners.
+  [ValidateSet('Normal', 'ApprovedSystem', 'ApprovedAdministrators', 'Unapproved', 'Unresolvable')]
+  [string]$TestAncestorOwnerProbeMode = 'Normal',
+  # Synthetic-only test seam for a disposable, verified ancestor boundary.
+  [string]$TestAncestorTrustAnchor,
   [switch]$EmitSourceCaptureAudit
 )
 
@@ -240,6 +245,17 @@ function Get-ApprovedRuntimeSecurityIdentifiers() {
     'S-1-5-32-544' # BUILTIN\\Administrators
   )
 }
+function Get-ApprovedAncestorSecurityIdentifiers() {
+  $approved = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+  foreach ($sid in Get-ApprovedRuntimeSecurityIdentifiers) { $null = $approved.Add($sid) }
+  if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+    # TrustedInstaller owns the Windows filesystem root on supported hosts. It
+    # is an OS trust anchor for ancestor verification only, never for a secret
+    # target root or an invocation-created artifact.
+    $null = $approved.Add('S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+  }
+  return $approved
+}
 function Get-RuntimeAcl([string]$Path, [bool]$IsDirectory) {
   if ($IsDirectory) { return [IO.Directory]::GetAccessControl($Path) }
   return [IO.File]::GetAccessControl($Path)
@@ -283,6 +299,52 @@ function Test-RestrictedRuntimePermissions([string]$Path, [bool]$RequireProtecte
     return
   }
   Fail-Safely 'PLATFORM_PERMISSION_MODEL_UNSUPPORTED'
+}
+function Test-AncestorReplacementPermissions([string]$TargetRoot, [string]$FailureCode) {
+  if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Fail-Safely 'PLATFORM_PERMISSION_MODEL_UNSUPPORTED' }
+  $approvedSids = Get-ApprovedAncestorSecurityIdentifiers
+  $replacementRights = [Security.AccessControl.FileSystemRights]::Delete -bor
+    [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+    [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+    [Security.AccessControl.FileSystemRights]::TakeOwnership
+  $parent = [IO.Directory]::GetParent($TargetRoot)
+  $trustAnchor = if ([string]::IsNullOrWhiteSpace($TestAncestorTrustAnchor)) { $null } else { [IO.Path]::GetFullPath($TestAncestorTrustAnchor).TrimEnd([char[]]@('\', '/')) }
+  $isImmediateParent = $true
+  while ($null -ne $parent -and $parent.FullName -ne $TargetRoot) {
+    try {
+      $item = Get-Item -Force -LiteralPath $parent.FullName -ErrorAction Stop
+      if (-not $item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { Fail-Safely $FailureCode }
+      $acl = Get-RuntimeAcl $parent.FullName $true
+      $ownerSid = if ($isImmediateParent -and $TestAncestorOwnerProbeMode -ne 'Normal') {
+        switch ($TestAncestorOwnerProbeMode) {
+          'ApprovedSystem' { 'S-1-5-18'; break }
+          'ApprovedAdministrators' { 'S-1-5-32-544'; break }
+          'Unapproved' { 'S-1-5-21-424242-424242-424242-5001'; break }
+          'Unresolvable' { Fail-Safely $FailureCode }
+          default { Fail-Safely $FailureCode }
+        }
+      } else {
+        $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier])
+        if ($null -eq $owner -or [string]::IsNullOrWhiteSpace($owner.Value)) { Fail-Safely $FailureCode }
+        $owner.Value
+      }
+      if (-not $approvedSids.Contains($ownerSid)) { Fail-Safely $FailureCode }
+      foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -ne 'Allow') { continue }
+        $sid = $rule.IdentityReference.Value
+        if ([string]::IsNullOrWhiteSpace($sid)) { Fail-Safely $FailureCode }
+        if (-not $approvedSids.Contains($sid) -and (($rule.FileSystemRights -band $replacementRights) -ne 0)) { Fail-Safely $FailureCode }
+      }
+    } catch {
+      if ($_.Exception.Message -match '^[A-Z_]+$') { throw }
+      Fail-Safely $FailureCode
+    }
+    if ($null -ne $trustAnchor -and $parent.FullName.TrimEnd([char[]]@('\', '/')) -ceq $trustAnchor) { break }
+    $next = [IO.Directory]::GetParent($parent.FullName)
+    if ($null -eq $next -or $next.FullName -eq $parent.FullName) { break }
+    $parent = $next
+    $isImmediateParent = $false
+  }
 }
 function Set-InvocationRestrictedPermissions([string]$Path, [bool]$IsDirectory) {
   if (-not $requiresRuntimePermissions) { return }
@@ -373,9 +435,12 @@ function Test-StagedMountedSecretContract([string]$SetRoot) {
 $created = New-Object System.Collections.Generic.List[string]
 $staged = New-Object System.Collections.Generic.List[string]
 try {
-  if ($SourceMode -eq 'Runtime' -and ($TestOwnerProbeMode -ne 'Normal' -or $TestOwnerProbeScope -ne 'Any')) { Fail-Safely 'TEST_PARAMETER_INVALID' }
+  if ($SourceMode -eq 'Runtime' -and ($TestOwnerProbeMode -ne 'Normal' -or $TestOwnerProbeScope -ne 'Any' -or $TestAncestorOwnerProbeMode -ne 'Normal' -or -not [string]::IsNullOrWhiteSpace($TestAncestorTrustAnchor))) { Fail-Safely 'TEST_PARAMETER_INVALID' }
   $targetRootFull = Test-TargetRootSafe $TargetRoot
-  if ($requiresRuntimePermissions) { Test-RestrictedRuntimePermissions $targetRootFull $true 'TARGET_ROOT_PERMISSIONS_UNSAFE' }
+  if ($requiresRuntimePermissions) {
+    Test-RestrictedRuntimePermissions $targetRootFull $true 'TARGET_ROOT_PERMISSIONS_UNSAFE'
+    Test-AncestorReplacementPermissions $targetRootFull 'TARGET_ANCESTOR_PERMISSIONS_UNSAFE'
+  }
   Write-Phase 'INITIALIZE' $true
   $setsRoot = Join-Path $targetRootFull 'sets'
   $setsRootExisted = Test-Path -LiteralPath $setsRoot
@@ -449,6 +514,14 @@ try {
     $access = [string]$payloads['jwt-access']; $refresh = [string]$payloads['jwt-refresh']
     $placeholder = 'change-me|replace-me|please-change|local-only|autoops_dev|^secret$|^password$|^default$'
     if ($access.Length -lt 32 -or $refresh.Length -lt 32 -or $access -match $placeholder -or $refresh -match $placeholder -or $access -ceq $refresh) { Fail-Safely 'REQUIRED_SECRET_INVALID' }
+  }
+  if ($requiresRuntimePermissions) {
+    $targetRootFull = Test-TargetRootSafe $targetRootFull
+    Test-RestrictedRuntimePermissions $targetRootFull $true 'TARGET_ROOT_PERMISSIONS_UNSAFE'
+    Test-AncestorReplacementPermissions $targetRootFull 'TARGET_ANCESTOR_PERMISSIONS_UNSAFE'
+    $setsRoot = Test-TargetRootSafe $setsRoot
+    Test-RestrictedRuntimePermissions $setsRoot $true 'EXISTING_TARGET_HIERARCHY_PERMISSIONS_UNSAFE'
+    Test-RestrictedRuntimePermissions $stagingSet $true 'ACL_POST_VERIFY_FAILED'
   }
   if ($InjectFailure -eq 'BeforeCommit') { Fail-Safely 'INJECTED_FAILURE' }
   foreach ($name in $payloads.Keys) {

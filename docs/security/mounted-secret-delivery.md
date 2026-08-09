@@ -58,15 +58,18 @@ both files.
 
 Because Compose `environment` mappings override `env_file` values, the
 compatibility overlay deliberately replaces each current API/worker environment
-map with the same non-sensitive base mappings, provider-inventory fallback and
-secret-provider settings, while omitting only `DATABASE_URL` and `REDIS_URL`.
-The second `sensitive.env` file is therefore authoritative for those two keys,
-and the existing provider-inventory fallback/default remains intact. A
-structural test compares every preserved base mapping other than those two
-keys, guarding against a later base-map addition being silently dropped. The
-established Compose-level provider-inventory override remains available through
-its explicit Compose variable; an `env_file` cannot override an `environment`
-mapping because Compose gives the mapping higher precedence.
+map with the same non-sensitive base mappings and secret-provider settings,
+while omitting `DATABASE_URL`, `REDIS_URL`, and provider-inventory allowlists.
+The external `runtime.env` is therefore authoritative for
+`PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS`, its legacy
+`PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS` alias, and
+`PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS`; host interpolation and demo
+defaults cannot replace an audited file-mode restriction. A
+structural test compares every preserved base mapping other than those
+explicit file-sourced keys, guarding against a later base-map addition being
+silently dropped. The file-mode overlay intentionally has no provider-inventory
+`environment` mapping because Compose gives that mapping higher precedence than
+an `env_file`.
 `GOOGLE_APPLICATION_CREDENTIALS` is an allowed non-secret
 runtime path/reference only; this delivery correction does not mount, read, or
 validate the referenced GCP credential content. GitHub remains enabled through
