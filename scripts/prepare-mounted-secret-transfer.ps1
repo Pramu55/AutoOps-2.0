@@ -50,6 +50,11 @@ $runtimeAllowedKeys = @(
 )
 $sensitiveKeys = @('DATABASE_URL', 'REDIS_URL', 'ARGOCD_AUTH_TOKEN', 'ARGOCD_PASSWORD', 'GRAFANA_API_TOKEN', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AZURE_CLIENT_SECRET')
 $migratedKeys = @('JWT_SECRET', 'JWT_REFRESH_SECRET', 'GITHUB_ACTIONS_TOKEN', 'JENKINS_API_TOKEN')
+$runtimeArtifactSourceKeys = [ordered]@{
+  'jwt-access' = 'JWT_SECRET'
+  'jwt-refresh' = 'JWT_REFRESH_SECRET'
+  'github-actions-token' = 'GITHUB_ACTIONS_TOKEN'
+}
 $requiredSensitiveKeys = @('DATABASE_URL', 'REDIS_URL')
 $omitWhenEmpty = @('AWS_ACCOUNT_ID', 'AWS_REGION', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS')
 $comparer = [System.StringComparer]::Ordinal
@@ -128,6 +133,11 @@ function Get-SourceValue([string]$Name) {
   if ($captured.State -ne 'PRESENT') { Fail-Safely 'SOURCE_MISSING' }
   return [string]$captured.Value
 }
+function Get-ArtifactSourceValue([string]$ArtifactName) {
+  if ($SourceMode -eq 'Synthetic') { return Get-SyntheticValue $ArtifactName }
+  if (-not $runtimeArtifactSourceKeys.Contains($ArtifactName)) { Fail-Safely 'ARTIFACT_SOURCE_INVALID' }
+  return Get-SourceValue $runtimeArtifactSourceKeys[$ArtifactName]
+}
 function Get-RuntimeAssignmentMap([string[]]$Keys) {
   $values = [ordered]@{}
   foreach ($key in $Keys) {
@@ -195,6 +205,7 @@ try {
   Write-Phase 'INITIALIZE' $true
   $setsRoot = Join-Path $targetRootFull 'sets'
   if (-not (Test-Path -LiteralPath $setsRoot)) { New-Item -ItemType Directory -Path $setsRoot -ErrorAction Stop | Out-Null }
+  $setsRoot = Test-TargetRootSafe $setsRoot
   $stagingSet = Join-Path $setsRoot ('.' + $TransactionId + '.staging')
   $publishedSet = Join-Path $setsRoot $TransactionId
   if ((Test-Path -LiteralPath $stagingSet) -or (Test-Path -LiteralPath $publishedSet)) { Fail-Safely 'DESTINATION_EXISTS' }
@@ -237,9 +248,9 @@ try {
   $payloads = [ordered]@{
     'runtime.env' = $runtimeValue
     'sensitive.env' = $sensitiveValue
-    'jwt-access' = (Get-SourceValue 'jwt-access')
-    'jwt-refresh' = (Get-SourceValue 'jwt-refresh')
-    'github-actions-token' = (Get-SourceValue 'github-actions-token')
+    'jwt-access' = (Get-ArtifactSourceValue 'jwt-access')
+    'jwt-refresh' = (Get-ArtifactSourceValue 'jwt-refresh')
+    'github-actions-token' = (Get-ArtifactSourceValue 'github-actions-token')
   }
   if ($InjectFailure -eq 'BeforeCommit') { Fail-Safely 'INJECTED_FAILURE' }
   foreach ($name in $payloads.Keys) {

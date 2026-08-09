@@ -72,6 +72,11 @@ try {
   New-Item -ItemType Junction -Path $reparseParent -Target $reparseReal -ErrorAction Stop | Out-Null
   $reparseTargetResult = Invoke-RuntimeAdapter 'synthetic-source-never-contacted' $reparseParent
   Assert-Condition 'TARGET_REPARSE_PARENT_REJECTED' ($reparseTargetResult.ExitCode -ne 0 -and $reparseTargetResult.Output.Contains('TARGET_REPARSE_PATH'))
+  $setsReparseTarget = Join-Path $root 'sets-reparse-target'; New-Item -ItemType Directory -Path $setsReparseTarget -Force | Out-Null
+  New-Item -ItemType Junction -Path (Join-Path $setsReparseTarget 'sets') -Target $reparseReal -ErrorAction Stop | Out-Null
+  $setsReparseResult = Invoke-RuntimeAdapter 'synthetic-source-never-contacted' $setsReparseTarget
+  Assert-Condition 'TARGET_SETS_REPARSE_REJECTED' ($setsReparseResult.ExitCode -ne 0 -and $setsReparseResult.Output.Contains('TARGET_REPARSE_PATH'))
+  Assert-Condition 'TARGET_SETS_CHECK_BEFORE_SOURCE_CAPTURE' (-not $setsReparseResult.Output.Contains('SOURCE_CAPTURE_FAILED'))
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     $case = Join-Path $root "success-$attempt"; $source = Join-Path $case 'source'; $target = Join-Path $case 'target'
     New-Item -ItemType Directory -Path $target -Force | Out-Null
@@ -178,6 +183,12 @@ try {
       Assert-Condition 'CONTROLLED_SOURCE_ADAPTER_SYNTHETIC' ($adapterResult.ExitCode -eq 0)
       foreach ($marker in $fakeMarkers) { Assert-Condition "ADAPTER_NO_LEAK_$($marker.Name)" (-not $adapterResult.Output.Contains($marker.Value)) }
       foreach ($name in @('runtime.env', 'sensitive.env', 'jwt-access', 'jwt-refresh', 'github-actions-token')) { Assert-Condition "ADAPTER_OUTPUT_$name" (Test-Path -LiteralPath (Join-Path (Get-PublishedSet $adapterTarget) $name) -PathType Leaf) }
+      $adapterExpected = @{
+        'jwt-access' = ($fakeMarkers | Where-Object Name -eq 'JWT_ACCESS').Value
+        'jwt-refresh' = ($fakeMarkers | Where-Object Name -eq 'JWT_REFRESH').Value
+        'github-actions-token' = ($fakeMarkers | Where-Object Name -eq 'GITHUB_TOKEN').Value
+      }
+      foreach ($name in $adapterExpected.Keys) { Assert-Condition "RUNTIME_ARTIFACT_SOURCE_MAPPING_$name" ([IO.File]::ReadAllText((Join-Path (Get-PublishedSet $adapterTarget) $name)) -ceq $adapterExpected[$name]) }
     } finally {
       & docker rm -f $container 2>$null | Out-Null
     }
