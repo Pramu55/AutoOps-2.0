@@ -69,6 +69,7 @@ $mountedArtifactDescriptors = [ordered]@{
   'github-actions-token' = @{ EnvironmentVariable = 'GITHUB_ACTIONS_TOKEN'; StripSingleTrailingNewline = $true }
 }
 $requiredSensitiveKeys = @('DATABASE_URL', 'REDIS_URL')
+$optionalSensitiveKeys = @($sensitiveKeys | Where-Object { $_ -notin $requiredSensitiveKeys })
 $omitWhenEmpty = @('AWS_ACCOUNT_ID', 'AWS_REGION', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS')
 $comparer = [System.StringComparer]::Ordinal
 $sourceAdapterInvocations = 0
@@ -92,15 +93,16 @@ function Read-AssignmentFile([string]$Path, [string]$Kind) {
     if (-not $match.Success) { Fail-Safely 'INVALID_ASSIGNMENT' }
     $key = $match.Groups['key'].Value
     if ($values.Contains($key)) { Fail-Safely 'DUPLICATE_KEY' }
-    $values[$key] = ConvertFrom-SyntheticEnvFileValue $match.Groups['value'].Value $Kind
+    $allowEmpty = $Kind -eq 'runtime' -or ($Kind -eq 'sensitive' -and $optionalSensitiveKeys -contains $key)
+    $values[$key] = ConvertFrom-SyntheticEnvFileValue $match.Groups['value'].Value $Kind $allowEmpty
   }
   return $values
 }
-function ConvertFrom-SyntheticEnvFileValue([string]$RawValue, [string]$Kind) {
+function ConvertFrom-SyntheticEnvFileValue([string]$RawValue, [string]$Kind, [bool]$AllowEmpty) {
   if ($RawValue.IndexOfAny([char[]]@(13, 10, 0)) -ge 0) { Fail-Safely 'SOURCE_VALUE_INVALID' }
   $value = $RawValue.Trim()
   if ([string]::IsNullOrWhiteSpace($value)) {
-    if ($Kind -eq 'runtime') { return '' }
+    if ($AllowEmpty) { return '' }
     Fail-Safely 'SOURCE_VALUE_INVALID'
   }
   if ($value.StartsWith('#')) { Fail-Safely 'SOURCE_VALUE_INVALID' }
@@ -398,7 +400,7 @@ try {
   } else {
     Get-RuntimeAssignmentMap $runtimeAllowedKeys
   }
-  $runtimeSet = New-OrdinalSet $runtimeAllowedKeys; $sensitiveSet = New-OrdinalSet $sensitiveKeys; $migratedSet = New-OrdinalSet $migratedKeys
+  $runtimeSet = New-OrdinalSet $runtimeAllowedKeys; $sensitiveSet = New-OrdinalSet $sensitiveKeys; $optionalSensitiveSet = New-OrdinalSet $optionalSensitiveKeys; $migratedSet = New-OrdinalSet $migratedKeys
   if ($InjectRuntimeValueNewline -ne 'None') {
     if (-not $runtimeSet.Contains($InjectedRuntimeKey)) { Fail-Safely 'RUNTIME_KEY_INVALID' }
     $newline = switch ($InjectRuntimeValueNewline) { 'CR' { [string][char]13 } 'LF' { [string][char]10 } 'CRLF' { [string]([char]13) + [char]10 } }
@@ -424,6 +426,9 @@ try {
   }
   foreach ($key in $sensitive.Keys) { if (-not $sensitiveSet.Contains($key) -or $migratedSet.Contains($key)) { Fail-Safely 'SENSITIVE_KEY_INVALID' } }
   foreach ($key in $requiredSensitiveKeys) { if (-not $sensitive.Contains($key)) { Fail-Safely 'SENSITIVE_REQUIRED_MISSING' } }
+  foreach ($key in @($sensitive.Keys)) {
+    if ($optionalSensitiveSet.Contains($key) -and [string]::IsNullOrWhiteSpace([string]$sensitive[$key])) { $sensitive.Remove($key) }
+  }
   $sensitiveLines = New-Object System.Collections.Generic.List[string]
   foreach ($key in $sensitiveKeys) { if ($sensitive.Contains($key)) { $sensitiveLines.Add((ConvertTo-SensitiveEnvAssignment $key ([string]$sensitive[$key]))) } }
   $sensitiveValue = ($sensitiveLines -join [Environment]::NewLine) + [Environment]::NewLine

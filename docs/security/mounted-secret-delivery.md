@@ -185,7 +185,10 @@ limited to phase names and symbolic error
 codes. `runtime.env` serialization is deterministic and retains only the
 validator's non-secret contract; empty AWS account/region and empty provider
 inventory IDs are omitted so the established Compose fallback remains
-authoritative. The tool always writes GitHub enabled and Jenkins disabled for
+authoritative. `DATABASE_URL` and `REDIS_URL` are required transitional
+entries; optional transitional credentials that are absent, empty, or
+whitespace-only are omitted rather than serialized as placeholders. The tool
+always writes GitHub enabled and Jenkins disabled for
 the approved `core,sensitive-env,github` selection. Before publication it uses
 an intentionally small lossless env-file subset: enablement flags remain
 validated unquoted booleans, while other accepted values use literal

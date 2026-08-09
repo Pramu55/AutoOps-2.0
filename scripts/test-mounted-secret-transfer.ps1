@@ -11,7 +11,8 @@ $fakeMarkers = @(
   @{ Name = 'JWT_REFRESH'; Value = 'AUTOOPS_SYNTHETIC_JWT_REFRESH' },
   @{ Name = 'GITHUB_TOKEN'; Value = 'AUTOOPS_SYNTHETIC_GITHUB_TOKEN' },
   @{ Name = 'DATABASE_URL'; Value = 'synthetic-database-value' },
-  @{ Name = 'REDIS_URL'; Value = 'synthetic-redis-value' }
+  @{ Name = 'REDIS_URL'; Value = 'synthetic-redis-value' },
+  @{ Name = 'OPTIONAL_SENSITIVE'; Value = 'synthetic-optional-token' }
 )
 $databaseKey = 'DATABASE' + '_URL'
 $redisKey = 'REDIS' + '_URL'
@@ -54,6 +55,9 @@ function Get-SerializedLogicalValue([string]$Path, [string]$Key) {
   $value = $line[0].Substring($Key.Length + 1)
   if ($value.Length -ge 2 -and $value.StartsWith("'") -and $value.EndsWith("'")) { return $value.Substring(1, $value.Length - 2) }
   return $value
+}
+function Get-AssignmentKeys([string]$Path) {
+  return @([IO.File]::ReadAllLines($Path) | ForEach-Object { if ($_ -match '^(?<key>[A-Za-z_][A-Za-z0-9_]*)=') { $Matches['key'] } })
 }
 function Get-QuotedContractItems([string]$Path, [string]$Variable) {
   $content = [IO.File]::ReadAllText($Path)
@@ -220,6 +224,47 @@ try {
     Assert-Condition "CLEANUP_$($case.Name)" (Test-NoPublishedSet $target)
     foreach ($marker in $fakeMarkers) { Assert-Condition "NO_LEAK_$($case.Name)_$($marker.Name)" (-not $result.Output.Contains($marker.Value)) }
   }
+  $requiredSensitiveCases = @(
+    @{ Name='REQUIRED_DATABASE_ABSENT_REJECTED'; Sensitive=@($syntheticRedisAssignment) },
+    @{ Name='REQUIRED_DATABASE_EMPTY_REJECTED'; Sensitive=@(($databaseKey + '='),$syntheticRedisAssignment) },
+    @{ Name='REQUIRED_DATABASE_WHITESPACE_REJECTED'; Sensitive=@(($databaseKey + '=   '),$syntheticRedisAssignment) },
+    @{ Name='REQUIRED_REDIS_ABSENT_REJECTED'; Sensitive=@($syntheticDatabaseAssignment) },
+    @{ Name='REQUIRED_REDIS_EMPTY_REJECTED'; Sensitive=@($syntheticDatabaseAssignment,($redisKey + '=')) },
+    @{ Name='REQUIRED_REDIS_WHITESPACE_REJECTED'; Sensitive=@($syntheticDatabaseAssignment,($redisKey + '=   ')) }
+  )
+  foreach ($requiredCase in $requiredSensitiveCases) {
+    $caseRoot = Join-Path $root $requiredCase.Name; $source = Join-Path $caseRoot 'source'; $target = Join-Path $caseRoot 'target'; New-Item -ItemType Directory -Path $target -Force | Out-Null
+    New-Fixture $source @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') $requiredCase.Sensitive
+    $result = Invoke-Tool $source $target
+    Assert-Condition $requiredCase.Name ($result.ExitCode -ne 0 -and (Test-NoPublishedSet $target))
+  }
+  $optionalSensitiveKeys = @('ARGOCD_AUTH_TOKEN','ARGOCD_PASSWORD','GRAFANA_API_TOKEN','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN','AZURE_CLIENT_SECRET')
+  $disabledOptionalRoot = Join-Path $root 'DISABLED_INTEGRATIONS_EMPTY_CREDENTIALS_PASS'; $disabledOptionalSource = Join-Path $disabledOptionalRoot 'source'; $disabledOptionalTarget = Join-Path $disabledOptionalRoot 'target'; New-Item -ItemType Directory -Path $disabledOptionalTarget -Force | Out-Null
+  $emptyOptionalLines = @($syntheticDatabaseAssignment,$syntheticRedisAssignment) + @($optionalSensitiveKeys | ForEach-Object { $_ + '=' })
+  New-Fixture $disabledOptionalSource @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') $emptyOptionalLines
+  $disabledOptionalResult = Invoke-Tool $disabledOptionalSource $disabledOptionalTarget
+  $disabledOptionalKeys = Get-AssignmentKeys (Join-Path (Get-PublishedSet $disabledOptionalTarget) 'sensitive.env')
+  Assert-Condition 'DISABLED_INTEGRATIONS_EMPTY_CREDENTIALS_PASS' ($disabledOptionalResult.ExitCode -eq 0)
+  Assert-Condition 'OPTIONAL_SENSITIVE_EMPTY_OMITTED' (Test-SameOrdinalSet $disabledOptionalKeys @($databaseKey,$redisKey))
+  Assert-Condition 'EMPTY_OPTIONAL_NOT_SERIALIZED' (@($disabledOptionalKeys | Where-Object { $_ -in $optionalSensitiveKeys }).Count -eq 0)
+  Assert-Condition 'EMPTY_OPTIONAL_NO_PLACEHOLDER' (@($disabledOptionalKeys | Where-Object { $_ -in $optionalSensitiveKeys }).Count -eq 0)
+  foreach ($key in $optionalSensitiveKeys) { Assert-Condition ("{0}_EMPTY_OMITTED" -f $key) ($disabledOptionalKeys -notcontains $key) }
+  foreach ($marker in $fakeMarkers) { Assert-Condition "EMPTY_OPTIONAL_NO_OUTPUT_LEAK_$($marker.Name)" (-not $disabledOptionalResult.Output.Contains($marker.Value)) }
+  $whitespaceOptionalRoot = Join-Path $root 'OPTIONAL_SENSITIVE_WHITESPACE_OMITTED'; $whitespaceOptionalSource = Join-Path $whitespaceOptionalRoot 'source'; $whitespaceOptionalTarget = Join-Path $whitespaceOptionalRoot 'target'; New-Item -ItemType Directory -Path $whitespaceOptionalTarget -Force | Out-Null
+  New-Fixture $whitespaceOptionalSource @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment,('ARGOCD_AUTH_TOKEN=   '))
+  $whitespaceOptionalResult = Invoke-Tool $whitespaceOptionalSource $whitespaceOptionalTarget
+  Assert-Condition 'OPTIONAL_SENSITIVE_WHITESPACE_OMITTED' ($whitespaceOptionalResult.ExitCode -eq 0 -and (Get-AssignmentKeys (Join-Path (Get-PublishedSet $whitespaceOptionalTarget) 'sensitive.env') -notcontains 'ARGOCD_AUTH_TOKEN'))
+  $absentOptionalRoot = Join-Path $root 'OPTIONAL_SENSITIVE_ABSENT_OMITTED'; $absentOptionalSource = Join-Path $absentOptionalRoot 'source'; $absentOptionalTarget = Join-Path $absentOptionalRoot 'target'; New-Item -ItemType Directory -Path $absentOptionalTarget -Force | Out-Null
+  New-Fixture $absentOptionalSource @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment)
+  $absentOptionalResult = Invoke-Tool $absentOptionalSource $absentOptionalTarget
+  Assert-Condition 'OPTIONAL_SENSITIVE_ABSENT_OMITTED' ($absentOptionalResult.ExitCode -eq 0 -and (Test-SameOrdinalSet (Get-AssignmentKeys (Join-Path (Get-PublishedSet $absentOptionalTarget) 'sensitive.env')) @($databaseKey,$redisKey)))
+  $validOptionalRoot = Join-Path $root 'OPTIONAL_SENSITIVE_NONEMPTY_INCLUDED'; $validOptionalSource = Join-Path $validOptionalRoot 'source'; $validOptionalTarget = Join-Path $validOptionalRoot 'target'; New-Item -ItemType Directory -Path $validOptionalTarget -Force | Out-Null
+  New-Fixture $validOptionalSource @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment,'ARGOCD_AUTH_TOKEN=synthetic-optional-token')
+  $validOptionalResult = Invoke-Tool $validOptionalSource $validOptionalTarget
+  $validOptionalKeys = Get-AssignmentKeys (Join-Path (Get-PublishedSet $validOptionalTarget) 'sensitive.env')
+  Assert-Condition 'OPTIONAL_SENSITIVE_NONEMPTY_INCLUDED' ($validOptionalResult.ExitCode -eq 0 -and $validOptionalKeys -contains 'ARGOCD_AUTH_TOKEN')
+  Assert-Condition 'OPTIONAL_FILTER_DOES_NOT_REMOVE_VALID_SECRET' ($validOptionalKeys -contains 'ARGOCD_AUTH_TOKEN')
+  foreach ($marker in $fakeMarkers) { Assert-Condition "OPTIONAL_SENSITIVE_NO_OUTPUT_LEAK_$($marker.Name)" (-not $validOptionalResult.Output.Contains($marker.Value)) }
   if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
     $permissionSource = Join-Path $root 'permissions/source'; New-Fixture $permissionSource @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment)
     $broadRoot = Join-Path $root 'permissions/broad-root'; New-Item -ItemType Directory -Path $broadRoot -Force | Out-Null
@@ -450,15 +495,21 @@ try {
   Assert-Condition 'SUCCESSFUL_OTHER_TRANSACTION_UNCHANGED' (Test-Path -LiteralPath (Join-Path $sharedSets 'other-published/.published') -PathType Leaf)
   if ($RunDockerAdapterQualification) {
     $adapterRoot = Join-Path $root 'runtime-adapter'; $adapterTarget = Join-Path $adapterRoot 'target'; New-Item -ItemType Directory -Path $adapterTarget -Force | Out-Null
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { Set-TestRestrictedAcl $adapterTarget }
     $container = 'autoops-transfer-synthetic-' + [Guid]::NewGuid().ToString('N')
     try {
-      $arguments = @('run', '--rm', '-d', '--name', $container, '-e', 'GITHUB_ACTIONS_ENABLED=true', '-e', 'JENKINS_INTEGRATION_ENABLED=false', '-e', $syntheticDatabaseAssignment, '-e', $syntheticRedisAssignment, '-e', (('JWT' + '_SECRET') + '=AUTOOPS_SYNTHETIC_JWT_ACCESS'), '-e', (('JWT' + '_REFRESH_SECRET') + '=AUTOOPS_SYNTHETIC_JWT_REFRESH'), '-e', (('GITHUB_ACTIONS' + '_TOKEN') + '=AUTOOPS_SYNTHETIC_GITHUB_TOKEN'), 'alpine:3.20', 'sh', '-c', 'while true; do sleep 3600; done')
+      $emptyOptionalRuntimeArguments = @($optionalSensitiveKeys | ForEach-Object { '-e'; ($_ + '=') })
+      $arguments = @('run', '--rm', '-d', '--name', $container, '-e', 'GITHUB_ACTIONS_ENABLED=true', '-e', 'JENKINS_INTEGRATION_ENABLED=false', '-e', $syntheticDatabaseAssignment, '-e', $syntheticRedisAssignment) + $emptyOptionalRuntimeArguments + @('-e', (('JWT' + '_SECRET') + '=AUTOOPS_SYNTHETIC_JWT_ACCESS'), '-e', (('JWT' + '_REFRESH_SECRET') + '=AUTOOPS_SYNTHETIC_JWT_REFRESH'), '-e', (('GITHUB_ACTIONS' + '_TOKEN') + '=AUTOOPS_SYNTHETIC_GITHUB_TOKEN'), 'alpine:3.20', 'sh', '-c', 'while true; do sleep 3600; done')
       & docker @arguments | Out-Null
       if ($LASTEXITCODE -ne 0) { throw 'SYNTHETIC_DOCKER_SOURCE_UNAVAILABLE' }
       $adapterResult = Invoke-RuntimeAdapter $container $adapterTarget
       Assert-Condition 'CONTROLLED_SOURCE_ADAPTER_SYNTHETIC' ($adapterResult.ExitCode -eq 0)
       foreach ($marker in $fakeMarkers) { Assert-Condition "ADAPTER_NO_LEAK_$($marker.Name)" (-not $adapterResult.Output.Contains($marker.Value)) }
       foreach ($name in @('runtime.env', 'sensitive.env', 'jwt-access', 'jwt-refresh', 'github-actions-token')) { Assert-Condition "ADAPTER_OUTPUT_$name" (Test-Path -LiteralPath (Join-Path (Get-PublishedSet $adapterTarget) $name) -PathType Leaf) }
+      $adapterSensitiveKeys = Get-AssignmentKeys (Join-Path (Get-PublishedSet $adapterTarget) 'sensitive.env')
+      Assert-Condition 'RUNTIME_DISABLED_INTEGRATIONS_EMPTY_CREDENTIALS_PASS' ($adapterResult.ExitCode -eq 0)
+      Assert-Condition 'RUNTIME_EMPTY_OPTIONAL_NOT_SERIALIZED' (Test-SameOrdinalSet $adapterSensitiveKeys @($databaseKey,$redisKey))
+      foreach ($key in $optionalSensitiveKeys) { Assert-Condition ("RUNTIME_{0}_EMPTY_OMITTED" -f $key) ($adapterSensitiveKeys -notcontains $key) }
       $adapterExpected = @{
         'jwt-access' = ($fakeMarkers | Where-Object Name -eq 'JWT_ACCESS').Value
         'jwt-refresh' = ($fakeMarkers | Where-Object Name -eq 'JWT_REFRESH').Value
