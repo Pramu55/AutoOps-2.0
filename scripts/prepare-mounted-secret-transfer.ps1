@@ -9,7 +9,11 @@ param(
   [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_.-]*$')]
   [string]$TransactionId = ([Guid]::NewGuid().ToString('N')),
   [ValidateSet('None', 'BeforeCommit', 'AfterFirstCommit', 'AfterAllCommits', 'Acl', 'Metadata', 'AtomicMove')]
-  [string]$InjectFailure = 'None'
+  [string]$InjectFailure = 'None',
+  [ValidateSet('Normal', 'GenericError', 'Ambiguous')]
+  [string]$WorktreeProbeMode = 'Normal',
+  [switch]$EnforceRuntimePermissions,
+  [switch]$EmitSourceCaptureAudit
 )
 
 # This tool prepares artifacts only. It never activates Compose or changes a running service.
@@ -58,6 +62,8 @@ $runtimeArtifactSourceKeys = [ordered]@{
 $requiredSensitiveKeys = @('DATABASE_URL', 'REDIS_URL')
 $omitWhenEmpty = @('AWS_ACCOUNT_ID', 'AWS_REGION', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS')
 $comparer = [System.StringComparer]::Ordinal
+$sourceAdapterInvocations = 0
+$requiresRuntimePermissions = $SourceMode -eq 'Runtime' -or $EnforceRuntimePermissions
 
 function Write-Phase([string]$Name, [bool]$Passed) {
   [Console]::WriteLine("PHASE_$Name $(if ($Passed) { 'PASS' } else { 'FAIL' })")
@@ -82,6 +88,7 @@ function Read-AssignmentFile([string]$Path, [string]$Kind) {
   return $values
 }
 function Test-SensitiveValue([string]$RawValue) {
+  if ($RawValue.IndexOfAny([char[]]@(13, 10)) -ge 0) { return $false }
   $value = $RawValue.Trim()
   if ([string]::IsNullOrWhiteSpace($value) -or $value.StartsWith('#')) { return $false }
   if ($value.StartsWith("'")) {
@@ -113,6 +120,7 @@ function Get-SyntheticValue([string]$Name) {
 }
 function Get-RuntimeValue([string]$Name) {
   # The value remains only in redirected process memory and is never written to diagnostics.
+  $script:sourceAdapterInvocations += 1
   if ($RuntimeContainer -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*$') { Fail-Safely 'SOURCE_CONTAINER_INVALID' }
   $psi = [Diagnostics.ProcessStartInfo]::new()
   $psi.FileName = 'docker'
@@ -151,14 +159,44 @@ function Get-FileMetadata([string]$Path) {
   if ($item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { Fail-Safely 'METADATA_INVALID' }
   return $true
 }
-function Set-ArtifactAcl([string]$Path) {
-  # Do not touch the script ACL. On non-Windows, inherited directory permissions are used.
-  if ($SourceMode -eq 'Runtime' -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-    $acl = Get-Acl -LiteralPath $Path
-    $current = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $rule = [Security.AccessControl.FileSystemAccessRule]::new($current, 'FullControl', 'Allow')
-    $acl.SetAccessRule($rule); Set-Acl -LiteralPath $Path -AclObject $acl
+function Get-ApprovedRuntimeSecurityIdentifiers() {
+  return @(
+    [Security.Principal.WindowsIdentity]::GetCurrent().User.Value,
+    'S-1-5-18', # SYSTEM
+    'S-1-5-32-544' # BUILTIN\\Administrators
+  )
+}
+function Test-RestrictedRuntimePermissions([string]$Path, [bool]$RequireProtectedAcl, [string]$FailureCode) {
+  if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    if ($RequireProtectedAcl -and -not $acl.AreAccessRulesProtected) { Fail-Safely $FailureCode }
+    $operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $operatorAllowed = $false; $broadSids = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545')
+    foreach ($rule in $acl.Access) {
+      try { $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { Fail-Safely $FailureCode }
+      if ($broadSids -contains $sid -and $rule.AccessControlType -eq 'Allow') { Fail-Safely $FailureCode }
+      if ($sid -eq $operatorSid -and $rule.AccessControlType -eq 'Allow' -and (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -ne 0)) { $operatorAllowed = $true }
+    }
+    if (-not $operatorAllowed) { Fail-Safely $FailureCode }
+    return
   }
+  Fail-Safely 'PLATFORM_PERMISSION_MODEL_UNSUPPORTED'
+}
+function Set-InvocationRestrictedPermissions([string]$Path, [bool]$IsDirectory) {
+  if (-not $requiresRuntimePermissions) { return }
+  if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Fail-Safely 'PLATFORM_PERMISSION_MODEL_UNSUPPORTED' }
+  $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+  # This function is called only for files/directories created by this invocation.
+  $acl.SetAccessRuleProtection($true, $false)
+  foreach ($existingRule in @($acl.Access)) { $null = $acl.RemoveAccessRuleSpecific($existingRule) }
+  $inheritance = if ($IsDirectory) { [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit } else { [Security.AccessControl.InheritanceFlags]::None }
+  foreach ($sidText in Get-ApprovedRuntimeSecurityIdentifiers) {
+    $sid = [Security.Principal.SecurityIdentifier]::new($sidText)
+    $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+    $acl.AddAccessRule($rule)
+  }
+  Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+  Test-RestrictedRuntimePermissions $Path $true 'ACL_POST_VERIFY_FAILED'
 }
 function Test-TargetRootSafe([string]$Candidate) {
   $checkpoint = 'INITIAL'
@@ -180,10 +218,26 @@ function Test-TargetRootSafe([string]$Candidate) {
   $normalizedRepository = [IO.Path]::GetFullPath($repositoryRoot).TrimEnd('\', '/')
   $normalizedRoot = $root.TrimEnd('\', '/')
   if ($normalizedRoot.Equals($normalizedRepository, $comparison) -or $normalizedRoot.StartsWith($normalizedRepository + [IO.Path]::DirectorySeparatorChar, $comparison)) { Fail-Safely 'TARGET_REPOSITORY_CONTAINED' }
-  $checkpoint = 'WORKTREE'; $savedErrorActionPreference = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-  try { $worktreeOutput = @(& git -C $root rev-parse --show-toplevel 2>$null); $worktreeExitCode = $LASTEXITCODE } finally { $ErrorActionPreference = $savedErrorActionPreference }
-  $worktree = ([string]::Join('', [string[]]$worktreeOutput)).Trim()
-  if ($worktreeExitCode -eq 0 -or (Test-Path -LiteralPath (Join-Path $root '.git'))) { Fail-Safely 'TARGET_GIT_WORKTREE' }
+  $current = $root
+  while ($true) {
+    if (Test-Path -LiteralPath (Join-Path $current '.git')) { Fail-Safely 'TARGET_GIT_WORKTREE' }
+    $parent = [IO.Directory]::GetParent($current)
+    if ($null -eq $parent -or $parent.FullName -eq $current) { break }
+    $current = $parent.FullName
+  }
+  $checkpoint = 'WORKTREE'; $probe = [Diagnostics.ProcessStartInfo]::new()
+  if ($WorktreeProbeMode -eq 'GenericError') { Fail-Safely 'TARGET_WORKTREE_PROBE_FAILED' }
+  if ($WorktreeProbeMode -eq 'Ambiguous') { Fail-Safely 'TARGET_WORKTREE_PROBE_AMBIGUOUS' }
+  $probe.FileName = 'git'; $probe.Arguments = '-C "' + $root.Replace('"', '\"') + '" rev-parse --is-inside-work-tree'
+  $probe.UseShellExecute = $false; $probe.RedirectStandardOutput = $true; $probe.RedirectStandardError = $true
+  $process = [Diagnostics.Process]::new(); $process.StartInfo = $probe
+  if (-not $process.Start()) { Fail-Safely 'TARGET_WORKTREE_PROBE_FAILED' }
+  $probeOutput = $process.StandardOutput.ReadToEnd().Trim(); $probeError = $process.StandardError.ReadToEnd().Trim(); $process.WaitForExit()
+  if ($process.ExitCode -eq 0) {
+    if ($probeOutput -ceq 'true') { Fail-Safely 'TARGET_GIT_WORKTREE' }
+    Fail-Safely 'TARGET_WORKTREE_PROBE_AMBIGUOUS'
+  }
+  if ($process.ExitCode -ne 128 -or $probeOutput.Length -ne 0 -or $probeError -cne 'fatal: not a git repository (or any of the parent directories): .git') { Fail-Safely 'TARGET_WORKTREE_PROBE_FAILED' }
   return $root
   } catch {
     if ($_.Exception.Message -match '^[A-Z_]+$') { throw }
@@ -202,15 +256,23 @@ $created = New-Object System.Collections.Generic.List[string]
 $staged = New-Object System.Collections.Generic.List[string]
 try {
   $targetRootFull = Test-TargetRootSafe $TargetRoot
+  if ($requiresRuntimePermissions) { Test-RestrictedRuntimePermissions $targetRootFull $true 'TARGET_ROOT_PERMISSIONS_UNSAFE' }
   Write-Phase 'INITIALIZE' $true
   $setsRoot = Join-Path $targetRootFull 'sets'
-  if (-not (Test-Path -LiteralPath $setsRoot)) { New-Item -ItemType Directory -Path $setsRoot -ErrorAction Stop | Out-Null }
+  $setsRootExisted = Test-Path -LiteralPath $setsRoot
+  if (-not $setsRootExisted) {
+    New-Item -ItemType Directory -Path $setsRoot -ErrorAction Stop | Out-Null
+    $created.Add($setsRoot)
+    Set-InvocationRestrictedPermissions $setsRoot $true
+  }
   $setsRoot = Test-TargetRootSafe $setsRoot
+  if ($requiresRuntimePermissions -and $setsRootExisted) { Test-RestrictedRuntimePermissions $setsRoot $true 'EXISTING_TARGET_HIERARCHY_PERMISSIONS_UNSAFE' }
   $stagingSet = Join-Path $setsRoot ('.' + $TransactionId + '.staging')
   $publishedSet = Join-Path $setsRoot $TransactionId
   if ((Test-Path -LiteralPath $stagingSet) -or (Test-Path -LiteralPath $publishedSet)) { Fail-Safely 'DESTINATION_EXISTS' }
   New-Item -ItemType Directory -Path $stagingSet -ErrorAction Stop | Out-Null
   $created.Add($stagingSet)
+  Set-InvocationRestrictedPermissions $stagingSet $true
   $names = @('runtime.env', 'sensitive.env', 'jwt-access', 'jwt-refresh', 'github-actions-token')
   if ($SourceMode -eq 'Synthetic' -and [string]::IsNullOrWhiteSpace($SyntheticSourceRoot)) { Fail-Safely 'SYNTHETIC_SOURCE_REQUIRED' }
   Write-Phase 'SOURCE_DISCOVERY' $true
@@ -256,13 +318,16 @@ try {
   foreach ($name in $payloads.Keys) {
     $stage = New-StagedFile $stagingSet $name ([string]$payloads[$name]); $staged.Add($stage)
     if ($InjectFailure -eq 'Acl') { Fail-Safely 'INJECTED_FAILURE' }
-    Set-ArtifactAcl $stage
+    Set-InvocationRestrictedPermissions $stage $false
     if ($InjectFailure -eq 'Metadata') { Fail-Safely 'INJECTED_FAILURE' }
     $null = Get-FileMetadata $stage
   }
   Write-Phase 'ACL' $true; Write-Phase 'METADATA' $true
   if ($InjectFailure -eq 'AtomicMove' -or $InjectFailure -eq 'AfterFirstCommit' -or $InjectFailure -eq 'AfterAllCommits') { Fail-Safely 'INJECTED_FAILURE' }
-  [IO.File]::WriteAllText((Join-Path $stagingSet '.published'), 'PUBLISHED', [Text.UTF8Encoding]::new($false))
+  $publicationMarker = Join-Path $stagingSet '.published'
+  [IO.File]::WriteAllText($publicationMarker, 'PUBLISHED', [Text.UTF8Encoding]::new($false))
+  $staged.Add($publicationMarker)
+  Set-InvocationRestrictedPermissions $publicationMarker $false
   if ($InjectFailure -eq 'BeforeCommit') { Fail-Safely 'INJECTED_FAILURE' }
   Move-Item -LiteralPath $stagingSet -Destination $publishedSet -ErrorAction Stop
   $created.Clear()
@@ -273,6 +338,7 @@ try {
   $code = if ($_.Exception.Message -match '^[A-Z_]+$') { $_.Exception.Message } else { 'TRANSFER_FAILED' }
   foreach ($path in $staged) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
   foreach ($path in $created) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue }
+  if ($EmitSourceCaptureAudit) { [Console]::WriteLine("SOURCE_ADAPTER_INVOCATIONS=$sourceAdapterInvocations") }
   [Console]::WriteLine("ERROR_CODE=$code")
   Write-Phase 'CLEANUP' $true
   exit 1

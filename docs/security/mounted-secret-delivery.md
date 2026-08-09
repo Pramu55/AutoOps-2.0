@@ -166,17 +166,26 @@ environment value in redirected process memory and never writes it to command
 arguments, console output, logs, Git, or a repository file.
 
 The tool validates an external target before any runtime-source capture, then
-creates a complete versioned set below `sets/<transaction-id>`. Artifacts are
-written only inside an unpublished staging directory; a published marker and a
-single same-filesystem directory rename make the complete set selectable.
-Abandoned staging directories are never activation candidates. It rejects an
-existing published set without reading or overwriting it. Diagnostics are
+creates a complete versioned set below `sets/<transaction-id>`. In runtime
+mode, the existing target root is an operator-provisioned trust boundary: the
+tool verifies it is restrictive and rejects unsafe or ambiguous roots without
+attempting to repair them. It likewise verifies any pre-existing `sets`
+directory and never rewrites its ACL. Only directories and files created by
+the current invocation receive protected least-privilege permissions and a
+post-write verification; a permissions failure rolls back only invocation-owned
+artifacts. Artifacts are written only inside an unpublished staging directory;
+a published marker and a single same-filesystem directory rename make the
+complete set selectable. Abandoned staging directories are never activation
+candidates. It rejects an existing published set without reading or
+overwriting it. Diagnostics are
 limited to phase names and symbolic error
 codes. `runtime.env` serialization is deterministic and retains only the
 validator's non-secret contract; empty AWS account/region and empty provider
 inventory IDs are omitted so the established Compose fallback remains
 authoritative. The tool always writes GitHub enabled and Jenkins disabled for
-the approved `core,sensitive-env,github` selection. Real transfer remains a
+the approved `core,sensitive-env,github` selection. Sensitive values containing
+carriage returns or line feeds are rejected before env-file serialization, so a
+logical credential cannot create multiple assignments. Real transfer remains a
 separate explicit operational authorization and tool availability never
 activates file mode.
 
