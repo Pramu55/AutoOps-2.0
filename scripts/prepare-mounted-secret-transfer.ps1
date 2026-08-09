@@ -63,10 +63,10 @@ $runtimeAllowedKeys = @(
 )
 $sensitiveKeys = @('DATABASE_URL', 'REDIS_URL', 'ARGOCD_AUTH_TOKEN', 'ARGOCD_PASSWORD', 'GRAFANA_API_TOKEN', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AZURE_CLIENT_SECRET')
 $migratedKeys = @('JWT_SECRET', 'JWT_REFRESH_SECRET', 'GITHUB_ACTIONS_TOKEN', 'JENKINS_API_TOKEN')
-$runtimeArtifactSourceKeys = [ordered]@{
-  'jwt-access' = 'JWT_SECRET'
-  'jwt-refresh' = 'JWT_REFRESH_SECRET'
-  'github-actions-token' = 'GITHUB_ACTIONS_TOKEN'
+$mountedArtifactDescriptors = [ordered]@{
+  'jwt-access' = @{ EnvironmentVariable = 'JWT_SECRET'; StripSingleTrailingNewline = $true }
+  'jwt-refresh' = @{ EnvironmentVariable = 'JWT_REFRESH_SECRET'; StripSingleTrailingNewline = $true }
+  'github-actions-token' = @{ EnvironmentVariable = 'GITHUB_ACTIONS_TOKEN'; StripSingleTrailingNewline = $true }
 }
 $requiredSensitiveKeys = @('DATABASE_URL', 'REDIS_URL')
 $omitWhenEmpty = @('AWS_ACCOUNT_ID', 'AWS_REGION', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS')
@@ -206,8 +206,17 @@ function Get-SourceValue([string]$Name) {
 }
 function Get-ArtifactSourceValue([string]$ArtifactName) {
   if ($SourceMode -eq 'Synthetic') { return Get-SyntheticValue $ArtifactName }
-  if (-not $runtimeArtifactSourceKeys.Contains($ArtifactName)) { Fail-Safely 'ARTIFACT_SOURCE_INVALID' }
-  return Get-SourceValue $runtimeArtifactSourceKeys[$ArtifactName]
+  if (-not $mountedArtifactDescriptors.Contains($ArtifactName)) { Fail-Safely 'ARTIFACT_SOURCE_INVALID' }
+  return Get-SourceValue $mountedArtifactDescriptors[$ArtifactName].EnvironmentVariable
+}
+function Test-MountedArtifactLogicalEquivalence([string]$ArtifactName, [string]$Value) {
+  if (-not $mountedArtifactDescriptors.Contains($ArtifactName)) { Fail-Safely 'ARTIFACT_SOURCE_INVALID' }
+  $descriptor = $mountedArtifactDescriptors[$ArtifactName]
+  if ($descriptor.StripSingleTrailingNewline -and ($Value.EndsWith("`n") -or $Value.EndsWith("`r"))) {
+    # MountedFileSecretProvider removes a single terminal LF or CRLF. Reject
+    # values whose file-mode result would differ from their env-mode value.
+    Fail-Safely 'MOUNTED_SECRET_TRAILING_LINE_ENDING'
+  }
 }
 function Get-RuntimeAssignmentMap([string[]]$Keys) {
   $values = [ordered]@{}
@@ -429,6 +438,7 @@ try {
   foreach ($artifact in @('jwt-access', 'jwt-refresh', 'github-actions-token')) {
     $value = [string]$payloads[$artifact]
     if ([string]::IsNullOrWhiteSpace($value) -or $value.IndexOf([char]0) -ge 0) { Fail-Safely 'REQUIRED_SECRET_INVALID' }
+    Test-MountedArtifactLogicalEquivalence $artifact $value
   }
   if ($runtime.Contains('NODE_ENV') -and $runtime['NODE_ENV'] -ceq 'production') {
     $access = [string]$payloads['jwt-access']; $refresh = [string]$payloads['jwt-refresh']

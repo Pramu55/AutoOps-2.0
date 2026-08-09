@@ -61,6 +61,11 @@ function Get-QuotedContractItems([string]$Path, [string]$Variable) {
   if (-not $match.Success) { throw "CONTRACT_PARSE_FAILED:$Variable" }
   return @([regex]::Matches($match.Groups['body'].Value, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value })
 }
+function Test-ArtifactDescriptorContract([string]$Path, [string]$Artifact, [string]$EnvironmentVariable) {
+  $content = [IO.File]::ReadAllText($Path)
+  $pattern = "environmentVariable: '$([regex]::Escape($EnvironmentVariable))',[\s\S]*?fileName: '$([regex]::Escape($Artifact))',[\s\S]*?stripSingleTrailingNewline: true"
+  return [regex]::IsMatch($content, $pattern)
+}
 function Test-SameOrdinalSet([string[]]$Left, [string[]]$Right) {
   return (($Left | Sort-Object) -join "`n") -ceq (($Right | Sort-Object) -join "`n")
 }
@@ -117,7 +122,9 @@ $root = Join-Path ([IO.Path]::GetTempPath()) ('autoops-mounted-transfer-test-' +
 try {
   $validatorContract = Join-Path $PSScriptRoot 'validate-mounted-secret-delivery.ps1'
   $toolContract = $tool
+  $providerContract = Join-Path $PSScriptRoot '../packages/utils/src/secret-provider.ts'
   Assert-Condition 'RUNTIME_CONTRACT_DRIFT_GUARD' (Test-SameOrdinalSet (Get-QuotedContractItems $validatorContract 'runtimeAllowedKeys') (Get-QuotedContractItems $toolContract 'runtimeAllowedKeys'))
+  Assert-Condition 'MOUNTED_ARTIFACT_DESCRIPTOR_CONTRACT' ((Test-ArtifactDescriptorContract $providerContract 'jwt-access' 'JWT_SECRET') -and (Test-ArtifactDescriptorContract $providerContract 'jwt-refresh' 'JWT_REFRESH_SECRET') -and (Test-ArtifactDescriptorContract $providerContract 'github-actions-token' 'GITHUB_ACTIONS_TOKEN'))
   Assert-Condition 'SENSITIVE_CONTRACT_DRIFT_GUARD' (Test-SameOrdinalSet (Get-QuotedContractItems $validatorContract 'sensitiveRuntimeKeys') (Get-QuotedContractItems $toolContract 'sensitiveKeys'))
   Assert-Condition 'MIGRATED_CONTRACT_DRIFT_GUARD' (Test-SameOrdinalSet (Get-QuotedContractItems $validatorContract 'migratedSecretKeys') (Get-QuotedContractItems $toolContract 'migratedKeys'))
   $repositoryTarget = Split-Path -Parent $PSScriptRoot
@@ -340,6 +347,33 @@ try {
   $validProductionRoot = Join-Path $root 'VALID_REQUIRED_SECRET_SET_PASS'; $validProductionSource = Join-Path $validProductionRoot 'source'; $validProductionTarget = Join-Path $validProductionRoot 'target'; New-Item -ItemType Directory -Path $validProductionTarget -Force | Out-Null
   New-Fixture $validProductionSource @('NODE_ENV=production','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment) @{ 'jwt-access'=(('A' * 32) -join ''); 'jwt-refresh'=(('R' * 32) -join ''); 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
   Assert-Condition 'VALID_REQUIRED_SECRET_SET_PASS' ((Invoke-Tool $validProductionSource $validProductionTarget).ExitCode -eq 0)
+  Assert-Condition 'MOUNTED_SECRET_NORMAL_VALUE_PASS' (Test-SetSelectable $validProductionTarget)
+  $trailingLineEndingCases = @(
+    @{ Name='JWT_ACCESS_TRAILING_LF_REJECTED'; Artifact='jwt-access'; Value=('AUTOOPS_SYNTHETIC_JWT_ACCESS' + "`n") },
+    @{ Name='JWT_ACCESS_TRAILING_CRLF_REJECTED'; Artifact='jwt-access'; Value=('AUTOOPS_SYNTHETIC_JWT_ACCESS' + "`r`n") },
+    @{ Name='JWT_REFRESH_TRAILING_LF_REJECTED'; Artifact='jwt-refresh'; Value=('AUTOOPS_SYNTHETIC_JWT_REFRESH' + "`n") },
+    @{ Name='JWT_REFRESH_TRAILING_CRLF_REJECTED'; Artifact='jwt-refresh'; Value=('AUTOOPS_SYNTHETIC_JWT_REFRESH' + "`r`n") },
+    @{ Name='GITHUB_TOKEN_TRAILING_LF_REJECTED'; Artifact='github-actions-token'; Value=('AUTOOPS_SYNTHETIC_GITHUB_TOKEN' + "`n") },
+    @{ Name='GITHUB_TOKEN_TRAILING_CRLF_REJECTED'; Artifact='github-actions-token'; Value=('AUTOOPS_SYNTHETIC_GITHUB_TOKEN' + "`r`n") },
+    @{ Name='MOUNTED_SECRET_TRAILING_CR_REJECTED'; Artifact='jwt-access'; Value=('AUTOOPS_SYNTHETIC_JWT_ACCESS' + "`r") }
+  )
+  foreach ($trailingCase in $trailingLineEndingCases) {
+    $caseRoot = Join-Path $root $trailingCase.Name; $source = Join-Path $caseRoot 'source'; $target = Join-Path $caseRoot 'target'; New-Item -ItemType Directory -Path $target -Force | Out-Null
+    $artifacts = @{ 'jwt-access'='AUTOOPS_SYNTHETIC_JWT_ACCESS'; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
+    $artifacts[$trailingCase.Artifact] = $trailingCase.Value
+    New-Fixture $source @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment) $artifacts
+    $result = Invoke-Tool $source $target
+    Assert-Condition $trailingCase.Name ($result.ExitCode -ne 0 -and $result.Output.Contains('ERROR_CODE=MOUNTED_SECRET_TRAILING_LINE_ENDING'))
+    Assert-Condition 'TRAILING_NEWLINE_NO_PUBLICATION' (Test-NoPublishedSet $target)
+    Assert-Condition 'TRAILING_NEWLINE_NO_PUBLISHED_MARKER' (-not (Test-Path -LiteralPath (Join-Path (Get-PublishedSet $target) '.published')))
+    Assert-Condition 'TRAILING_NEWLINE_FAILURE_CLEANUP' (-not (Test-Path -LiteralPath (Join-Path $target 'sets/.synthetic-set.staging')))
+    foreach ($value in $artifacts.Values) { Assert-Condition "TRAILING_NEWLINE_NO_OUTPUT_LEAK_$($trailingCase.Name)" (-not $result.Output.Contains([string]$value)) }
+  }
+  $internalNewlineRoot = Join-Path $root 'MOUNTED_SECRET_INTERNAL_NEWLINE_BEHAVIOR'; $internalNewlineSource = Join-Path $internalNewlineRoot 'source'; $internalNewlineTarget = Join-Path $internalNewlineRoot 'target'; New-Item -ItemType Directory -Path $internalNewlineTarget -Force | Out-Null
+  $internalNewlineSecret = 'AUTOOPS_SYNTHETIC_JWT_ACCESS' + "`n" + 'INTERNAL'
+  New-Fixture $internalNewlineSource @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment) @{ 'jwt-access'=$internalNewlineSecret; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
+  Assert-Condition 'MOUNTED_SECRET_INTERNAL_NEWLINE_BEHAVIOR' ((Invoke-Tool $internalNewlineSource $internalNewlineTarget).ExitCode -eq 0)
+  Assert-Condition 'ENV_FILE_SECRET_EQUIVALENCE_PASS' ([IO.File]::ReadAllText((Join-Path (Get-PublishedSet $internalNewlineTarget) 'jwt-access')) -ceq $internalNewlineSecret)
   $roundTripCases = @(
     @{ Name='ENV_ROUNDTRIP_SIMPLE_PASS'; Kind='Runtime'; Key='LOG_LEVEL'; SourceValue='warn'; Expected=$true },
     @{ Name='ENV_ROUNDTRIP_SPACE_PASS'; Kind='Runtime'; Key='LOG_LEVEL'; SourceValue="'warn mode'"; Expected=$true },

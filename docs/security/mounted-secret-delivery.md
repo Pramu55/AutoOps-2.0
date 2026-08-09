@@ -195,6 +195,9 @@ being reinterpreted. The staged complete set is checked by the authoritative
 mounted-secret validator before publication. JWT access/refresh and the enabled
 GitHub token must be non-empty/non-whitespace; production JWT preparation also
 enforces the API's minimum-length, placeholder, and distinct-value constraints.
+Because the mounted provider strips one terminal LF or CRLF from its selected
+secret descriptors, preparation rejects source values ending in LF, CRLF, or
+bare CR rather than silently changing the logical credential during migration.
 Real transfer remains a separate explicit operational authorization and tool
 availability never activates file mode.
 
