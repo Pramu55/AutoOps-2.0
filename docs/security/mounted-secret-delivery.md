@@ -168,12 +168,15 @@ arguments, console output, logs, Git, or a repository file.
 The tool validates an external target before any runtime-source capture, then
 creates a complete versioned set below `sets/<transaction-id>`. In runtime
 mode, the existing target root is an operator-provisioned trust boundary: the
-tool verifies it is restrictive and rejects unsafe or ambiguous roots without
+tool verifies that its owner and every effective Allow principal are in the
+approved runtime SID allowlist, and rejects unsafe or ambiguous roots without
 attempting to repair them. It likewise verifies any pre-existing `sets`
 directory and never rewrites its ACL. Only directories and files created by
 the current invocation receive protected least-privilege permissions and a
 post-write verification; a permissions failure rolls back only invocation-owned
-artifacts. Artifacts are written only inside an unpublished staging directory;
+artifacts. Rollback never recursively removes the shared `sets` directory, so
+another invocation's staging or published transaction remains intact. Artifacts
+are written only inside an unpublished staging directory;
 a published marker and a single same-filesystem directory rename make the
 complete set selectable. Abandoned staging directories are never activation
 candidates. It rejects an existing published set without reading or
@@ -183,11 +186,17 @@ codes. `runtime.env` serialization is deterministic and retains only the
 validator's non-secret contract; empty AWS account/region and empty provider
 inventory IDs are omitted so the established Compose fallback remains
 authoritative. The tool always writes GitHub enabled and Jenkins disabled for
-the approved `core,sensitive-env,github` selection. Sensitive values containing
-carriage returns or line feeds are rejected before env-file serialization, so a
-logical credential cannot create multiple assignments. Real transfer remains a
-separate explicit operational authorization and tool availability never
-activates file mode.
+the approved `core,sensitive-env,github` selection. Before publication it uses
+an intentionally small lossless env-file subset: enablement flags remain
+validated unquoted booleans, while other accepted values use literal
+single-quoted syntax. Values containing a single quote, backslash, NUL, CR, or
+LF that would require parser-specific escape behavior fail closed rather than
+being reinterpreted. The staged complete set is checked by the authoritative
+mounted-secret validator before publication. JWT access/refresh and the enabled
+GitHub token must be non-empty/non-whitespace; production JWT preparation also
+enforces the API's minimum-length, placeholder, and distinct-value constraints.
+Real transfer remains a separate explicit operational authorization and tool
+availability never activates file mode.
 
 ## Host filesystem guidance
 

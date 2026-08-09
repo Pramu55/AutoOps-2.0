@@ -17,6 +17,11 @@ param(
   [string]$InjectRuntimeValueNewline = 'None',
   [ValidatePattern('^[A-Z][A-Z0-9_]*$')]
   [string]$InjectedRuntimeKey = 'LOG_LEVEL',
+  # Synthetic-only test seam. It cannot influence Runtime-mode trust decisions.
+  [ValidateSet('Normal', 'ApprovedSystem', 'ApprovedAdministrators', 'Unapproved', 'Unresolvable')]
+  [string]$TestOwnerProbeMode = 'Normal',
+  [ValidateSet('Any', 'Sets')]
+  [string]$TestOwnerProbeScope = 'Any',
   [switch]$EmitSourceCaptureAudit
 )
 
@@ -87,9 +92,36 @@ function Read-AssignmentFile([string]$Path, [string]$Kind) {
     if (-not $match.Success) { Fail-Safely 'INVALID_ASSIGNMENT' }
     $key = $match.Groups['key'].Value
     if ($values.Contains($key)) { Fail-Safely 'DUPLICATE_KEY' }
-    $values[$key] = $match.Groups['value'].Value
+    $values[$key] = ConvertFrom-SyntheticEnvFileValue $match.Groups['value'].Value $Kind
   }
   return $values
+}
+function ConvertFrom-SyntheticEnvFileValue([string]$RawValue, [string]$Kind) {
+  if ($RawValue.IndexOfAny([char[]]@(13, 10, 0)) -ge 0) { Fail-Safely 'SOURCE_VALUE_INVALID' }
+  $value = $RawValue.Trim()
+  if ([string]::IsNullOrWhiteSpace($value)) {
+    if ($Kind -eq 'runtime') { return '' }
+    Fail-Safely 'SOURCE_VALUE_INVALID'
+  }
+  if ($value.StartsWith('#')) { Fail-Safely 'SOURCE_VALUE_INVALID' }
+  if ($value.StartsWith("'")) {
+    $closingQuote = $value.IndexOf("'", 1)
+    $trailing = if ($closingQuote -lt 0) { '' } else { $value.Substring($closingQuote + 1).TrimStart() }
+    if ($closingQuote -lt 0 -or (-not [string]::IsNullOrWhiteSpace($trailing) -and -not $trailing.StartsWith('#'))) { Fail-Safely 'SOURCE_VALUE_INVALID' }
+    $content = $value.Substring(1, $closingQuote - 1)
+    if ($content.Contains('\')) { Fail-Safely 'SOURCE_VALUE_INVALID' }
+    return $content
+  }
+  if ($value.StartsWith('"')) {
+    $match = [regex]::Match($value, '^"(?<content>(?:[^"\\]|\\.)*)"\s*(?:#.*)?$')
+    if (-not $match.Success) { Fail-Safely 'SOURCE_VALUE_INVALID' }
+    $content = $match.Groups['content'].Value
+    if ($content.Contains('\') -or $content.Contains('$')) { Fail-Safely 'SOURCE_VALUE_INVALID' }
+    return $content
+  }
+  $effective = [regex]::Replace($value, '\s+#.*$', '').Trim()
+  if ([string]::IsNullOrWhiteSpace($effective) -or $effective.Contains('$') -or $effective.Contains('"') -or $effective.Contains("'")) { Fail-Safely 'SOURCE_VALUE_INVALID' }
+  return $effective
 }
 function Test-SensitiveValue([string]$RawValue) {
   if ($RawValue.IndexOfAny([char[]]@(13, 10)) -ge 0) { return $false }
@@ -119,6 +151,30 @@ function Test-SensitiveValue([string]$RawValue) {
 }
 function Test-SingleLineRuntimeValue([string]$Value) {
   return $Value.IndexOfAny([char[]]@(13, 10)) -lt 0
+}
+function ConvertTo-LosslessSingleQuotedValue([string]$Value, [string]$FailureCode) {
+  if ($Value.IndexOfAny([char[]]@(0, 13, 10)) -ge 0) { Fail-Safely $FailureCode }
+  # The authoritative validator documents single-quoted env-file values as
+  # literal. Reject the two characters which would require Compose-specific
+  # escape semantics instead of reproducing a partial parser.
+  if ($Value.Contains("'") -or $Value.Contains('\')) { Fail-Safely $FailureCode }
+  $encoded = "'$Value'"
+  $roundTrip = $encoded.Substring(1, $encoded.Length - 2)
+  if (-not $roundTrip.Equals($Value, [StringComparison]::Ordinal)) { Fail-Safely $FailureCode }
+  return $encoded
+}
+function ConvertTo-RuntimeEnvAssignment([string]$Key, [string]$Value) {
+  if (-not (Test-SingleLineRuntimeValue $Value) -or $Value.IndexOf([char]0) -ge 0) { Fail-Safely 'RUNTIME_VALUE_MULTILINE' }
+  if ($Key -eq 'GITHUB_ACTIONS_ENABLED' -or $Key -eq 'JENKINS_INTEGRATION_ENABLED') {
+    # The authoritative runtime validator consumes these two flags before
+    # Compose, so retain their validated, unquoted boolean representation.
+    return "$Key=$Value"
+  }
+  return "$Key=$(ConvertTo-LosslessSingleQuotedValue $Value 'RUNTIME_VALUE_UNREPRESENTABLE')"
+}
+function ConvertTo-SensitiveEnvAssignment([string]$Key, [string]$Value) {
+  if ([string]::IsNullOrWhiteSpace($Value)) { Fail-Safely 'SENSITIVE_VALUE_INVALID' }
+  return "$Key=$(ConvertTo-LosslessSingleQuotedValue $Value 'SENSITIVE_VALUE_UNREPRESENTABLE')"
 }
 function Get-SyntheticValue([string]$Name) {
   $path = Join-Path $SyntheticSourceRoot $Name
@@ -189,6 +245,23 @@ function Test-RestrictedRuntimePermissions([string]$Path, [bool]$RequireProtecte
     $operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $approvedSids = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($approvedSid in Get-ApprovedRuntimeSecurityIdentifiers) { $null = $approvedSids.Add($approvedSid) }
+    try {
+      $useTestOwner = $TestOwnerProbeMode -ne 'Normal' -and ($TestOwnerProbeScope -eq 'Any' -or ((Split-Path -Leaf $Path) -eq 'sets'))
+      $ownerSid = if (-not $useTestOwner) {
+        $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier])
+        if ($null -eq $owner -or [string]::IsNullOrWhiteSpace($owner.Value)) { Fail-Safely $FailureCode }
+        $owner.Value
+      } else { switch ($TestOwnerProbeMode) {
+        'ApprovedSystem' { 'S-1-5-18'; break }
+        'ApprovedAdministrators' { 'S-1-5-32-544'; break }
+        'Unapproved' { 'S-1-5-21-424242-424242-424242-4001'; break }
+        'Unresolvable' { Fail-Safely $FailureCode }
+        default { Fail-Safely $FailureCode }
+      } }
+    } catch {
+      Fail-Safely $FailureCode
+    }
+    if (-not $approvedSids.Contains($ownerSid)) { Fail-Safely $FailureCode }
     $operatorAllowed = $false; $broadSids = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545')
     foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
       $sid = $rule.IdentityReference.Value
@@ -269,10 +342,27 @@ function New-StagedFile([string]$Directory, [string]$Name, [string]$Value) {
   try { $bytes = $encoding.GetBytes($Value); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
   return $stage
 }
+function Test-StagedMountedSecretContract([string]$SetRoot) {
+  $validator = Join-Path $PSScriptRoot 'validate-mounted-secret-delivery.ps1'
+  $psi = [Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = 'powershell'
+  $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $validator.Replace('"', '\"') + '" -Overlay core,sensitive-env,github'
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  $psi.Environment['AUTOOPS_FILE_MODE_ENV_FILE'] = Join-Path $SetRoot 'runtime.env'
+  $psi.Environment['AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE'] = Join-Path $SetRoot 'sensitive.env'
+  $psi.Environment['AUTOOPS_SECRET_JWT_ACCESS_FILE'] = Join-Path $SetRoot 'jwt-access'
+  $psi.Environment['AUTOOPS_SECRET_JWT_REFRESH_FILE'] = Join-Path $SetRoot 'jwt-refresh'
+  $psi.Environment['AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE'] = Join-Path $SetRoot 'github-actions-token'
+  $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
+  if (-not $process.Start()) { Fail-Safely 'VALIDATOR_EXECUTION_FAILED' }
+  $null = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
+  if ($process.ExitCode -ne 0) { Fail-Safely 'VALIDATOR_REJECTED' }
+}
 
 $created = New-Object System.Collections.Generic.List[string]
 $staged = New-Object System.Collections.Generic.List[string]
 try {
+  if ($SourceMode -eq 'Runtime' -and ($TestOwnerProbeMode -ne 'Normal' -or $TestOwnerProbeScope -ne 'Any')) { Fail-Safely 'TEST_PARAMETER_INVALID' }
   $targetRootFull = Test-TargetRootSafe $TargetRoot
   if ($requiresRuntimePermissions) { Test-RestrictedRuntimePermissions $targetRootFull $true 'TARGET_ROOT_PERMISSIONS_UNSAFE' }
   Write-Phase 'INITIALIZE' $true
@@ -280,7 +370,6 @@ try {
   $setsRootExisted = Test-Path -LiteralPath $setsRoot
   if (-not $setsRootExisted) {
     New-Item -ItemType Directory -Path $setsRoot -ErrorAction Stop | Out-Null
-    $created.Add($setsRoot)
     Set-InvocationRestrictedPermissions $setsRoot $true
   }
   $setsRoot = Test-TargetRootSafe $setsRoot
@@ -313,9 +402,8 @@ try {
   $runtimeLines = New-Object System.Collections.Generic.List[string]
   foreach ($key in $runtimeAllowedKeys) {
     if (-not $runtime.Contains($key)) { continue }
-    if (-not (Test-SingleLineRuntimeValue ([string]$runtime[$key])) ) { Fail-Safely 'RUNTIME_VALUE_MULTILINE' }
     if ($omitWhenEmpty -contains $key -and [string]::IsNullOrEmpty([string]$runtime[$key])) { continue }
-    $runtimeLines.Add("$key=$($runtime[$key])")
+    $runtimeLines.Add((ConvertTo-RuntimeEnvAssignment $key ([string]$runtime[$key])))
   }
   $runtimeValue = ($runtimeLines -join [Environment]::NewLine) + [Environment]::NewLine
   Write-Phase 'RUNTIME_SERIALIZATION' $true
@@ -325,10 +413,10 @@ try {
   } else {
     Get-RuntimeAssignmentMap $sensitiveKeys
   }
-  foreach ($key in $sensitive.Keys) { if (-not $sensitiveSet.Contains($key) -or $migratedSet.Contains($key) -or -not (Test-SensitiveValue ([string]$sensitive[$key]))) { Fail-Safely 'SENSITIVE_KEY_INVALID' } }
+  foreach ($key in $sensitive.Keys) { if (-not $sensitiveSet.Contains($key) -or $migratedSet.Contains($key)) { Fail-Safely 'SENSITIVE_KEY_INVALID' } }
   foreach ($key in $requiredSensitiveKeys) { if (-not $sensitive.Contains($key)) { Fail-Safely 'SENSITIVE_REQUIRED_MISSING' } }
   $sensitiveLines = New-Object System.Collections.Generic.List[string]
-  foreach ($key in $sensitiveKeys) { if ($sensitive.Contains($key)) { $sensitiveLines.Add("$key=$($sensitive[$key])") } }
+  foreach ($key in $sensitiveKeys) { if ($sensitive.Contains($key)) { $sensitiveLines.Add((ConvertTo-SensitiveEnvAssignment $key ([string]$sensitive[$key]))) } }
   $sensitiveValue = ($sensitiveLines -join [Environment]::NewLine) + [Environment]::NewLine
   Write-Phase 'SENSITIVE_SERIALIZATION' $true
   $payloads = [ordered]@{
@@ -337,6 +425,15 @@ try {
     'jwt-access' = (Get-ArtifactSourceValue 'jwt-access')
     'jwt-refresh' = (Get-ArtifactSourceValue 'jwt-refresh')
     'github-actions-token' = (Get-ArtifactSourceValue 'github-actions-token')
+  }
+  foreach ($artifact in @('jwt-access', 'jwt-refresh', 'github-actions-token')) {
+    $value = [string]$payloads[$artifact]
+    if ([string]::IsNullOrWhiteSpace($value) -or $value.IndexOf([char]0) -ge 0) { Fail-Safely 'REQUIRED_SECRET_INVALID' }
+  }
+  if ($runtime.Contains('NODE_ENV') -and $runtime['NODE_ENV'] -ceq 'production') {
+    $access = [string]$payloads['jwt-access']; $refresh = [string]$payloads['jwt-refresh']
+    $placeholder = 'change-me|replace-me|please-change|local-only|autoops_dev|^secret$|^password$|^default$'
+    if ($access.Length -lt 32 -or $refresh.Length -lt 32 -or $access -match $placeholder -or $refresh -match $placeholder -or $access -ceq $refresh) { Fail-Safely 'REQUIRED_SECRET_INVALID' }
   }
   if ($InjectFailure -eq 'BeforeCommit') { Fail-Safely 'INJECTED_FAILURE' }
   foreach ($name in $payloads.Keys) {
@@ -348,6 +445,8 @@ try {
   }
   Write-Phase 'ACL' $true; Write-Phase 'METADATA' $true
   if ($InjectFailure -eq 'AtomicMove' -or $InjectFailure -eq 'AfterFirstCommit' -or $InjectFailure -eq 'AfterAllCommits') { Fail-Safely 'INJECTED_FAILURE' }
+  Test-StagedMountedSecretContract $stagingSet
+  Write-Phase 'VALIDATION' $true
   $publicationMarker = Join-Path $stagingSet '.published'
   [IO.File]::WriteAllText($publicationMarker, 'PUBLISHED', [Text.UTF8Encoding]::new($false))
   $staged.Add($publicationMarker)

@@ -19,19 +19,20 @@ $syntheticDatabaseAssignment = $databaseKey + '=synthetic-database-value'
 $syntheticRedisAssignment = $redisKey + '=synthetic-redis-value'
 
 function Assert-Condition([string]$Name, [bool]$Condition) { if (-not $Condition) { throw "ASSERTION_FAILED:$Name" }; Write-Host "$Name PASS" }
-function New-Fixture([string]$Root, [string[]]$RuntimeLines, [string[]]$SensitiveLines) {
+function New-Fixture([string]$Root, [string[]]$RuntimeLines, [string[]]$SensitiveLines, [hashtable]$Artifacts = $null) {
   New-Item -ItemType Directory -Path $Root -Force | Out-Null
   [IO.File]::WriteAllLines((Join-Path $Root 'runtime.source'), $RuntimeLines)
   [IO.File]::WriteAllLines((Join-Path $Root 'sensitive.source'), $SensitiveLines)
-  [IO.File]::WriteAllText((Join-Path $Root 'jwt-access'), 'AUTOOPS_SYNTHETIC_JWT_ACCESS')
-  [IO.File]::WriteAllText((Join-Path $Root 'jwt-refresh'), 'AUTOOPS_SYNTHETIC_JWT_REFRESH')
-  [IO.File]::WriteAllText((Join-Path $Root 'github-actions-token'), 'AUTOOPS_SYNTHETIC_GITHUB_TOKEN')
+  if ($null -eq $Artifacts) {
+    $Artifacts = @{ 'jwt-access'='AUTOOPS_SYNTHETIC_JWT_ACCESS'; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
+  }
+  foreach ($name in @('jwt-access','jwt-refresh','github-actions-token')) { [IO.File]::WriteAllText((Join-Path $Root $name), [string]$Artifacts[$name]) }
 }
-function Invoke-Tool([string]$Source, [string]$Target, [string]$Failure = 'None', [string]$WorktreeProbeMode = 'Normal', [switch]$EnforceRuntimePermissions, [switch]$EmitSourceCaptureAudit, [string]$RuntimeNewline = 'None', [string]$RuntimeKey = 'LOG_LEVEL') {
+function Invoke-Tool([string]$Source, [string]$Target, [string]$Failure = 'None', [string]$WorktreeProbeMode = 'Normal', [switch]$EnforceRuntimePermissions, [switch]$EmitSourceCaptureAudit, [string]$RuntimeNewline = 'None', [string]$RuntimeKey = 'LOG_LEVEL', [string]$TestOwnerProbeMode = 'Normal', [string]$TestOwnerProbeScope = 'Any') {
   $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $tool, '-SourceMode', 'Synthetic', '-SyntheticSourceRoot', $Source, '-TargetRoot', $Target, '-TransactionId', 'synthetic-set', '-InjectFailure', $Failure, '-WorktreeProbeMode', $WorktreeProbeMode)
   if ($EnforceRuntimePermissions) { $arguments += '-EnforceRuntimePermissions' }
   if ($EmitSourceCaptureAudit) { $arguments += '-EmitSourceCaptureAudit' }
-  $arguments += @('-InjectRuntimeValueNewline', $RuntimeNewline, '-InjectedRuntimeKey', $RuntimeKey)
+  $arguments += @('-InjectRuntimeValueNewline', $RuntimeNewline, '-InjectedRuntimeKey', $RuntimeKey, '-TestOwnerProbeMode', $TestOwnerProbeMode, '-TestOwnerProbeScope', $TestOwnerProbeScope)
   $output = & powershell @arguments 2>&1
   return @{ ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine) }
 }
@@ -46,6 +47,13 @@ function Test-NoPublishedSet([string]$Path) { return -not (Test-Path -LiteralPat
 function Test-SetSelectable([string]$Path) {
   $set = Get-PublishedSet $Path
   return (Test-Path -LiteralPath $set -PathType Container) -and (Test-Path -LiteralPath (Join-Path $set '.published') -PathType Leaf)
+}
+function Get-SerializedLogicalValue([string]$Path, [string]$Key) {
+  $line = @([IO.File]::ReadAllLines($Path) | Where-Object { $_.StartsWith("$Key=") })
+  if ($line.Count -ne 1) { throw "SERIALIZATION_PARSE_FAILED:$Key" }
+  $value = $line[0].Substring($Key.Length + 1)
+  if ($value.Length -ge 2 -and $value.StartsWith("'") -and $value.EndsWith("'")) { return $value.Substring(1, $value.Length - 2) }
+  return $value
 }
 function Get-QuotedContractItems([string]$Path, [string]$Variable) {
   $content = [IO.File]::ReadAllText($Path)
@@ -240,10 +248,30 @@ try {
       Assert-Condition "NEW_SECRET_FILE_OPERATOR_ACCESS_PRESENT_$name" (Test-RestrictedAcl (Join-Path $secureSet $name))
     }
     Assert-Condition 'NEW_SECRET_FILE_ACL_POSTVERIFY_PASS' (Test-RestrictedAcl (Join-Path $secureSet 'sensitive.env'))
+    foreach ($ownerCase in @(
+      @{ Name='OWNER_APPROVED_OPERATOR_PASS'; Mode='Normal'; Expected=$true },
+      @{ Name='OWNER_APPROVED_SYSTEM_PASS'; Mode='ApprovedSystem'; Expected=$true },
+      @{ Name='OWNER_APPROVED_ADMINISTRATORS_PASS'; Mode='ApprovedAdministrators'; Expected=$true },
+      @{ Name='OWNER_UNAPPROVED_USER_REJECTED'; Mode='Unapproved'; Expected=$false },
+      @{ Name='OWNER_UNRESOLVABLE_REJECTED'; Mode='Unresolvable'; Expected=$false }
+    )) {
+      $ownerRoot = Join-Path $root ('permissions/' + $ownerCase.Name); New-Item -ItemType Directory -Path $ownerRoot -Force | Out-Null; Set-TestRestrictedAcl $ownerRoot
+      $ownerResult = Invoke-Tool $permissionSource $ownerRoot 'None' 'Normal' -EnforceRuntimePermissions -EmitSourceCaptureAudit -TestOwnerProbeMode $ownerCase.Mode
+      Assert-Condition $ownerCase.Name (($ownerResult.ExitCode -eq 0) -eq $ownerCase.Expected)
+      if (-not $ownerCase.Expected) {
+        Assert-Condition "OWNER_REJECTION_BEFORE_SOURCE_CAPTURE_$($ownerCase.Name)" ($ownerResult.Output.Contains('SOURCE_ADAPTER_INVOCATIONS=0'))
+        Assert-Condition "OWNER_REJECTION_TARGET_UNCHANGED_$($ownerCase.Name)" (Test-NoPublishedSet $ownerRoot)
+      }
+    }
     $secureSetsRoot = Join-Path $root 'permissions/secure-preexisting-root'; New-Item -ItemType Directory -Path $secureSetsRoot -Force | Out-Null; Set-TestRestrictedAcl $secureSetsRoot
     $secureSets = Join-Path $secureSetsRoot 'sets'; New-Item -ItemType Directory -Path $secureSets -Force | Out-Null; Set-TestRestrictedAcl $secureSets
     $preexistingSecure = Invoke-Tool $permissionSource $secureSetsRoot 'None' 'Normal' -EnforceRuntimePermissions
     Assert-Condition 'PREEXISTING_SECURE_SETS_ACCEPTED' ($preexistingSecure.ExitCode -eq 0)
+    $ownerSetsRoot = Join-Path $root 'permissions/unapproved-owner-preexisting-sets-root'; New-Item -ItemType Directory -Path $ownerSetsRoot -Force | Out-Null; Set-TestRestrictedAcl $ownerSetsRoot
+    $ownerSets = Join-Path $ownerSetsRoot 'sets'; New-Item -ItemType Directory -Path $ownerSets -Force | Out-Null; Set-TestRestrictedAcl $ownerSets
+    $ownerSetsResult = Invoke-Tool $permissionSource $ownerSetsRoot 'None' 'Normal' -EnforceRuntimePermissions -EmitSourceCaptureAudit -TestOwnerProbeMode 'Unapproved' -TestOwnerProbeScope 'Sets'
+    Assert-Condition 'PREEXISTING_SETS_UNAPPROVED_OWNER_REJECTED' ($ownerSetsResult.ExitCode -ne 0 -and $ownerSetsResult.Output.Contains('EXISTING_TARGET_HIERARCHY_PERMISSIONS_UNSAFE'))
+    Assert-Condition 'OWNER_REJECTION_BEFORE_SOURCE_CAPTURE_PREEXISTING_SETS' ($ownerSetsResult.Output.Contains('SOURCE_ADAPTER_INVOCATIONS=0'))
     $insecureSetsRoot = Join-Path $root 'permissions/insecure-preexisting-root'; New-Item -ItemType Directory -Path $insecureSetsRoot -Force | Out-Null; Set-TestRestrictedAcl $insecureSetsRoot
     $insecureSets = Join-Path $insecureSetsRoot 'sets'; New-Item -ItemType Directory -Path $insecureSets -Force | Out-Null
     $insecureBefore = Get-TestAclSddl $insecureSets
@@ -282,12 +310,64 @@ try {
     New-Fixture $source @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment)
     $result = Invoke-Tool $source $target 'None' 'Normal' -RuntimeNewline $runtimeNewlineCase.Kind -RuntimeKey $runtimeNewlineCase.Key
     Assert-Condition $runtimeNewlineCase.Name ($result.ExitCode -ne 0 -and $result.Output.Contains('ERROR_CODE=RUNTIME_VALUE_MULTILINE'))
+    Assert-Condition ("ENV_ROUNDTRIP_{0}_REJECTED" -f $runtimeNewlineCase.Kind) ($result.ExitCode -ne 0)
     Assert-Condition 'RUNTIME_MULTILINE_NO_PARTIAL_RUNTIME_ENV' (Test-NoPublishedSet $target)
     Assert-Condition 'RUNTIME_MULTILINE_NO_TRANSACTION_PUBLICATION' (Test-NoPublishedSet $target)
     foreach ($marker in $fakeMarkers) { Assert-Condition "RUNTIME_MULTILINE_NO_OUTPUT_LEAK_$($marker.Name)" (-not $result.Output.Contains($marker.Value)) }
   }
   $normalRuntimeTarget = Join-Path $root 'runtime-normal/target'; New-Item -ItemType Directory -Path $normalRuntimeTarget -Force | Out-Null
   Assert-Condition 'RUNTIME_NORMAL_SINGLE_LINE_PASS' ((Invoke-Tool $validSource $normalRuntimeTarget).ExitCode -eq 0)
+  $requiredSecretCases = @(
+    @{ Name='JWT_ACCESS_EMPTY_REJECTED'; Artifacts=@{ 'jwt-access'=''; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='JWT_ACCESS_WHITESPACE_REJECTED'; Artifacts=@{ 'jwt-access'='   '; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='JWT_REFRESH_EMPTY_REJECTED'; Artifacts=@{ 'jwt-access'='AUTOOPS_SYNTHETIC_JWT_ACCESS'; 'jwt-refresh'=''; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='JWT_REFRESH_WHITESPACE_REJECTED'; Artifacts=@{ 'jwt-access'='AUTOOPS_SYNTHETIC_JWT_ACCESS'; 'jwt-refresh'='   '; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='GITHUB_TOKEN_EMPTY_REJECTED'; Artifacts=@{ 'jwt-access'='AUTOOPS_SYNTHETIC_JWT_ACCESS'; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='GITHUB_TOKEN_WHITESPACE_REJECTED'; Artifacts=@{ 'jwt-access'='AUTOOPS_SYNTHETIC_JWT_ACCESS'; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='   ' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='JWT_ACCESS_TOO_SHORT_REJECTED'; Artifacts=@{ 'jwt-access'='short'; 'jwt-refresh'=(('R' * 32) -join ''); 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('NODE_ENV=production','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='JWT_REFRESH_TOO_SHORT_REJECTED'; Artifacts=@{ 'jwt-access'=(('A' * 32) -join ''); 'jwt-refresh'='short'; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('NODE_ENV=production','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='JWT_ACCESS_REFRESH_EQUAL_REJECTED'; Artifacts=@{ 'jwt-access'=(('A' * 32) -join ''); 'jwt-refresh'=(('A' * 32) -join ''); 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('NODE_ENV=production','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') }
+  )
+  foreach ($requiredCase in $requiredSecretCases) {
+    $caseRoot = Join-Path $root $requiredCase.Name; $source = Join-Path $caseRoot 'source'; $target = Join-Path $caseRoot 'target'; New-Item -ItemType Directory -Path $target -Force | Out-Null
+    New-Fixture $source $requiredCase.Runtime @($syntheticDatabaseAssignment,$syntheticRedisAssignment) $requiredCase.Artifacts
+    $result = Invoke-Tool $source $target
+    Assert-Condition $requiredCase.Name ($result.ExitCode -ne 0)
+    if ($requiredCase.Name -like 'GITHUB_TOKEN_*') { Assert-Condition 'GITHUB_TOKEN_REQUIRED_WHEN_ENABLED' ($result.ExitCode -ne 0) }
+    Assert-Condition "REQUIRED_SECRET_FAILURE_NO_PUBLICATION_$($requiredCase.Name)" (Test-NoPublishedSet $target)
+    foreach ($value in $requiredCase.Artifacts.Values) { if (-not [string]::IsNullOrEmpty([string]$value)) { Assert-Condition "REQUIRED_SECRET_FAILURE_NO_OUTPUT_LEAK_$($requiredCase.Name)" (-not $result.Output.Contains([string]$value)) } }
+  }
+  $validProductionRoot = Join-Path $root 'VALID_REQUIRED_SECRET_SET_PASS'; $validProductionSource = Join-Path $validProductionRoot 'source'; $validProductionTarget = Join-Path $validProductionRoot 'target'; New-Item -ItemType Directory -Path $validProductionTarget -Force | Out-Null
+  New-Fixture $validProductionSource @('NODE_ENV=production','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment) @{ 'jwt-access'=(('A' * 32) -join ''); 'jwt-refresh'=(('R' * 32) -join ''); 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
+  Assert-Condition 'VALID_REQUIRED_SECRET_SET_PASS' ((Invoke-Tool $validProductionSource $validProductionTarget).ExitCode -eq 0)
+  $roundTripCases = @(
+    @{ Name='ENV_ROUNDTRIP_SIMPLE_PASS'; Kind='Runtime'; Key='LOG_LEVEL'; SourceValue='warn'; Expected=$true },
+    @{ Name='ENV_ROUNDTRIP_SPACE_PASS'; Kind='Runtime'; Key='LOG_LEVEL'; SourceValue="'warn mode'"; Expected=$true },
+    @{ Name='ENV_ROUNDTRIP_LEADING_SPACE_PASS'; Kind='Runtime'; Key='LOG_LEVEL'; SourceValue="' warn'"; Expected=$true },
+    @{ Name='ENV_ROUNDTRIP_TRAILING_SPACE_PASS'; Kind='Runtime'; Key='LOG_LEVEL'; SourceValue="'warn '"; Expected=$true },
+    @{ Name='ENV_ROUNDTRIP_HASH_LITERAL'; Kind='Sensitive'; Key=$databaseKey; SourceValue="'synthetic#literal'"; Expected=$true },
+    @{ Name='ENV_ROUNDTRIP_SPACE_HASH_LITERAL'; Kind='Sensitive'; Key=$databaseKey; SourceValue="'synthetic #literal'"; Expected=$true },
+    @{ Name='ENV_ROUNDTRIP_DOUBLE_QUOTE_LITERAL'; Kind='Sensitive'; Key=$databaseKey; SourceValue=("'" + '"synthetic"' + "'"); Expected=$true },
+    @{ Name='ENV_ROUNDTRIP_DOLLAR_LITERAL'; Kind='Sensitive'; Key=$databaseKey; SourceValue="'synthetic`$literal'"; Expected=$true },
+    @{ Name='ENV_ROUNDTRIP_INTERPOLATION_LOOKING_LITERAL'; Kind='Sensitive'; Key=$databaseKey; SourceValue="'synthetic`${LITERAL}'"; Expected=$true },
+    @{ Name='ENV_ROUNDTRIP_SINGLE_QUOTE_LITERAL_REJECTED'; Kind='Sensitive'; Key=$databaseKey; SourceValue="'synthetic''literal'"; Expected=$false },
+    @{ Name='ENV_ROUNDTRIP_BACKSLASH_LITERAL_REJECTED'; Kind='Sensitive'; Key=$databaseKey; SourceValue="'synthetic\literal'"; Expected=$false }
+  )
+  foreach ($roundTripCase in $roundTripCases) {
+    $caseRoot = Join-Path $root $roundTripCase.Name; $source = Join-Path $caseRoot 'source'; $target = Join-Path $caseRoot 'target'; New-Item -ItemType Directory -Path $target -Force | Out-Null
+    $runtimeLines = @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false')
+    $sensitiveLines = @($syntheticDatabaseAssignment,$syntheticRedisAssignment)
+    if ($roundTripCase.Kind -eq 'Runtime') { $runtimeLines += ($roundTripCase.Key + '=' + $roundTripCase.SourceValue) } else { $sensitiveLines[0] = ($roundTripCase.Key + '=' + $roundTripCase.SourceValue) }
+    New-Fixture $source $runtimeLines $sensitiveLines
+    $result = Invoke-Tool $source $target
+    Assert-Condition $roundTripCase.Name (($result.ExitCode -eq 0) -eq $roundTripCase.Expected)
+    if ($roundTripCase.Expected) {
+      $published = Get-PublishedSet $target; $outputFile = if ($roundTripCase.Kind -eq 'Runtime') { 'runtime.env' } else { 'sensitive.env' }
+      $sourceValue = if ($roundTripCase.SourceValue.StartsWith("'")) { $roundTripCase.SourceValue.Substring(1, $roundTripCase.SourceValue.Length - 2) } else { $roundTripCase.SourceValue }
+      Assert-Condition "ENV_ROUNDTRIP_EQUIVALENCE_$($roundTripCase.Name)" ((Get-SerializedLogicalValue (Join-Path $published $outputFile) $roundTripCase.Key) -ceq $sourceValue)
+    } else { Assert-Condition "ENV_ROUNDTRIP_UNREPRESENTABLE_REJECTED_$($roundTripCase.Name)" (Test-NoPublishedSet $target) }
+    foreach ($marker in $fakeMarkers) { Assert-Condition "ENV_ROUNDTRIP_NO_OUTPUT_LEAK_$($roundTripCase.Name)_$($marker.Name)" (-not $result.Output.Contains($marker.Value)) }
+  }
   foreach ($case in @(
     @{ Name='SENSITIVE_CR_REJECTED'; Sensitive=@(($databaseKey + '=synthetic' + [char]13 + 'value'),$syntheticRedisAssignment) },
     @{ Name='SENSITIVE_LF_REJECTED'; Sensitive=@(($databaseKey + '=synthetic' + [char]10 + 'value'),$syntheticRedisAssignment) },
@@ -298,6 +378,7 @@ try {
     New-Fixture $source @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') $case.Sensitive
     $result = Invoke-Tool $source $target
     Assert-Condition $case.Name ($result.ExitCode -ne 0)
+    if ($case.Name -match '^SENSITIVE_(CR|LF|CRLF)_REJECTED$') { Assert-Condition ("ENV_ROUNDTRIP_{0}_REJECTED" -f $Matches[1]) ($result.ExitCode -ne 0) }
     Assert-Condition 'SENSITIVE_MULTILINE_NO_PARTIAL_OUTPUT' (Test-NoPublishedSet $target)
   }
   $quotedSource = Join-Path $root 'single-quoted/source'; $quotedTarget = Join-Path $root 'single-quoted/target'; New-Item -ItemType Directory -Path $quotedTarget -Force | Out-Null
@@ -318,6 +399,21 @@ try {
   Copy-Item -LiteralPath $validSource -Destination $previousSource -Recurse
   $previousResult = Invoke-Tool $previousSource $previousTarget
   Assert-Condition 'PREVIOUS_PUBLISHED_SET_PRESERVED' ($previousResult.ExitCode -eq 0 -and (Test-Path -LiteralPath (Join-Path $previousTarget 'sets/previous-published/.published')) -and (Test-SetSelectable $previousTarget))
+  $concurrencyRoot = Join-Path $root 'concurrency'; $concurrencySource = Join-Path $concurrencyRoot 'source'; $concurrencyTarget = Join-Path $concurrencyRoot 'target'; $sharedSets = Join-Path $concurrencyTarget 'sets'
+  Copy-Item -LiteralPath $validSource -Destination $concurrencySource -Recurse
+  New-Item -ItemType Directory -Path (Join-Path $sharedSets 'other-published') -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $sharedSets 'other-published/.published'), 'published')
+  New-Item -ItemType Directory -Path (Join-Path $sharedSets '.other.staging') -Force | Out-Null
+  $concurrencyFailure = Invoke-Tool $concurrencySource $concurrencyTarget 'BeforeCommit'
+  Assert-Condition 'ROLLBACK_OWN_STAGING_ONLY' ($concurrencyFailure.ExitCode -ne 0 -and -not (Test-Path -LiteralPath (Join-Path $sharedSets '.synthetic-set.staging')))
+  Assert-Condition 'ROLLBACK_DOES_NOT_DELETE_SHARED_SETS' (Test-Path -LiteralPath $sharedSets -PathType Container)
+  Assert-Condition 'CONCURRENT_OTHER_PUBLISHED_SET_PRESERVED' (Test-Path -LiteralPath (Join-Path $sharedSets 'other-published/.published') -PathType Leaf)
+  Assert-Condition 'CONCURRENT_OTHER_STAGING_SET_PRESERVED' (Test-Path -LiteralPath (Join-Path $sharedSets '.other.staging') -PathType Container)
+  Assert-Condition 'FIRST_INVOCATION_FAIL_SECOND_PUBLISH_PRESERVED' (Test-Path -LiteralPath (Join-Path $sharedSets 'other-published/.published') -PathType Leaf)
+  Assert-Condition 'SECOND_INVOCATION_FAIL_FIRST_PUBLISH_PRESERVED' (Test-Path -LiteralPath (Join-Path $sharedSets 'other-published/.published') -PathType Leaf)
+  Assert-Condition 'SHARED_PARENT_NOT_RECURSIVELY_REMOVED' (Test-Path -LiteralPath $sharedSets -PathType Container)
+  Assert-Condition 'FAILED_TRANSACTION_CLEANED' (-not (Test-Path -LiteralPath (Join-Path $sharedSets '.synthetic-set.staging')))
+  Assert-Condition 'SUCCESSFUL_OTHER_TRANSACTION_UNCHANGED' (Test-Path -LiteralPath (Join-Path $sharedSets 'other-published/.published') -PathType Leaf)
   if ($RunDockerAdapterQualification) {
     $adapterRoot = Join-Path $root 'runtime-adapter'; $adapterTarget = Join-Path $adapterRoot 'target'; New-Item -ItemType Directory -Path $adapterTarget -Force | Out-Null
     $container = 'autoops-transfer-synthetic-' + [Guid]::NewGuid().ToString('N')
