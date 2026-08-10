@@ -104,6 +104,15 @@ describe('typed SecretProvider', () => {
     expect(value?.revealForUse()).toBe(FAKE_SECRET);
   });
 
+  it('preserves an internal newline in a mounted secret', async () => {
+    const root = await temporaryDirectory();
+    const expected = `${FAKE_SECRET}\ninternal-synthetic-content`;
+    await writeFile(path.join(root, 'jwt-access'), expected, 'utf8');
+    const provider = createSecretProvider({ mode: 'file', fileRoot: root });
+    const value = await provider.resolve(getSecretDescriptor('auth.jwtAccess'));
+    expect(value?.revealForUse()).toBe(expected);
+  });
+
   it('rejects a missing required mounted file and accepts optional absence', async () => {
     const root = await temporaryDirectory();
     const provider = createSecretProvider({ mode: 'file', fileRoot: root });

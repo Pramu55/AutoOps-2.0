@@ -58,15 +58,18 @@ both files.
 
 Because Compose `environment` mappings override `env_file` values, the
 compatibility overlay deliberately replaces each current API/worker environment
-map with the same non-sensitive base mappings, provider-inventory fallback and
-secret-provider settings, while omitting only `DATABASE_URL` and `REDIS_URL`.
-The second `sensitive.env` file is therefore authoritative for those two keys,
-and the existing provider-inventory fallback/default remains intact. A
-structural test compares every preserved base mapping other than those two
-keys, guarding against a later base-map addition being silently dropped. The
-established Compose-level provider-inventory override remains available through
-its explicit Compose variable; an `env_file` cannot override an `environment`
-mapping because Compose gives the mapping higher precedence.
+map with the same non-sensitive base mappings and secret-provider settings,
+while omitting `DATABASE_URL`, `REDIS_URL`, and provider-inventory allowlists.
+The external `runtime.env` is therefore authoritative for
+`PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS`, its legacy
+`PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS` alias, and
+`PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS`; host interpolation and demo
+defaults cannot replace an audited file-mode restriction. A
+structural test compares every preserved base mapping other than those
+explicit file-sourced keys, guarding against a later base-map addition being
+silently dropped. The file-mode overlay intentionally has no provider-inventory
+`environment` mapping because Compose gives that mapping higher precedence than
+an `env_file`.
 `GOOGLE_APPLICATION_CREDENTIALS` is an allowed non-secret
 runtime path/reference only; this delivery correction does not mount, read, or
 validate the referenced GCP credential content. GitHub remains enabled through
@@ -151,6 +154,62 @@ rejection.
 Run the validator before any controlled activation and use `docker compose
 config` with the selected explicit overlay(s). These checks render structure
 only; they do not start, stop, recreate, or activate containers.
+
+## Audited transfer preparation
+
+`scripts/prepare-mounted-secret-transfer.ps1` is the maintained operator tool
+for a separately authorized preparation of external file-mode artifacts. It
+does not activate Compose, recreate a service, or read a mounted secret file.
+Its synthetic mode is the required qualification path and is covered by
+`pnpm test:mounted-secret-transfer`. An opt-in local qualification adds a
+disposable synthetic source container to test the fixed Docker adapter without
+querying a live AutoOps service. The controlled runtime-source adapter is
+present for a separately approved change window only; it captures a named
+environment value in redirected process memory and never writes it to command
+arguments, console output, logs, Git, or a repository file.
+
+The tool validates an external target before any runtime-source capture, then
+creates a complete versioned set below `sets/<transaction-id>`. In runtime
+mode, the existing target root is an operator-provisioned trust boundary: the
+tool verifies that its owner and every effective Allow principal are in the
+approved runtime SID allowlist, and rejects unsafe or ambiguous roots without
+attempting to repair them. It likewise verifies any pre-existing `sets`
+directory and never rewrites its ACL. Only directories and files created by
+the current invocation receive protected least-privilege permissions and a
+post-write verification; a permissions failure rolls back only invocation-owned
+artifacts. Rollback never recursively removes the shared `sets` directory, so
+another invocation's staging or published transaction remains intact.
+Artifacts are checked against replacement-capable permissions effective on each
+ancestor. An `InheritOnly` ACE is ignored only for the ancestor on which it is
+non-effective; Windows evaluates any effective inherited copy when that
+descendant is checked. Artifacts are written only inside an unpublished staging
+directory;
+a published marker and a single same-filesystem directory rename make the
+complete set selectable. Abandoned staging directories are never activation
+candidates. It rejects an existing published set without reading or
+overwriting it. Diagnostics are
+limited to phase names and symbolic error
+codes. `runtime.env` serialization is deterministic and retains only the
+validator's non-secret contract; empty AWS account/region and empty provider
+inventory IDs are omitted so the established Compose fallback remains
+authoritative. `DATABASE_URL` and `REDIS_URL` are required transitional
+entries; optional transitional credentials that are absent, empty, or
+whitespace-only are omitted rather than serialized as placeholders. The tool
+always writes GitHub enabled and Jenkins disabled for
+the approved `core,sensitive-env,github` selection. Before publication it uses
+an intentionally small lossless env-file subset: enablement flags remain
+validated unquoted booleans, while other accepted values use literal
+single-quoted syntax. Values containing a single quote, backslash, NUL, CR, or
+LF that would require parser-specific escape behavior fail closed rather than
+being reinterpreted. The staged complete set is checked by the authoritative
+mounted-secret validator before publication. JWT access/refresh and the enabled
+GitHub token must be non-empty/non-whitespace; production JWT preparation also
+enforces the API's minimum-length, placeholder, and distinct-value constraints.
+Because the mounted provider strips one terminal LF or CRLF from its selected
+secret descriptors, preparation rejects source values ending in LF, CRLF, or
+bare CR rather than silently changing the logical credential during migration.
+Real transfer remains a separate explicit operational authorization and tool
+availability never activates file mode.
 
 ## Host filesystem guidance
 
