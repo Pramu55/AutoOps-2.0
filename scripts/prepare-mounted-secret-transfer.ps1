@@ -238,7 +238,7 @@ function Normalize-ActivationEnablement([System.Collections.IDictionary]$Runtime
   # Jenkins disabled. Normalize accepted source representations into the
   # deterministic activation configuration before any sensitive source capture.
   if (-not $Runtime.Contains('GITHUB_ACTIONS_ENABLED')) { Fail-Safely 'RUNTIME_ENABLEMENT_INVALID' }
-  switch ([string]$Runtime['GITHUB_ACTIONS_ENABLED']) {
+  switch -casesensitive ([string]$Runtime['GITHUB_ACTIONS_ENABLED']) {
     'true' { $Runtime['GITHUB_ACTIONS_ENABLED'] = 'true'; break }
     '1' { $Runtime['GITHUB_ACTIONS_ENABLED'] = 'true'; break }
     default { Fail-Safely 'RUNTIME_ENABLEMENT_INVALID' }
@@ -248,7 +248,7 @@ function Normalize-ActivationEnablement([System.Collections.IDictionary]$Runtime
     $Runtime['JENKINS_INTEGRATION_ENABLED'] = 'false'
     return
   }
-  switch ([string]$Runtime['JENKINS_INTEGRATION_ENABLED']) {
+  switch -casesensitive ([string]$Runtime['JENKINS_INTEGRATION_ENABLED']) {
     'false' { $Runtime['JENKINS_INTEGRATION_ENABLED'] = 'false'; break }
     '0' { $Runtime['JENKINS_INTEGRATION_ENABLED'] = 'false'; break }
     default { Fail-Safely 'RUNTIME_ENABLEMENT_INVALID' }
