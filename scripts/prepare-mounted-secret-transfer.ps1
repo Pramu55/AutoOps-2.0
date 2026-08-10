@@ -514,11 +514,12 @@ try {
     if ([string]::IsNullOrWhiteSpace($value) -or $value.IndexOf([char]0) -ge 0) { Fail-Safely 'REQUIRED_SECRET_INVALID' }
     Test-MountedArtifactLogicalEquivalence $artifact $value
   }
-  if ($runtime.Contains('NODE_ENV') -and $runtime['NODE_ENV'] -ceq 'production') {
-    $access = [string]$payloads['jwt-access']; $refresh = [string]$payloads['jwt-refresh']
-    $placeholder = 'change-me|replace-me|please-change|local-only|autoops_dev|^secret$|^password$|^default$'
-    if ($access.Length -lt 32 -or $refresh.Length -lt 32 -or $access -match $placeholder -or $refresh -match $placeholder -or $access -ceq $refresh) { Fail-Safely 'REQUIRED_SECRET_INVALID' }
-  }
+  # This utility prepares the fixed file-mode activation overlay, which forces
+  # NODE_ENV=production. Validate the eventual activation contract rather than
+  # the source container's current NODE_ENV.
+  $access = [string]$payloads['jwt-access']; $refresh = [string]$payloads['jwt-refresh']
+  $placeholder = 'change-me|replace-me|please-change|local-only|autoops_dev|^secret$|^password$|^default$'
+  if ($access.Length -lt 32 -or $refresh.Length -lt 32 -or $access -match $placeholder -or $refresh -match $placeholder -or $access -ceq $refresh) { Fail-Safely 'REQUIRED_SECRET_INVALID' }
   if ($requiresRuntimePermissions) {
     $targetRootFull = Test-TargetRootSafe $targetRootFull
     Test-RestrictedRuntimePermissions $targetRootFull $true 'TARGET_ROOT_PERMISSIONS_UNSAFE'

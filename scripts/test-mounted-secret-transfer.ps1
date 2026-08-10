@@ -6,9 +6,11 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $tool = Join-Path $PSScriptRoot 'prepare-mounted-secret-transfer.ps1'
+$syntheticJwtAccess = (('A' * 32) -join '')
+$syntheticJwtRefresh = (('R' * 32) -join '')
 $fakeMarkers = @(
-  @{ Name = 'JWT_ACCESS'; Value = 'AUTOOPS_SYNTHETIC_JWT_ACCESS' },
-  @{ Name = 'JWT_REFRESH'; Value = 'AUTOOPS_SYNTHETIC_JWT_REFRESH' },
+  @{ Name = 'JWT_ACCESS'; Value = $syntheticJwtAccess },
+  @{ Name = 'JWT_REFRESH'; Value = $syntheticJwtRefresh },
   @{ Name = 'GITHUB_TOKEN'; Value = 'AUTOOPS_SYNTHETIC_GITHUB_TOKEN' },
   @{ Name = 'DATABASE_URL'; Value = 'synthetic-database-value' },
   @{ Name = 'REDIS_URL'; Value = 'synthetic-redis-value' },
@@ -25,7 +27,7 @@ function New-Fixture([string]$Root, [string[]]$RuntimeLines, [string[]]$Sensitiv
   [IO.File]::WriteAllLines((Join-Path $Root 'runtime.source'), $RuntimeLines)
   [IO.File]::WriteAllLines((Join-Path $Root 'sensitive.source'), $SensitiveLines)
   if ($null -eq $Artifacts) {
-    $Artifacts = @{ 'jwt-access'='AUTOOPS_SYNTHETIC_JWT_ACCESS'; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
+    $Artifacts = @{ 'jwt-access'=$syntheticJwtAccess; 'jwt-refresh'=$syntheticJwtRefresh; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
   }
   foreach ($name in @('jwt-access','jwt-refresh','github-actions-token')) { [IO.File]::WriteAllText((Join-Path $Root $name), [string]$Artifacts[$name]) }
 }
@@ -449,12 +451,12 @@ try {
   $normalRuntimeTarget = Join-Path $root 'runtime-normal/target'; New-Item -ItemType Directory -Path $normalRuntimeTarget -Force | Out-Null
   Assert-Condition 'RUNTIME_NORMAL_SINGLE_LINE_PASS' ((Invoke-Tool $validSource $normalRuntimeTarget).ExitCode -eq 0)
   $requiredSecretCases = @(
-    @{ Name='JWT_ACCESS_EMPTY_REJECTED'; Artifacts=@{ 'jwt-access'=''; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
-    @{ Name='JWT_ACCESS_WHITESPACE_REJECTED'; Artifacts=@{ 'jwt-access'='   '; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
-    @{ Name='JWT_REFRESH_EMPTY_REJECTED'; Artifacts=@{ 'jwt-access'='AUTOOPS_SYNTHETIC_JWT_ACCESS'; 'jwt-refresh'=''; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
-    @{ Name='JWT_REFRESH_WHITESPACE_REJECTED'; Artifacts=@{ 'jwt-access'='AUTOOPS_SYNTHETIC_JWT_ACCESS'; 'jwt-refresh'='   '; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
-    @{ Name='GITHUB_TOKEN_EMPTY_REJECTED'; Artifacts=@{ 'jwt-access'='AUTOOPS_SYNTHETIC_JWT_ACCESS'; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
-    @{ Name='GITHUB_TOKEN_WHITESPACE_REJECTED'; Artifacts=@{ 'jwt-access'='AUTOOPS_SYNTHETIC_JWT_ACCESS'; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='   ' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='JWT_ACCESS_EMPTY_REJECTED'; Artifacts=@{ 'jwt-access'=''; 'jwt-refresh'=$syntheticJwtRefresh; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='JWT_ACCESS_WHITESPACE_REJECTED'; Artifacts=@{ 'jwt-access'='   '; 'jwt-refresh'=$syntheticJwtRefresh; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='JWT_REFRESH_EMPTY_REJECTED'; Artifacts=@{ 'jwt-access'=$syntheticJwtAccess; 'jwt-refresh'=''; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='JWT_REFRESH_WHITESPACE_REJECTED'; Artifacts=@{ 'jwt-access'=$syntheticJwtAccess; 'jwt-refresh'='   '; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='GITHUB_TOKEN_EMPTY_REJECTED'; Artifacts=@{ 'jwt-access'=$syntheticJwtAccess; 'jwt-refresh'=$syntheticJwtRefresh; 'github-actions-token'='' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='GITHUB_TOKEN_WHITESPACE_REJECTED'; Artifacts=@{ 'jwt-access'=$syntheticJwtAccess; 'jwt-refresh'=$syntheticJwtRefresh; 'github-actions-token'='   ' }; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
     @{ Name='JWT_ACCESS_TOO_SHORT_REJECTED'; Artifacts=@{ 'jwt-access'='short'; 'jwt-refresh'=(('R' * 32) -join ''); 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('NODE_ENV=production','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
     @{ Name='JWT_REFRESH_TOO_SHORT_REJECTED'; Artifacts=@{ 'jwt-access'=(('A' * 32) -join ''); 'jwt-refresh'='short'; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('NODE_ENV=production','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
     @{ Name='JWT_ACCESS_REFRESH_EQUAL_REJECTED'; Artifacts=@{ 'jwt-access'=(('A' * 32) -join ''); 'jwt-refresh'=(('A' * 32) -join ''); 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }; Runtime=@('NODE_ENV=production','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') }
@@ -468,22 +470,39 @@ try {
     Assert-Condition "REQUIRED_SECRET_FAILURE_NO_PUBLICATION_$($requiredCase.Name)" (Test-NoPublishedSet $target)
     foreach ($value in $requiredCase.Artifacts.Values) { if (-not [string]::IsNullOrEmpty([string]$value)) { Assert-Condition "REQUIRED_SECRET_FAILURE_NO_OUTPUT_LEAK_$($requiredCase.Name)" (-not $result.Output.Contains([string]$value)) } }
   }
+  $activationProductionJwtCases = @(
+    @{ Name='SOURCE_NODE_ENV_MISSING_PRODUCTION_JWT_RULES_ENFORCED'; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='SOURCE_NODE_ENV_DEVELOPMENT_PRODUCTION_JWT_RULES_ENFORCED'; Runtime=@('NODE_ENV=development','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='SOURCE_NODE_ENV_TEST_PRODUCTION_JWT_RULES_ENFORCED'; Runtime=@('NODE_ENV=test','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') }
+  )
+  foreach ($activationCase in $activationProductionJwtCases) {
+    $caseRoot = Join-Path $root $activationCase.Name; $source = Join-Path $caseRoot 'source'; $target = Join-Path $caseRoot 'target'; New-Item -ItemType Directory -Path $target -Force | Out-Null
+    $artifacts = @{ 'jwt-access'='short'; 'jwt-refresh'=(('R' * 32) -join ''); 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
+    New-Fixture $source $activationCase.Runtime @($syntheticDatabaseAssignment,$syntheticRedisAssignment) $artifacts
+    $result = Invoke-Tool $source $target
+    Assert-Condition $activationCase.Name ($result.ExitCode -ne 0 -and $result.Output.Contains('ERROR_CODE=REQUIRED_SECRET_INVALID'))
+    Assert-Condition "JWT_FAILURE_BEFORE_PUBLICATION_$($activationCase.Name)" (Test-NoPublishedSet $target)
+    foreach ($value in $artifacts.Values) { Assert-Condition "JWT_FAILURE_NO_OUTPUT_LEAK_$($activationCase.Name)" (-not $result.Output.Contains([string]$value)) }
+  }
   $validProductionRoot = Join-Path $root 'VALID_REQUIRED_SECRET_SET_PASS'; $validProductionSource = Join-Path $validProductionRoot 'source'; $validProductionTarget = Join-Path $validProductionRoot 'target'; New-Item -ItemType Directory -Path $validProductionTarget -Force | Out-Null
   New-Fixture $validProductionSource @('NODE_ENV=production','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment) @{ 'jwt-access'=(('A' * 32) -join ''); 'jwt-refresh'=(('R' * 32) -join ''); 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
   Assert-Condition 'VALID_REQUIRED_SECRET_SET_PASS' ((Invoke-Tool $validProductionSource $validProductionTarget).ExitCode -eq 0)
   Assert-Condition 'MOUNTED_SECRET_NORMAL_VALUE_PASS' (Test-SetSelectable $validProductionTarget)
+  $validNonProductionRoot = Join-Path $root 'VALID_PRODUCTION_JWT_SET_WITH_NONPRODUCTION_SOURCE_PASS'; $validNonProductionSource = Join-Path $validNonProductionRoot 'source'; $validNonProductionTarget = Join-Path $validNonProductionRoot 'target'; New-Item -ItemType Directory -Path $validNonProductionTarget -Force | Out-Null
+  New-Fixture $validNonProductionSource @('NODE_ENV=development','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment) @{ 'jwt-access'=(('A' * 32) -join ''); 'jwt-refresh'=(('R' * 32) -join ''); 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
+  Assert-Condition 'VALID_PRODUCTION_JWT_SET_WITH_NONPRODUCTION_SOURCE_PASS' ((Invoke-Tool $validNonProductionSource $validNonProductionTarget).ExitCode -eq 0)
   $trailingLineEndingCases = @(
-    @{ Name='JWT_ACCESS_TRAILING_LF_REJECTED'; Artifact='jwt-access'; Value=('AUTOOPS_SYNTHETIC_JWT_ACCESS' + "`n") },
-    @{ Name='JWT_ACCESS_TRAILING_CRLF_REJECTED'; Artifact='jwt-access'; Value=('AUTOOPS_SYNTHETIC_JWT_ACCESS' + "`r`n") },
-    @{ Name='JWT_REFRESH_TRAILING_LF_REJECTED'; Artifact='jwt-refresh'; Value=('AUTOOPS_SYNTHETIC_JWT_REFRESH' + "`n") },
-    @{ Name='JWT_REFRESH_TRAILING_CRLF_REJECTED'; Artifact='jwt-refresh'; Value=('AUTOOPS_SYNTHETIC_JWT_REFRESH' + "`r`n") },
+    @{ Name='JWT_ACCESS_TRAILING_LF_REJECTED'; Artifact='jwt-access'; Value=($syntheticJwtAccess + "`n") },
+    @{ Name='JWT_ACCESS_TRAILING_CRLF_REJECTED'; Artifact='jwt-access'; Value=($syntheticJwtAccess + "`r`n") },
+    @{ Name='JWT_REFRESH_TRAILING_LF_REJECTED'; Artifact='jwt-refresh'; Value=($syntheticJwtRefresh + "`n") },
+    @{ Name='JWT_REFRESH_TRAILING_CRLF_REJECTED'; Artifact='jwt-refresh'; Value=($syntheticJwtRefresh + "`r`n") },
     @{ Name='GITHUB_TOKEN_TRAILING_LF_REJECTED'; Artifact='github-actions-token'; Value=('AUTOOPS_SYNTHETIC_GITHUB_TOKEN' + "`n") },
     @{ Name='GITHUB_TOKEN_TRAILING_CRLF_REJECTED'; Artifact='github-actions-token'; Value=('AUTOOPS_SYNTHETIC_GITHUB_TOKEN' + "`r`n") },
-    @{ Name='MOUNTED_SECRET_TRAILING_CR_REJECTED'; Artifact='jwt-access'; Value=('AUTOOPS_SYNTHETIC_JWT_ACCESS' + "`r") }
+    @{ Name='MOUNTED_SECRET_TRAILING_CR_REJECTED'; Artifact='jwt-access'; Value=($syntheticJwtAccess + "`r") }
   )
   foreach ($trailingCase in $trailingLineEndingCases) {
     $caseRoot = Join-Path $root $trailingCase.Name; $source = Join-Path $caseRoot 'source'; $target = Join-Path $caseRoot 'target'; New-Item -ItemType Directory -Path $target -Force | Out-Null
-    $artifacts = @{ 'jwt-access'='AUTOOPS_SYNTHETIC_JWT_ACCESS'; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
+    $artifacts = @{ 'jwt-access'=$syntheticJwtAccess; 'jwt-refresh'=$syntheticJwtRefresh; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
     $artifacts[$trailingCase.Artifact] = $trailingCase.Value
     New-Fixture $source @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment) $artifacts
     $result = Invoke-Tool $source $target
@@ -494,8 +513,8 @@ try {
     foreach ($value in $artifacts.Values) { Assert-Condition "TRAILING_NEWLINE_NO_OUTPUT_LEAK_$($trailingCase.Name)" (-not $result.Output.Contains([string]$value)) }
   }
   $internalNewlineRoot = Join-Path $root 'MOUNTED_SECRET_INTERNAL_NEWLINE_BEHAVIOR'; $internalNewlineSource = Join-Path $internalNewlineRoot 'source'; $internalNewlineTarget = Join-Path $internalNewlineRoot 'target'; New-Item -ItemType Directory -Path $internalNewlineTarget -Force | Out-Null
-  $internalNewlineSecret = 'AUTOOPS_SYNTHETIC_JWT_ACCESS' + "`n" + 'INTERNAL'
-  New-Fixture $internalNewlineSource @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment) @{ 'jwt-access'=$internalNewlineSecret; 'jwt-refresh'='AUTOOPS_SYNTHETIC_JWT_REFRESH'; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
+  $internalNewlineSecret = $syntheticJwtAccess + "`n" + 'INTERNAL'
+  New-Fixture $internalNewlineSource @('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment) @{ 'jwt-access'=$internalNewlineSecret; 'jwt-refresh'=$syntheticJwtRefresh; 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
   Assert-Condition 'MOUNTED_SECRET_INTERNAL_NEWLINE_BEHAVIOR' ((Invoke-Tool $internalNewlineSource $internalNewlineTarget).ExitCode -eq 0)
   Assert-Condition 'ENV_FILE_SECRET_EQUIVALENCE_PASS' ([IO.File]::ReadAllText((Join-Path (Get-PublishedSet $internalNewlineTarget) 'jwt-access')) -ceq $internalNewlineSecret)
   $roundTripCases = @(
@@ -583,7 +602,7 @@ try {
     $container = 'autoops-transfer-synthetic-' + [Guid]::NewGuid().ToString('N')
     try {
       $emptyOptionalRuntimeArguments = @($optionalSensitiveKeys | ForEach-Object { '-e'; ($_ + '=') })
-      $arguments = @('run', '--rm', '-d', '--name', $container, '-e', 'GITHUB_ACTIONS_ENABLED=true', '-e', 'JENKINS_INTEGRATION_ENABLED=false', '-e', $syntheticDatabaseAssignment, '-e', $syntheticRedisAssignment) + $emptyOptionalRuntimeArguments + @('-e', (('JWT' + '_SECRET') + '=AUTOOPS_SYNTHETIC_JWT_ACCESS'), '-e', (('JWT' + '_REFRESH_SECRET') + '=AUTOOPS_SYNTHETIC_JWT_REFRESH'), '-e', (('GITHUB_ACTIONS' + '_TOKEN') + '=AUTOOPS_SYNTHETIC_GITHUB_TOKEN'), 'alpine:3.20', 'sh', '-c', 'while true; do sleep 3600; done')
+      $arguments = @('run', '--rm', '-d', '--name', $container, '-e', 'GITHUB_ACTIONS_ENABLED=true', '-e', 'JENKINS_INTEGRATION_ENABLED=false', '-e', $syntheticDatabaseAssignment, '-e', $syntheticRedisAssignment) + $emptyOptionalRuntimeArguments + @('-e', (('JWT' + '_SECRET') + '=' + $syntheticJwtAccess), '-e', (('JWT' + '_REFRESH_SECRET') + '=' + $syntheticJwtRefresh), '-e', (('GITHUB_ACTIONS' + '_TOKEN') + '=AUTOOPS_SYNTHETIC_GITHUB_TOKEN'), 'alpine:3.20', 'sh', '-c', 'while true; do sleep 3600; done')
       & docker @arguments | Out-Null
       if ($LASTEXITCODE -ne 0) { throw 'SYNTHETIC_DOCKER_SOURCE_UNAVAILABLE' }
       $adapterResult = Invoke-RuntimeAdapter $container $adapterTarget
