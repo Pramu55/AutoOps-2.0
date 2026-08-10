@@ -102,10 +102,10 @@ function Add-TestBroadAcl([string]$Path, [string]$SidText) {
   & icacls $Path /inheritance:r /grant:r $operatorRule /grant $broadRule | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'TEST_ACL_SETUP_FAILED' }
 }
-function Add-TestSidAcl([string]$Path, [string]$SidText, [Security.AccessControl.FileSystemRights]$Rights) {
+function Add-TestSidAcl([string]$Path, [string]$SidText, [Security.AccessControl.FileSystemRights]$Rights, [Security.AccessControl.InheritanceFlags]$InheritanceFlags = [Security.AccessControl.InheritanceFlags]::None, [Security.AccessControl.PropagationFlags]$PropagationFlags = [Security.AccessControl.PropagationFlags]::None) {
   $acl = Get-TestAcl $Path
   $sid = [Security.Principal.SecurityIdentifier]::new($SidText)
-  $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, $Rights, [Security.AccessControl.AccessControlType]::Allow))
+  $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, $Rights, $InheritanceFlags, $PropagationFlags, [Security.AccessControl.AccessControlType]::Allow))
   Set-TestAcl $Path $acl
 }
 function Test-RestrictedAcl([string]$Path) {
@@ -123,6 +123,7 @@ function Test-RestrictedAcl([string]$Path) {
 }
 
 $root = Join-Path ([IO.Path]::GetTempPath()) ('autoops-mounted-transfer-test-' + [Guid]::NewGuid().ToString('N'))
+$adapterTestRoot = $null
 if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { New-Item -ItemType Directory -Path $root -Force | Out-Null; Set-TestRestrictedAcl $root }
 try {
   $validatorContract = Join-Path $PSScriptRoot 'validate-mounted-secret-delivery.ps1'
@@ -317,7 +318,34 @@ try {
       Assert-Condition "ANCESTOR_FAILURE_BEFORE_SOURCE_CAPTURE_$($ancestorCase.Name)" ($ancestorResult.Output.Contains('SOURCE_ADAPTER_INVOCATIONS=0'))
       Assert-Condition "ANCESTOR_TARGET_UNCHANGED_ON_REJECTION_$($ancestorCase.Name)" (Test-NoPublishedSet $ancestorTarget)
       Assert-Condition "ANCESTOR_NO_ACL_MUTATION_ON_REJECTION_$($ancestorCase.Name)" ((Get-TestAclSddl $ancestorParent) -ceq $ancestorBefore)
+      if ($ancestorCase.Name -eq 'ANCESTOR_UNAPPROVED_DELETE_ACCESS_REJECTED') { Assert-Condition 'ANCESTOR_EFFECTIVE_DELETE_STILL_REJECTED' ($ancestorResult.ExitCode -ne 0) }
+      if ($ancestorCase.Name -eq 'ANCESTOR_MODIFY_REPLACEMENT_CAPABILITY_REJECTED') { Assert-Condition 'ANCESTOR_EFFECTIVE_MODIFY_STILL_REJECTED' ($ancestorResult.ExitCode -ne 0) }
     }
+    $inheritOnlyFlags = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    foreach ($inheritOnlyCase in @(
+      @{ Name='ANCESTOR_UNAPPROVED_INHERIT_ONLY_MODIFY_PASS'; Rights=[Security.AccessControl.FileSystemRights]::Modify },
+      @{ Name='ANCESTOR_UNAPPROVED_INHERIT_ONLY_DELETE_PASS'; Rights=[Security.AccessControl.FileSystemRights]::Delete }
+    )) {
+      $inheritOnlyParent = Join-Path $root ('permissions/' + $inheritOnlyCase.Name + '-parent'); New-Item -ItemType Directory -Path $inheritOnlyParent -Force | Out-Null; Set-TestRestrictedAcl $inheritOnlyParent
+      Add-TestSidAcl $inheritOnlyParent $unapprovedAncestorSid $inheritOnlyCase.Rights $inheritOnlyFlags ([Security.AccessControl.PropagationFlags]::InheritOnly)
+      $inheritOnlyTarget = Join-Path $inheritOnlyParent 'target'; New-Item -ItemType Directory -Path $inheritOnlyTarget -Force | Out-Null; Set-TestRestrictedAcl $inheritOnlyTarget
+      $inheritOnlyResult = Invoke-Tool $ancestorSource $inheritOnlyTarget 'None' 'Normal' -EnforceRuntimePermissions
+      Assert-Condition $inheritOnlyCase.Name ($inheritOnlyResult.ExitCode -eq 0)
+    }
+    $inheritedEffectiveParent = Join-Path $root 'permissions/inherited-effective-parent'; New-Item -ItemType Directory -Path $inheritedEffectiveParent -Force | Out-Null; Set-TestRestrictedAcl $inheritedEffectiveParent
+    Add-TestSidAcl $inheritedEffectiveParent $unapprovedAncestorSid ([Security.AccessControl.FileSystemRights]::Modify) ([Security.AccessControl.InheritanceFlags]::ContainerInherit) ([Security.AccessControl.PropagationFlags]::InheritOnly)
+    $inheritedEffectiveAncestor = Join-Path $inheritedEffectiveParent 'effective-descendant'; New-Item -ItemType Directory -Path $inheritedEffectiveAncestor -Force | Out-Null
+    $inheritedEffectiveTarget = Join-Path $inheritedEffectiveAncestor 'target'; New-Item -ItemType Directory -Path $inheritedEffectiveTarget -Force | Out-Null; Set-TestRestrictedAcl $inheritedEffectiveTarget
+    $inheritedRules = @((Get-TestAcl $inheritedEffectiveAncestor).GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq $unapprovedAncestorSid })
+    $inheritedEffectiveRule = @($inheritedRules | Where-Object { $_.IsInherited -and (($_.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0) -and (($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Modify) -ne 0) })
+    Assert-Condition 'ANCESTOR_INHERITED_EFFECTIVE_RULE_PROVEN' ($inheritedEffectiveRule.Count -ge 1)
+    $inheritedEffectiveBefore = Get-TestAclSddl $inheritedEffectiveAncestor
+    $inheritedEffectiveResult = Invoke-Tool $ancestorSource $inheritedEffectiveTarget 'None' 'Normal' -EnforceRuntimePermissions -EmitSourceCaptureAudit
+    Assert-Condition 'ANCESTOR_INHERITED_EFFECTIVE_DESCENDANT_REJECTION' ($inheritedEffectiveResult.ExitCode -ne 0 -and $inheritedEffectiveResult.Output.Contains('TARGET_ANCESTOR_PERMISSIONS_UNSAFE'))
+    Assert-Condition 'ANCESTOR_INHERIT_ONLY_DOES_NOT_BYPASS_DESCENDANT_CHECK' ($inheritedEffectiveResult.ExitCode -ne 0)
+    Assert-Condition 'ANCESTOR_INHERITED_EFFECTIVE_REJECTION_BEFORE_SOURCE_CAPTURE' ($inheritedEffectiveResult.Output.Contains('SOURCE_ADAPTER_INVOCATIONS=0'))
+    Assert-Condition 'ANCESTOR_INHERITED_EFFECTIVE_NO_PUBLICATION' (Test-NoPublishedSet $inheritedEffectiveTarget)
+    Assert-Condition 'ANCESTOR_INHERITED_EFFECTIVE_ACL_UNCHANGED' ((Get-TestAclSddl $inheritedEffectiveAncestor) -ceq $inheritedEffectiveBefore)
     $ancestorReadParent = Join-Path $root 'permissions/ancestor-read-parent'; New-Item -ItemType Directory -Path $ancestorReadParent -Force | Out-Null; Set-TestRestrictedAcl $ancestorReadParent; Add-TestSidAcl $ancestorReadParent $unapprovedAncestorSid ([Security.AccessControl.FileSystemRights]::ReadAndExecute)
     $ancestorReadTarget = Join-Path $ancestorReadParent 'target'; New-Item -ItemType Directory -Path $ancestorReadTarget -Force | Out-Null; Set-TestRestrictedAcl $ancestorReadTarget
     $ancestorRead = Invoke-Tool $ancestorSource $ancestorReadTarget 'None' 'Normal' -EnforceRuntimePermissions
@@ -545,8 +573,13 @@ try {
   Assert-Condition 'FAILED_TRANSACTION_CLEANED' (-not (Test-Path -LiteralPath (Join-Path $sharedSets '.synthetic-set.staging')))
   Assert-Condition 'SUCCESSFUL_OTHER_TRANSACTION_UNCHANGED' (Test-Path -LiteralPath (Join-Path $sharedSets 'other-published/.published') -PathType Leaf)
   if ($RunDockerAdapterQualification) {
-    $adapterRoot = Join-Path $root 'runtime-adapter'; $adapterTarget = Join-Path $adapterRoot 'target'; New-Item -ItemType Directory -Path $adapterTarget -Force | Out-Null
-    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { Set-TestRestrictedAcl $adapterTarget }
+    # Runtime mode correctly distrusts the shared %TEMP% ancestor chain. Use
+    # a separate, disposable root-level test boundary so this opt-in adapter
+    # qualification reaches its synthetic source without weakening Runtime
+    # ancestor checks.
+    $adapterTestRoot = Join-Path ([IO.Path]::GetPathRoot($root)) ('autoops-mounted-transfer-adapter-' + [Guid]::NewGuid().ToString('N'))
+    $adapterRoot = Join-Path $adapterTestRoot 'runtime-adapter'; $adapterTarget = Join-Path $adapterRoot 'target'; New-Item -ItemType Directory -Path $adapterTarget -Force | Out-Null
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { Set-TestRestrictedAcl $adapterTestRoot; Set-TestRestrictedAcl $adapterTarget }
     $container = 'autoops-transfer-synthetic-' + [Guid]::NewGuid().ToString('N')
     try {
       $emptyOptionalRuntimeArguments = @($optionalSensitiveKeys | ForEach-Object { '-e'; ($_ + '=') })
@@ -579,4 +612,7 @@ try {
   Assert-Condition 'PREEXISTING_DESTINATION_PRESERVED' ([IO.File]::ReadAllText((Join-Path (Get-PublishedSet $preTarget) '.published')) -eq 'pre-existing-synthetic')
   Assert-Condition 'PREEXISTING_TRANSACTION_UNTOUCHED' ((Get-ChildItem -LiteralPath (Get-PublishedSet $preTarget) -Force | Measure-Object).Count -eq 1)
   Write-Host 'MOUNTED_SECRET_TRANSFER_TEST PASS'
-} finally { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } }
+} finally {
+  if ($null -ne $adapterTestRoot -and (Test-Path -LiteralPath $adapterTestRoot)) { Remove-Item -LiteralPath $adapterTestRoot -Recurse -Force }
+  if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+}

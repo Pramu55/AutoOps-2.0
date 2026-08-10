@@ -178,8 +178,12 @@ directory and never rewrites its ACL. Only directories and files created by
 the current invocation receive protected least-privilege permissions and a
 post-write verification; a permissions failure rolls back only invocation-owned
 artifacts. Rollback never recursively removes the shared `sets` directory, so
-another invocation's staging or published transaction remains intact. Artifacts
-are written only inside an unpublished staging directory;
+another invocation's staging or published transaction remains intact.
+Artifacts are checked against replacement-capable permissions effective on each
+ancestor. An `InheritOnly` ACE is ignored only for the ancestor on which it is
+non-effective; Windows evaluates any effective inherited copy when that
+descendant is checked. Artifacts are written only inside an unpublished staging
+directory;
 a published marker and a single same-filesystem directory rename make the
 complete set selectable. Abandoned staging directories are never activation
 candidates. It rejects an existing published set without reading or

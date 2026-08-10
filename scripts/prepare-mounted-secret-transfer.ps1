@@ -331,6 +331,10 @@ function Test-AncestorReplacementPermissions([string]$TargetRoot, [string]$Failu
       if (-not $approvedSids.Contains($ownerSid)) { Fail-Safely $FailureCode }
       foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
         if ($rule.AccessControlType -ne 'Allow') { continue }
+        # An InheritOnly ACE is returned for this directory but does not grant
+        # rights on this current object. Any effective inherited copy is
+        # evaluated when the descendant itself is visited.
+        if (($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
         $sid = $rule.IdentityReference.Value
         if ([string]::IsNullOrWhiteSpace($sid)) { Fail-Safely $FailureCode }
         if (-not $approvedSids.Contains($sid) -and (($rule.FileSystemRights -band $replacementRights) -ne 0)) { Fail-Safely $FailureCode }
