@@ -6,12 +6,36 @@ function Assert-Condition([string]$Name, [bool]$Condition) {
 }
 
 function Get-ComposeModel([string[]]$Files) {
-  $arguments = @()
-  foreach ($file in $Files) { $arguments += @('-f', $file) }
+  $arguments = @('--env-file', $script:composeInputEnvironment, '-f', $Files[0], '-f', $script:composeInputOverride)
+  foreach ($file in @($Files | Select-Object -Skip 1)) { $arguments += @('-f', $file) }
   $arguments += @('config', '--format', 'json')
   $json = & docker compose @arguments 2>$null
   if ($LASTEXITCODE -ne 0) { throw 'Docker Compose structural rendering failed.' }
   return $json | ConvertFrom-Json
+}
+
+function Test-ComposeEnvironmentValue([string]$Path, [string]$ServiceName, [string]$Key, [string]$ExpectedValue) {
+  $inService = $false
+  $inEnvironment = $false
+  foreach ($line in Get-Content -LiteralPath $Path) {
+    if ($line -match "^  $([regex]::Escape($ServiceName)):\s*$") {
+      $inService = $true
+      $inEnvironment = $false
+      continue
+    }
+    if (-not $inService) { continue }
+    if ($line -match '^  [A-Za-z0-9_-]+:\s*$') { break }
+    if ($line -match '^    environment:\s*(?:!override)?\s*$') {
+      $inEnvironment = $true
+      continue
+    }
+    if (-not $inEnvironment) { continue }
+    if ($line -match '^    \S') { $inEnvironment = $false; continue }
+    if ($line -match "^      $([regex]::Escape($Key)):\s*(?<value>.+?)\s*$") {
+      return $Matches['value'].Trim() -eq $ExpectedValue
+    }
+  }
+  return $false
 }
 
 function Get-SecretMounts($Service) {
@@ -84,6 +108,8 @@ function Test-BaseEnvironmentDriftGuard($BaseKeys, $OverlayKeys) {
 }
 
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "autoops-mounted-secret-compose-test-$([guid]::NewGuid())"
+$script:composeInputEnvironment = Join-Path $temporaryRoot 'compose-input.env'
+$script:composeInputOverride = Join-Path $temporaryRoot 'compose-input-override.yml'
 $variables = @(
   'AUTOOPS_FILE_MODE_ENV_FILE', 'AUTOOPS_SECRET_JWT_ACCESS_FILE',
   'AUTOOPS_SECRET_JWT_REFRESH_FILE', 'AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE',
@@ -98,6 +124,10 @@ try {
   foreach ($file in @('runtime.env', 'sensitive.env', 'jwt-access', 'jwt-refresh', 'github-actions-token', 'jenkins-api-token')) {
     New-Item -ItemType File -Path (Join-Path $temporaryRoot $file) | Out-Null
   }
+  Set-Content -LiteralPath $script:composeInputOverride -Value @(
+    'services:', '  api:', '    env_file: !override', "      - $script:composeInputEnvironment",
+    '  worker:', '    env_file: !override', "      - $script:composeInputEnvironment"
+  )
   $env:AUTOOPS_FILE_MODE_ENV_FILE = Join-Path $temporaryRoot 'runtime.env'
   $env:AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE = Join-Path $temporaryRoot 'sensitive.env'
   $env:AUTOOPS_SECRET_JWT_ACCESS_FILE = Join-Path $temporaryRoot 'jwt-access'
@@ -114,7 +144,12 @@ try {
   $hostProviderSlugs = 'r6-host-override-should-not-win'
   $hostProviderAlias = 'r6-host-alias-should-not-win'
   $hostProviderIds = 'r6-host-id-should-not-win'
-  Set-Content -LiteralPath $env:AUTOOPS_FILE_MODE_ENV_FILE -Value @('GITHUB_ACTIONS_ENABLED=true', 'JENKINS_INTEGRATION_ENABLED=false', "PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS=$transferredProviderSlugs", "PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS=$transferredProviderAlias", "PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS=$transferredProviderIds")
+  $composeInputValues = [ordered]@{
+    POSTGRES_USER = 'synthetic'; POSTGRES_PASSWORD = 'synthetic'; POSTGRES_DB = 'synthetic'
+    GRAFANA_ADMIN_PASSWORD = 'synthetic'
+  }
+  Set-Content -LiteralPath $script:composeInputEnvironment -Value @($composeInputValues.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })
+  Set-Content -LiteralPath $env:AUTOOPS_FILE_MODE_ENV_FILE -Value @('NODE_ENV=development', 'GITHUB_ACTIONS_ENABLED=true', 'JENKINS_INTEGRATION_ENABLED=false', "PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS=$transferredProviderSlugs", "PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS=$transferredProviderAlias", "PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS=$transferredProviderIds")
   Set-Content -LiteralPath $env:AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE -Value @("DATABASE_URL=$sensitiveDatabaseUrl", "REDIS_URL=$sensitiveRedisUrl")
   $env:DATABASE_URL = $ambientDatabaseUrl
   $env:REDIS_URL = $ambientRedisUrl
@@ -147,10 +182,19 @@ try {
   Assert-Condition 'SENSITIVE_ENV_ORDER' (($compatibilityOverlay.IndexOf($runtimeMarker, [System.StringComparison]::Ordinal) -ge 0) -and ($compatibilityOverlay.IndexOf($sensitiveMarker, [System.StringComparison]::Ordinal) -gt $compatibilityOverlay.IndexOf($runtimeMarker, [System.StringComparison]::Ordinal)) -and (([regex]::Matches($compatibilityOverlay, [regex]::Escape($runtimeMarker))).Count -eq 2) -and (([regex]::Matches($compatibilityOverlay, [regex]::Escape($sensitiveMarker))).Count -eq 2))
   Assert-Condition 'SENSITIVE_ENV_BASE_MAPPINGS_EXPLICITLY_PRESERVED' (([regex]::Matches($compatibilityOverlay, 'environment:\s*!override')).Count -eq 2)
   Assert-Condition 'SENSITIVE_ENV_DATABASE_REDIS_AND_PROVIDER_INVENTORY_YIELD_TO_ENV_FILE' (-not ($compatibilityOverlay -match 'DATABASE_URL:|REDIS_URL:|PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS:|PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS:'))
-  $apiPreservedRuntimeKeys = @('NODE_ENV', 'API_PORT', 'DOCKER_SOCKET_PATH', 'INFRA_TERRAFORM_ROOT', 'INFRA_ANSIBLE_ROOT')
-  $workerPreservedRuntimeKeys = @('NODE_ENV', 'WORKER_PORT', 'DOCKER_SOCKET_PATH', 'INFRA_TERRAFORM_ROOT', 'INFRA_ANSIBLE_ROOT')
+  $apiPreservedRuntimeKeys = @('API_PORT', 'DOCKER_SOCKET_PATH', 'INFRA_TERRAFORM_ROOT', 'INFRA_ANSIBLE_ROOT')
+  $workerPreservedRuntimeKeys = @('WORKER_PORT', 'DOCKER_SOCKET_PATH', 'INFRA_TERRAFORM_ROOT', 'INFRA_ANSIBLE_ROOT')
   Assert-Condition 'SENSITIVE_ENV_OTHER_BASE_RUNTIME_MAPPINGS_PRESERVED' ((Test-BaseRuntimeEnvironmentPreserved $default.services.api $sensitive.services.api $apiPreservedRuntimeKeys) -and (Test-BaseRuntimeEnvironmentPreserved $default.services.worker $sensitive.services.worker $workerPreservedRuntimeKeys))
-  Assert-Condition 'FILE_MODE_OVERLAY_PRODUCTION_CONTRACT_PROVEN' (($sensitive.services.api.environment.NODE_ENV -eq 'production') -and ($sensitive.services.worker.environment.NODE_ENV -eq 'production'))
+  $baseApiKeys = Get-ComposeEnvironmentMappingKeys 'docker-compose.yml' 'api'
+  $baseWorkerKeys = Get-ComposeEnvironmentMappingKeys 'docker-compose.yml' 'worker'
+  Assert-Condition 'LOCAL_BASE_API_NODE_ENV_NOT_FORCED' (-not $baseApiKeys.Contains('NODE_ENV'))
+  Assert-Condition 'LOCAL_BASE_WORKER_NODE_ENV_NOT_FORCED' (-not $baseWorkerKeys.Contains('NODE_ENV'))
+  Assert-Condition 'LOCAL_RECREATION_RUNTIME_AUTHORITY' (($sensitive.services.api.environment.NODE_ENV -eq 'development') -and ($sensitive.services.worker.environment.NODE_ENV -eq 'development'))
+  Assert-Condition 'FILE_MODE_RUNTIME_NODE_ENV_AUTHORITATIVE' (($sensitive.services.api.environment.NODE_ENV -eq 'development') -and ($sensitive.services.worker.environment.NODE_ENV -eq 'development') -and ($sensitiveGithub.services.api.environment.NODE_ENV -eq 'development') -and ($sensitiveGithub.services.worker.environment.NODE_ENV -eq 'development'))
+  Set-Content -LiteralPath $env:AUTOOPS_FILE_MODE_ENV_FILE -Value @('NODE_ENV=production', 'GITHUB_ACTIONS_ENABLED=true', 'JENKINS_INTEGRATION_ENABLED=false', "PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS=$transferredProviderSlugs", "PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS=$transferredProviderAlias", "PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS=$transferredProviderIds")
+  $productionSensitive = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml', 'docker-compose.secrets-sensitive-env.yml')
+  Assert-Condition 'FILE_MODE_PRODUCTION_RUNTIME_CAN_REMAIN_PRODUCTION' (($productionSensitive.services.api.environment.NODE_ENV -eq 'production') -and ($productionSensitive.services.worker.environment.NODE_ENV -eq 'production'))
+  Assert-Condition 'PRODUCTION_COMPOSE_STILL_FORCES_PRODUCTION' ((Test-ComposeEnvironmentValue 'docker-compose.prod.yml' 'api' 'NODE_ENV' 'production') -and (Test-ComposeEnvironmentValue 'docker-compose.prod.yml' 'worker' 'NODE_ENV' 'production'))
   Assert-Condition 'SENSITIVE_ENV_BASE_ENVIRONMENT_DRIFT_GUARD' ((Test-BaseEnvironmentDriftGuard (Get-ComposeEnvironmentMappingKeys 'docker-compose.yml' 'api') (Get-ComposeEnvironmentMappingKeys 'docker-compose.secrets-sensitive-env.yml' 'api')) -and (Test-BaseEnvironmentDriftGuard (Get-ComposeEnvironmentMappingKeys 'docker-compose.yml' 'worker') (Get-ComposeEnvironmentMappingKeys 'docker-compose.secrets-sensitive-env.yml' 'worker')))
   Assert-Condition 'PROVIDER_INVENTORY_TRANSFERRED_SLUGS_AUTHORITATIVE' (($sensitive.services.api.environment.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS -eq $transferredProviderSlugs) -and ($sensitive.services.worker.environment.PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS -eq $transferredProviderSlugs))
   Assert-Condition 'PROVIDER_INVENTORY_TRANSFERRED_ALIAS_PRESERVED' (($sensitive.services.api.environment.PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS -eq $transferredProviderAlias) -and ($sensitive.services.worker.environment.PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS -eq $transferredProviderAlias))
