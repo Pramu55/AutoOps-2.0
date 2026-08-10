@@ -233,6 +233,27 @@ function Get-RuntimeAssignmentMap([string[]]$Keys) {
   }
   return $values
 }
+function Normalize-ActivationEnablement([System.Collections.IDictionary]$Runtime) {
+  # The maintained file-mode overlay always activates GitHub Actions and keeps
+  # Jenkins disabled. Normalize accepted source representations into the
+  # deterministic activation configuration before any sensitive source capture.
+  if (-not $Runtime.Contains('GITHUB_ACTIONS_ENABLED')) { Fail-Safely 'RUNTIME_ENABLEMENT_INVALID' }
+  switch ([string]$Runtime['GITHUB_ACTIONS_ENABLED']) {
+    'true' { $Runtime['GITHUB_ACTIONS_ENABLED'] = 'true'; break }
+    '1' { $Runtime['GITHUB_ACTIONS_ENABLED'] = 'true'; break }
+    default { Fail-Safely 'RUNTIME_ENABLEMENT_INVALID' }
+  }
+
+  if (-not $Runtime.Contains('JENKINS_INTEGRATION_ENABLED')) {
+    $Runtime['JENKINS_INTEGRATION_ENABLED'] = 'false'
+    return
+  }
+  switch ([string]$Runtime['JENKINS_INTEGRATION_ENABLED']) {
+    'false' { $Runtime['JENKINS_INTEGRATION_ENABLED'] = 'false'; break }
+    '0' { $Runtime['JENKINS_INTEGRATION_ENABLED'] = 'false'; break }
+    default { Fail-Safely 'RUNTIME_ENABLEMENT_INVALID' }
+  }
+}
 function Get-FileMetadata([string]$Path) {
   $item = Get-Item -Force -LiteralPath $Path -ErrorAction Stop
   if ($item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { Fail-Safely 'METADATA_INVALID' }
@@ -478,7 +499,7 @@ try {
   foreach ($key in $runtime.Keys) {
     if ($sensitiveSet.Contains($key) -or $migratedSet.Contains($key) -or -not $runtimeSet.Contains($key)) { Fail-Safely 'RUNTIME_KEY_INVALID' }
   }
-  if ($runtime['GITHUB_ACTIONS_ENABLED'] -cne 'true' -or $runtime['JENKINS_INTEGRATION_ENABLED'] -cne 'false') { Fail-Safely 'RUNTIME_ENABLEMENT_INVALID' }
+  Normalize-ActivationEnablement $runtime
   $runtimeLines = New-Object System.Collections.Generic.List[string]
   foreach ($key in $runtimeAllowedKeys) {
     if (-not $runtime.Contains($key)) { continue }

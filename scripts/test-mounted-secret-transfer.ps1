@@ -431,6 +431,42 @@ try {
     Assert-Condition "FAIL_CLOSED_$($case.Name)" ($result.ExitCode -ne 0)
     Assert-Condition "CLEANUP_$($case.Name)" (Test-NoPublishedSet $target)
   }
+  $enablementPassCases = @(
+    @{ Name='GITHUB_TRUE_JENKINS_FALSE_PASS'; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='GITHUB_TRUE_JENKINS_MISSING_PASS'; Runtime=@('GITHUB_ACTIONS_ENABLED=true') },
+    @{ Name='GITHUB_TRUE_JENKINS_ZERO_PASS'; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=0') },
+    @{ Name='GITHUB_ONE_JENKINS_FALSE_PASS'; Runtime=@('GITHUB_ACTIONS_ENABLED=1','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='GITHUB_ONE_JENKINS_MISSING_PASS'; Runtime=@('GITHUB_ACTIONS_ENABLED=1') }
+  )
+  foreach ($case in $enablementPassCases) {
+    $caseRoot = Join-Path $root $case.Name; $source = Join-Path $caseRoot 'source'; $target = Join-Path $caseRoot 'target'; New-Item -ItemType Directory -Path $target -Force | Out-Null
+    New-Fixture $source $case.Runtime @($syntheticDatabaseAssignment,$syntheticRedisAssignment)
+    $result = Invoke-Tool $source $target
+    $publishedRuntime = Join-Path (Get-PublishedSet $target) 'runtime.env'
+    Assert-Condition $case.Name ($result.ExitCode -eq 0 -and (Test-SetSelectable $target))
+    Assert-Condition 'NORMALIZED_OUTPUT_GITHUB_TRUE' ((Get-SerializedLogicalValue $publishedRuntime 'GITHUB_ACTIONS_ENABLED') -ceq 'true')
+    Assert-Condition 'NORMALIZED_OUTPUT_JENKINS_FALSE' ((Get-SerializedLogicalValue $publishedRuntime 'JENKINS_INTEGRATION_ENABLED') -ceq 'false')
+    if ($case.Name -match 'MISSING') { Assert-Condition 'MISSING_JENKINS_NORMALIZES_FALSE' ((Get-SerializedLogicalValue $publishedRuntime 'JENKINS_INTEGRATION_ENABLED') -ceq 'false') }
+    if ($case.Name -match 'ZERO') { Assert-Condition 'ZERO_JENKINS_NORMALIZES_FALSE' ((Get-SerializedLogicalValue $publishedRuntime 'JENKINS_INTEGRATION_ENABLED') -ceq 'false') }
+  }
+  $enablementRejectCases = @(
+    @{ Name='GITHUB_FALSE_REJECTED'; Runtime=@('GITHUB_ACTIONS_ENABLED=false','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='GITHUB_ZERO_REJECTED'; Runtime=@('GITHUB_ACTIONS_ENABLED=0','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='GITHUB_MISSING_REJECTED'; Runtime=@('JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='JENKINS_TRUE_REJECTED'; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=true') },
+    @{ Name='JENKINS_ONE_REJECTED'; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=1') },
+    @{ Name='GITHUB_INVALID_BOOLEAN_REJECTED'; Runtime=@('GITHUB_ACTIONS_ENABLED=enabled','JENKINS_INTEGRATION_ENABLED=false') },
+    @{ Name='JENKINS_INVALID_BOOLEAN_REJECTED'; Runtime=@('GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=disabled') }
+  )
+  foreach ($case in $enablementRejectCases) {
+    $caseRoot = Join-Path $root $case.Name; $source = Join-Path $caseRoot 'source'; $target = Join-Path $caseRoot 'target'; New-Item -ItemType Directory -Path $target -Force | Out-Null
+    New-Fixture $source $case.Runtime @($syntheticDatabaseAssignment,$syntheticRedisAssignment)
+    $result = Invoke-Tool $source $target
+    Assert-Condition $case.Name ($result.ExitCode -ne 0 -and $result.Output.Contains('ERROR_CODE=RUNTIME_ENABLEMENT_INVALID'))
+    Assert-Condition 'ENABLEMENT_FAILURE_BEFORE_SENSITIVE_CAPTURE' (-not $result.Output.Contains('PHASE_SENSITIVE_SERIALIZATION PASS'))
+    Assert-Condition 'ENABLEMENT_FAILURE_BEFORE_PUBLICATION' (Test-NoPublishedSet $target)
+    foreach ($marker in $fakeMarkers) { Assert-Condition "ENABLEMENT_FAILURE_NO_SECRET_OUTPUT_$($marker.Name)" (-not $result.Output.Contains($marker.Value)) }
+  }
   foreach ($runtimeNewlineCase in @(
     @{ Name='RUNTIME_VALUE_CR_REJECTED'; Kind='CR'; Key='LOG_LEVEL' },
     @{ Name='RUNTIME_VALUE_LF_REJECTED'; Kind='LF'; Key='LOG_LEVEL' },
