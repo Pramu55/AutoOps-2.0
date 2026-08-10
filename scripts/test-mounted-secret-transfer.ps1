@@ -526,9 +526,11 @@ try {
   New-Fixture $validProductionSource @('NODE_ENV=production','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment) @{ 'jwt-access'=(('A' * 32) -join ''); 'jwt-refresh'=(('R' * 32) -join ''); 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
   Assert-Condition 'VALID_REQUIRED_SECRET_SET_PASS' ((Invoke-Tool $validProductionSource $validProductionTarget).ExitCode -eq 0)
   Assert-Condition 'MOUNTED_SECRET_NORMAL_VALUE_PASS' (Test-SetSelectable $validProductionTarget)
+  Assert-Condition 'NODE_ENV_PRODUCTION_PRESERVED_IN_RUNTIME_ENV' ((Get-SerializedLogicalValue (Join-Path (Get-PublishedSet $validProductionTarget) 'runtime.env') 'NODE_ENV') -ceq 'production')
   $validNonProductionRoot = Join-Path $root 'VALID_PRODUCTION_JWT_SET_WITH_NONPRODUCTION_SOURCE_PASS'; $validNonProductionSource = Join-Path $validNonProductionRoot 'source'; $validNonProductionTarget = Join-Path $validNonProductionRoot 'target'; New-Item -ItemType Directory -Path $validNonProductionTarget -Force | Out-Null
   New-Fixture $validNonProductionSource @('NODE_ENV=development','GITHUB_ACTIONS_ENABLED=true','JENKINS_INTEGRATION_ENABLED=false') @($syntheticDatabaseAssignment,$syntheticRedisAssignment) @{ 'jwt-access'=(('A' * 32) -join ''); 'jwt-refresh'=(('R' * 32) -join ''); 'github-actions-token'='AUTOOPS_SYNTHETIC_GITHUB_TOKEN' }
   Assert-Condition 'VALID_PRODUCTION_JWT_SET_WITH_NONPRODUCTION_SOURCE_PASS' ((Invoke-Tool $validNonProductionSource $validNonProductionTarget).ExitCode -eq 0)
+  Assert-Condition 'NODE_ENV_DEVELOPMENT_PRESERVED_IN_RUNTIME_ENV' ((Get-SerializedLogicalValue (Join-Path (Get-PublishedSet $validNonProductionTarget) 'runtime.env') 'NODE_ENV') -ceq 'development')
   $trailingLineEndingCases = @(
     @{ Name='JWT_ACCESS_TRAILING_LF_REJECTED'; Artifact='jwt-access'; Value=($syntheticJwtAccess + "`n") },
     @{ Name='JWT_ACCESS_TRAILING_CRLF_REJECTED'; Artifact='jwt-access'; Value=($syntheticJwtAccess + "`r`n") },

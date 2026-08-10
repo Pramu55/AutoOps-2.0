@@ -32,7 +32,11 @@ AutoOps runs as a Next.js web console, Express API, BullMQ worker, PostgreSQL da
 ## Local vs Production Differences
 
 - Local compose exposes Postgres and Redis ports for development.
+- The default `docker-compose.yml` preserves local API/worker `NODE_ENV` from
+  `.env`; it is the local/development runtime contract.
 - `docker-compose.prod.yml` keeps Postgres and Redis internal and omits Docker socket and kubeconfig mounts by default.
+- `docker-compose.prod.yml` explicitly forces API/worker `NODE_ENV=production`;
+  its strict validation requirements are not relaxed by local Compose.
 - Local demo seed users are for testing only.
 - Production should use managed users/invites, a reverse proxy with HTTPS, and a real secret manager.
 

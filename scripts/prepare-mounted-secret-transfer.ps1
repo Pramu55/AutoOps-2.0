@@ -535,9 +535,9 @@ try {
     if ([string]::IsNullOrWhiteSpace($value) -or $value.IndexOf([char]0) -ge 0) { Fail-Safely 'REQUIRED_SECRET_INVALID' }
     Test-MountedArtifactLogicalEquivalence $artifact $value
   }
-  # This utility prepares the fixed file-mode activation overlay, which forces
-  # NODE_ENV=production. Validate the eventual activation contract rather than
-  # the source container's current NODE_ENV.
+  # File-mode runtime.env owns NODE_ENV. Independently enforce production-quality
+  # JWT material so every published mounted-secret set is strong regardless of
+  # the source runtime's local or production deployment mode.
   $access = [string]$payloads['jwt-access']; $refresh = [string]$payloads['jwt-refresh']
   $placeholder = 'change-me|replace-me|please-change|local-only|autoops_dev|^secret$|^password$|^default$'
   if ($access.Length -lt 32 -or $refresh.Length -lt 32 -or $access -match $placeholder -or $refresh -match $placeholder -or $access -ceq $refresh) { Fail-Safely 'REQUIRED_SECRET_INVALID' }

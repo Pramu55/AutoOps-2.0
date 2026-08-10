@@ -44,6 +44,18 @@ two mounted files in file mode, while the worker receives neither JWT nor
 GitHub credentials. The GitHub file is mounted only by its API overlay; the
 Jenkins file is mounted only by its dedicated API-and-worker overlay.
 
+## Runtime-mode authority
+
+The default `docker-compose.yml` is the local/development deployment model:
+API and worker obtain `NODE_ENV` from their configured local environment file.
+`docker-compose.prod.yml` is the separate strict production deployment model
+and explicitly sets `NODE_ENV=production` for API and worker. File mode does
+not choose a deployment mode: its approved external `runtime.env` is
+authoritative for `NODE_ENV`, so it can describe either a local-development or
+production runtime. A production file-mode deployment must still provide
+production-valid `STRICT_ENV_VALIDATION`, public HTTPS `API_PUBLIC_URL`, and
+HTTPS CORS origins; production validation remains fail-closed.
+
 For the current compatibility migration, the approved activation selection is
 `core,sensitive-env,github`. `runtime.env` must contain only exact allowlisted
 non-secret application configuration and must set `GITHUB_ACTIONS_ENABLED=true`

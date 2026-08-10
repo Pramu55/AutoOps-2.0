@@ -66,7 +66,6 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      NODE_ENV: production
       API_PORT: '4000'
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
       REDIS_URL: redis://redis:6379
@@ -107,7 +106,6 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      NODE_ENV: production
       WORKER_PORT: '4001'
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
       REDIS_URL: redis://redis:6379
