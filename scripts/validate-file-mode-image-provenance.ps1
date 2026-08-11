@@ -30,16 +30,20 @@ function Get-RepositoryGitOutput([string]$Arguments) {
   $psi.RedirectStandardError = $true
   $process = [Diagnostics.Process]::new()
   $process.StartInfo = $psi
-  if (-not $process.Start()) { return $null }
+  if (-not $process.Start()) {
+    return [pscustomobject]@{ Succeeded = $false; Output = $null }
+  }
   $stdout = $process.StandardOutput.ReadToEnd().Trim()
   $null = $process.StandardError.ReadToEnd()
   $process.WaitForExit()
-  if ($process.ExitCode -ne 0) { return $null }
-  return $stdout
+  if ($process.ExitCode -ne 0) {
+    return [pscustomobject]@{ Succeeded = $false; Output = $null }
+  }
+  return [pscustomobject]@{ Succeeded = $true; Output = $stdout }
 }
 
-function Test-CheckoutBinding([string]$Expected, [string]$Head, [bool]$IsClean) {
-  return (Test-Revision $Expected) -and (Test-Revision $Head) -and $Expected -ceq $Head -and $IsClean
+function Test-CheckoutBinding([string]$Expected, [string]$Head, [bool]$IsClean, [bool]$GitInspectionSucceeded = $true) {
+  return $GitInspectionSucceeded -and (Test-Revision $Expected) -and (Test-Revision $Head) -and $Expected -ceq $Head -and $IsClean
 }
 
 function Get-ImageRevision([string]$Image) {
@@ -78,6 +82,7 @@ function Invoke-SelfTest {
     @{ Name = 'IMAGE_PROVENANCE_INVALID_IMAGE_REFERENCE_BLOCKED'; Passed = -not (Test-ImageReference 'invalid image reference') },
     @{ Name = 'IMAGE_PROVENANCE_CHECKOUT_MISMATCH_BLOCKED'; Passed = -not (Test-CheckoutBinding $expected $stale $true) },
     @{ Name = 'IMAGE_PROVENANCE_DIRTY_CHECKOUT_BLOCKED'; Passed = -not (Test-CheckoutBinding $expected $expected $false) },
+    @{ Name = 'IMAGE_PROVENANCE_GIT_STATUS_FAILURE_BLOCKED'; Passed = -not (Test-CheckoutBinding $expected $expected $true $false) },
     @{ Name = 'IMAGE_PROVENANCE_API_WORKER_MISMATCH_BLOCKED'; Passed = -not ((Test-ImageRevision $expected $expected) -and (Test-ImageRevision $stale $expected)) }
   )
   foreach ($case in $cases) {
@@ -94,9 +99,10 @@ if (-not (Test-Revision $ExpectedRevision)) {
   exit 1
 }
 
-$checkoutHead = Get-RepositoryGitOutput 'rev-parse HEAD'
-$checkoutStatus = Get-RepositoryGitOutput 'status --porcelain --untracked-files=all'
-$checkoutPassed = Test-CheckoutBinding $ExpectedRevision $checkoutHead ([string]::IsNullOrEmpty($checkoutStatus))
+$checkoutHeadResult = Get-RepositoryGitOutput 'rev-parse HEAD'
+$checkoutStatusResult = Get-RepositoryGitOutput 'status --porcelain --untracked-files=all'
+$gitInspectionSucceeded = $checkoutHeadResult.Succeeded -and $checkoutStatusResult.Succeeded
+$checkoutPassed = Test-CheckoutBinding $ExpectedRevision $checkoutHeadResult.Output ([string]::IsNullOrEmpty($checkoutStatusResult.Output)) $gitInspectionSucceeded
 Write-Result 'CHECKOUT_IMAGE_PROVENANCE' $checkoutPassed
 if (-not $checkoutPassed) { exit 1 }
 
