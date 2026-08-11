@@ -176,13 +176,18 @@ worker Dockerfiles label their build output with
 `org.opencontainers.image.revision`. Compose supplies that label from the
 non-secret `AUTOOPS_IMAGE_REVISION` build input; it defaults to `unknown` for
 ordinary local environment-mode development and is intentionally rejected by
-the file-mode preflight.
+the file-mode preflight. The preflight also requires the requested revision to
+equal a clean local checkout `HEAD`, so a caller cannot label a different or
+dirty build context as an accepted revision.
 
 For a separately authorized activation window, set `AUTOOPS_IMAGE_REVISION` to
 the accepted full Git revision, build API and worker, then run:
 
 ```powershell
-$revision = git rev-parse HEAD
+$revision = (git rev-parse HEAD).Trim().ToLowerInvariant()
+if (git status --porcelain --untracked-files=all) {
+  throw 'Build a file-mode candidate only from a clean checkout.'
+}
 $env:AUTOOPS_IMAGE_REVISION = $revision
 docker compose build api worker
 powershell -NoProfile -ExecutionPolicy Bypass `
@@ -192,13 +197,13 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -WorkerImage autoops-worker
 ```
 
-The provenance validator uses Docker image metadata only and fails closed for
-missing, malformed, stale, or API/worker-mismatched revisions. It does not
-inspect container environments or secret files. Passing provenance and
-mounted-secret delivery validation remains preflight only; live activation
-requires separate owner authorization. The initial M01.3 activation and its
-single rollback attempt are historical incident evidence, not authorization to
-retry activation.
+The provenance validator uses Docker image metadata and local Git metadata only
+and fails closed for a dirty or mismatched checkout, or missing, malformed,
+stale, or API/worker-mismatched revisions. It does not inspect container
+environments or secret files. Passing provenance and mounted-secret delivery
+validation remains preflight only; live activation requires separate owner
+authorization. The initial M01.3 activation and its single rollback attempt are
+historical incident evidence, not authorization to retry activation.
 
 The M01.3 incident established why this gate is required: the failed API image
 contained an older compiled environment schema that still required migrated JWT
