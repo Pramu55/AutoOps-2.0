@@ -167,6 +167,46 @@ Run the validator before any controlled activation and use `docker compose
 config` with the selected explicit overlay(s). These checks render structure
 only; they do not start, stop, recreate, or activate containers.
 
+## Image provenance preflight
+
+Mounted-secret activation must validate the API and worker image revision before
+using `--no-build`. A stale image can retain an older environment schema even
+when the repository, transfer set, and Compose model are current. The API and
+worker Dockerfiles label their build output with
+`org.opencontainers.image.revision`. Compose supplies that label from the
+non-secret `AUTOOPS_IMAGE_REVISION` build input; it defaults to `unknown` for
+ordinary local environment-mode development and is intentionally rejected by
+the file-mode preflight.
+
+For a separately authorized activation window, set `AUTOOPS_IMAGE_REVISION` to
+the accepted full Git revision, build API and worker, then run:
+
+```powershell
+$revision = git rev-parse HEAD
+$env:AUTOOPS_IMAGE_REVISION = $revision
+docker compose build api worker
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\validate-file-mode-image-provenance.ps1 `
+  -ExpectedRevision $revision `
+  -ApiImage autoops-api `
+  -WorkerImage autoops-worker
+```
+
+The provenance validator uses Docker image metadata only and fails closed for
+missing, malformed, stale, or API/worker-mismatched revisions. It does not
+inspect container environments or secret files. Passing provenance and
+mounted-secret delivery validation remains preflight only; live activation
+requires separate owner authorization. The initial M01.3 activation and its
+single rollback attempt are historical incident evidence, not authorization to
+retry activation.
+
+The M01.3 incident established why this gate is required: the failed API image
+contained an older compiled environment schema that still required migrated JWT
+environment variables, while the accepted source and an isolated exact-head
+candidate resolved them through the typed file provider. Filesystem identity,
+mount metadata, and provider initialization were not the cause. This does not
+authorize another activation attempt.
+
 ## Audited transfer preparation
 
 `scripts/prepare-mounted-secret-transfer.ps1` is the maintained operator tool

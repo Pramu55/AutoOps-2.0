@@ -79,3 +79,6 @@ jobs:
 
       - name: Run synthetic transfer qualification
         run: pnpm test:mounted-secret-transfer
+
+      - name: Validate file-mode image provenance contract
+        run: pnpm test:file-mode-image-provenance
