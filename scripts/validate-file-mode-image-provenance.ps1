@@ -172,7 +172,9 @@ function Get-ImageRevision([string]$Image) {
   if (-not (Test-ImageReference $Image)) { return $null }
   $psi = [Diagnostics.ProcessStartInfo]::new()
   $psi.FileName = 'docker'
-  $psi.Arguments = 'image inspect --format "{{ index .Config.Labels \"org.opencontainers.image.revision\" }}" "' + $Image.Replace('"', '\"') + '"'
+  # Request the complete label map as JSON so the child-process argument does
+  # not need to embed a quoted label key.  Read only the non-secret revision.
+  $psi.Arguments = 'image inspect --format "{{json .Config.Labels}}" "' + $Image.Replace('"', '\"') + '"'
   $psi.UseShellExecute = $false
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
@@ -182,8 +184,15 @@ function Get-ImageRevision([string]$Image) {
   $stdout = $process.StandardOutput.ReadToEnd().Trim()
   $null = $process.StandardError.ReadToEnd()
   $process.WaitForExit()
-  if ($process.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($stdout) -or $stdout -eq '<no value>') { return $null }
-  return $stdout
+  if ($process.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($stdout) -or $stdout -eq '<no value>' -or $stdout -eq 'null') { return $null }
+  try {
+    $labels = $stdout | ConvertFrom-Json -ErrorAction Stop
+    $revision = $labels.'org.opencontainers.image.revision'
+    if ([string]::IsNullOrWhiteSpace($revision)) { return $null }
+    return $revision.Trim()
+  } catch {
+    return $null
+  }
 }
 
 function Test-ImageRevision([string]$Revision, [string]$Expected) {
