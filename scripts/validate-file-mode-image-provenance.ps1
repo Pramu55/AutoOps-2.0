@@ -63,8 +63,10 @@ function ConvertTo-PathRegex([string]$Pattern) {
 }
 
 function Test-DockerIgnorePattern([string]$Path, [string]$Pattern) {
-  $normalizedPath = $Path.Replace('\', '/').TrimStart('./')
-  $normalizedPattern = $Pattern.Replace('\', '/').Trim().TrimStart('./')
+  # Docker treats a leading "./" as optional, but a leading dot in names such
+  # as ".turbo" and ".pnpm-store" is significant.
+  $normalizedPath = ($Path.Replace('\', '/') -replace '^\./', '')
+  $normalizedPattern = (($Pattern.Replace('\', '/').Trim()) -replace '^\./', '')
   if ([string]::IsNullOrWhiteSpace($normalizedPattern)) { return $false }
 
   $directoryPattern = $normalizedPattern.EndsWith('/')
@@ -100,9 +102,9 @@ function Test-PathExcludedFromDockerContext([string]$Path, [string]$RepositoryRo
 }
 
 function Test-PathWithinBuildInput([string]$Path, [string[]]$BuildInputPrefixes) {
-  $normalizedPath = $Path.Replace('\', '/').TrimStart('./')
+  $normalizedPath = ($Path.Replace('\', '/') -replace '^\./', '')
   foreach ($prefix in $BuildInputPrefixes) {
-    $normalizedPrefix = $prefix.Replace('\', '/').TrimStart('./')
+    $normalizedPrefix = ($prefix.Replace('\', '/') -replace '^\./', '')
     if ($normalizedPrefix.EndsWith('/')) {
       if ($normalizedPath.StartsWith($normalizedPrefix, [StringComparison]::Ordinal)) { return $true }
     } elseif ($normalizedPath -ceq $normalizedPrefix) {
