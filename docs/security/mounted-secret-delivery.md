@@ -197,10 +197,15 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -WorkerImage autoops-worker
 ```
 
-The provenance validator uses Docker image metadata and local Git metadata only
-and fails closed for a dirty or mismatched checkout, or missing, malformed,
-stale, or API/worker-mismatched revisions. It does not inspect container
-environments or secret files. Passing provenance and mounted-secret delivery
+The provenance validator invokes Git with the actual checkout root explicitly
+bound and with inherited repository-selection variables (including `GIT_DIR`,
+`GIT_WORK_TREE`, and `GIT_INDEX_FILE`) removed from its child process. It also
+examines ignored paths: an ignored file blocks the gate when it survives
+`.dockerignore` and falls under an API or worker Dockerfile `COPY` source. An
+ignored path outside those effective inputs, or one excluded by `.dockerignore`,
+does not falsely block a candidate. The validator otherwise fails closed for a
+dirty or mismatched checkout, or missing, malformed, stale, or API/worker-
+mismatched revisions. It does not inspect container environments or secret files. Passing provenance and mounted-secret delivery
 validation remains preflight only; live activation requires separate owner
 authorization. The initial M01.3 activation and its single rollback attempt are
 historical incident evidence, not authorization to retry activation.
