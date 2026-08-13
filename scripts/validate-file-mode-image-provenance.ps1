@@ -130,44 +130,93 @@ function Get-RepositoryGitOutput([string]$Arguments, [string]$RepositoryRoot = $
   $process = [Diagnostics.Process]::new()
   $process.StartInfo = $psi
   if (-not $process.Start()) { return [pscustomobject]@{ Succeeded = $false; Output = $null } }
-  $stdout = $process.StandardOutput.ReadToEnd().Trim()
+  # Keep NUL-delimited Git porcelain output byte-for-byte.  Callers that read
+  # scalar output trim it explicitly; status/index parsers must not.
+  $stdout = $process.StandardOutput.ReadToEnd()
   $null = $process.StandardError.ReadToEnd()
   $process.WaitForExit()
   if ($process.ExitCode -ne 0) { return [pscustomobject]@{ Succeeded = $false; Output = $null } }
   return [pscustomobject]@{ Succeeded = $true; Output = $stdout }
 }
 
-function Get-RepositoryInspection([string]$RepositoryRoot, [string[]]$BuildInputPrefixes) {
-  try { $normalizedRoot = Get-NormalizedPath $RepositoryRoot } catch { return [pscustomobject]@{ Succeeded = $false } }
-  $topLevel = Get-RepositoryGitOutput 'rev-parse --show-toplevel' $normalizedRoot
-  $head = Get-RepositoryGitOutput 'rev-parse HEAD' $normalizedRoot
-  $status = Get-RepositoryGitOutput 'status --porcelain=v1 --untracked-files=all --ignored=matching' $normalizedRoot
-  if (-not $topLevel.Succeeded -or -not $head.Succeeded -or -not $status.Succeeded) { return [pscustomobject]@{ Succeeded = $false } }
+function Get-NulDelimitedRecords([string]$Output) {
+  if ($null -eq $Output) { return [pscustomobject]@{ Succeeded = $false; Records = @() } }
+  if ($Output.Length -eq 0) { return [pscustomobject]@{ Succeeded = $true; Records = @() } }
+  if (-not $Output.EndsWith([string][char]0, [StringComparison]::Ordinal)) { return [pscustomobject]@{ Succeeded = $false; Records = @() } }
+  return [pscustomobject]@{ Succeeded = $true; Records = @($Output.Substring(0, $Output.Length - 1).Split([char]0)) }
+}
 
-  $isRootBound = $false
-  try { $isRootBound = (Get-NormalizedPath $topLevel.Output) -ceq $normalizedRoot } catch { $isRootBound = $false }
+function Get-StatusInspection([string]$Output, [string]$RepositoryRoot, [string[]]$BuildInputPrefixes) {
+  $records = Get-NulDelimitedRecords $Output
+  if (-not $records.Succeeded) { return [pscustomobject]@{ Succeeded = $false } }
   $ordinaryChanges = @()
   $ignoredBuildInputs = @()
-  foreach ($line in @($status.Output -split "`r?`n")) {
-    if ([string]::IsNullOrWhiteSpace($line)) { continue }
-    if ($line.StartsWith('!! ')) {
-      $path = $line.Substring(3)
-      if (Test-IgnoredPathAffectsBuild $path $normalizedRoot $BuildInputPrefixes) { $ignoredBuildInputs += $path }
+  foreach ($record in $records.Records) {
+    # Porcelain v1 -z records begin with the fixed three-character XY + space
+    # prefix and carry the actual pathname after it, without C quoting.
+    if ($record.Length -lt 3 -or $record[2] -ne ' ') { return [pscustomobject]@{ Succeeded = $false } }
+    $prefix = $record.Substring(0, 3)
+    $path = $record.Substring(3)
+    if ([string]::IsNullOrEmpty($path)) { return [pscustomobject]@{ Succeeded = $false } }
+    if ($prefix -ceq '!! ') {
+      if (Test-IgnoredPathAffectsBuild $path $RepositoryRoot $BuildInputPrefixes) { $ignoredBuildInputs += $path }
+    } elseif ($prefix -notmatch '^(?:[ MADRCUT][ MADRCUT] |\?\? )$') {
+      return [pscustomobject]@{ Succeeded = $false }
     } else {
-      $ordinaryChanges += $line
+      # Any tracked, untracked, renamed, copied, or otherwise changed record
+      # invalidates the checkout. Rename/copy source records need not be parsed
+      # because the first record already fails closed.
+      $ordinaryChanges += $record
     }
   }
   return [pscustomobject]@{
     Succeeded = $true
-    Head = $head.Output
-    IsRootBound = $isRootBound
     HasOrdinaryChanges = $ordinaryChanges.Count -gt 0
     HasIgnoredBuildInputs = $ignoredBuildInputs.Count -gt 0
   }
 }
 
+function Get-HiddenIndexBuildInputInspection([string]$Output, [string[]]$BuildInputPrefixes) {
+  $records = Get-NulDelimitedRecords $Output
+  if (-not $records.Succeeded) { return [pscustomobject]@{ Succeeded = $false } }
+  $hiddenBuildInputs = @()
+  foreach ($record in $records.Records) {
+    # git ls-files -v -z emits "<tag> <path>\0". h is assume-unchanged and
+    # S is skip-worktree; both can hide a modified tracked Docker input.
+    if ($record.Length -lt 3 -or $record[1] -ne ' ') { return [pscustomobject]@{ Succeeded = $false } }
+    $tag = $record[0]
+    $path = $record.Substring(2)
+    if ([string]::IsNullOrEmpty($path)) { return [pscustomobject]@{ Succeeded = $false } }
+    if (($tag -ceq 'h' -or $tag -ceq 'S') -and (Test-PathWithinBuildInput $path $BuildInputPrefixes)) { $hiddenBuildInputs += $path }
+  }
+  return [pscustomobject]@{ Succeeded = $true; HasHiddenBuildInputs = $hiddenBuildInputs.Count -gt 0 }
+}
+
+function Get-RepositoryInspection([string]$RepositoryRoot, [string[]]$BuildInputPrefixes) {
+  try { $normalizedRoot = Get-NormalizedPath $RepositoryRoot } catch { return [pscustomobject]@{ Succeeded = $false } }
+  $topLevel = Get-RepositoryGitOutput 'rev-parse --show-toplevel' $normalizedRoot
+  $head = Get-RepositoryGitOutput 'rev-parse HEAD' $normalizedRoot
+  $status = Get-RepositoryGitOutput 'status --porcelain=v1 -z --untracked-files=all --ignored=matching' $normalizedRoot
+  $indexFlags = Get-RepositoryGitOutput 'ls-files -v -z' $normalizedRoot
+  if (-not $topLevel.Succeeded -or -not $head.Succeeded -or -not $status.Succeeded -or -not $indexFlags.Succeeded) { return [pscustomobject]@{ Succeeded = $false } }
+
+  $isRootBound = $false
+  try { $isRootBound = (Get-NormalizedPath $topLevel.Output.Trim()) -ceq $normalizedRoot } catch { $isRootBound = $false }
+  $statusInspection = Get-StatusInspection $status.Output $normalizedRoot $BuildInputPrefixes
+  $hiddenIndexInspection = Get-HiddenIndexBuildInputInspection $indexFlags.Output $BuildInputPrefixes
+  if (-not $statusInspection.Succeeded -or -not $hiddenIndexInspection.Succeeded) { return [pscustomobject]@{ Succeeded = $false } }
+  return [pscustomobject]@{
+    Succeeded = $true
+    Head = $head.Output.Trim()
+    IsRootBound = $isRootBound
+    HasOrdinaryChanges = $statusInspection.HasOrdinaryChanges
+    HasIgnoredBuildInputs = $statusInspection.HasIgnoredBuildInputs
+    HasHiddenBuildInputIndexFlags = $hiddenIndexInspection.HasHiddenBuildInputs
+  }
+}
+
 function Test-CheckoutBinding([string]$Expected, [object]$Inspection) {
-  return $Inspection.Succeeded -and $Inspection.IsRootBound -and (Test-Revision $Expected) -and (Test-Revision $Inspection.Head) -and $Expected -ceq $Inspection.Head -and -not $Inspection.HasOrdinaryChanges -and -not $Inspection.HasIgnoredBuildInputs
+  return $Inspection.Succeeded -and $Inspection.IsRootBound -and (Test-Revision $Expected) -and (Test-Revision $Inspection.Head) -and $Expected -ceq $Inspection.Head -and -not $Inspection.HasOrdinaryChanges -and -not $Inspection.HasIgnoredBuildInputs -and -not $Inspection.HasHiddenBuildInputIndexFlags
 }
 
 function Get-ImageRevision([string]$Image) {
@@ -225,6 +274,7 @@ function New-SyntheticRepository([string]$Root, [string]$Name) {
   Set-Content -LiteralPath (Join-Path $path 'tsconfig.base.json') -Value '{}' -Encoding utf8
   Set-Content -LiteralPath (Join-Path $path 'packages/database/prisma/schema.prisma') -Value 'generator client { provider = "prisma-client-js" }' -Encoding utf8
   Set-Content -LiteralPath (Join-Path $path 'apps/api/index.ts') -Value 'export {}' -Encoding utf8
+  Set-Content -LiteralPath (Join-Path $path 'scratch/outside.ts') -Value 'export {}' -Encoding utf8
   Set-Content -LiteralPath (Join-Path $path '.gitignore') -Value "*.key`ndist/" -Encoding utf8
   Set-Content -LiteralPath (Join-Path $path '.dockerignore') -Value "dist`n**/dist" -Encoding utf8
   Invoke-TestGit $path @('init')
@@ -243,7 +293,7 @@ function Invoke-SelfTest {
   try {
     $primary = New-SyntheticRepository $root 'primary'
     $redirect = New-SyntheticRepository $root 'redirect'
-    $expected = (Get-RepositoryGitOutput 'rev-parse HEAD' $primary).Output
+    $expected = (Get-RepositoryGitOutput 'rev-parse HEAD' $primary).Output.Trim()
     $stale = 'b' * 40
     $clean = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
     $cases = @(
@@ -269,6 +319,25 @@ function Invoke-SelfTest {
     $cases += @{ Name = 'IGNORED_BUILD_INPUT_BLOCKED'; Passed = $ignoredInput.HasIgnoredBuildInputs -and -not (Test-CheckoutBinding $expected $ignoredInput) }
     Remove-Item -LiteralPath (Join-Path $primary 'packages/database/prisma/credential.key') -Force
 
+    $specialIgnoredPaths = @(
+      @{ Name = 'NUL_DELIMITED_STATUS_TEST'; Path = 'packages/database/prisma/prod credential.key' },
+      @{ Name = 'UNICODE_PATH_TEST'; Path = 'packages/database/prisma/unicode-é.key' }
+    )
+    foreach ($fixture in $specialIgnoredPaths) {
+      $fixturePath = Join-Path $primary $fixture.Path
+      Set-Content -LiteralPath $fixturePath -Value 'synthetic-non-secret' -Encoding utf8
+      $inspection = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
+      $cases += @{ Name = $fixture.Name; Passed = $inspection.HasIgnoredBuildInputs -and -not (Test-CheckoutBinding $expected $inspection) }
+      if ($fixture.Path.Contains(' ')) {
+        $cases += @{ Name = 'SPACE_PATH_TEST'; Passed = $inspection.HasIgnoredBuildInputs -and -not (Test-CheckoutBinding $expected $inspection) }
+      }
+      Remove-Item -LiteralPath $fixturePath -Force
+    }
+    # Windows forbids a double quote in a filename; preserve the explicit
+    # platform result instead of manufacturing or manually decoding porcelain.
+    $quoteSupported = [Array]::IndexOf([IO.Path]::GetInvalidFileNameChars(), [char]'"') -lt 0
+    $cases += @{ Name = 'QUOTE_PATH_TEST'; Passed = -not $quoteSupported }
+
     Set-Content -LiteralPath (Join-Path $primary 'scratch/credential.key') -Value 'synthetic-non-secret' -Encoding utf8
     $outsideIgnored = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
     $cases += @{ Name = 'IGNORED_OUTSIDE_EFFECTIVE_BUILD_INPUT_ACCEPTED'; Passed = -not $outsideIgnored.HasIgnoredBuildInputs -and (Test-CheckoutBinding $expected $outsideIgnored) }
@@ -279,6 +348,37 @@ function Invoke-SelfTest {
     $dockerExcludedIgnored = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
     $cases += @{ Name = 'IGNORED_DOCKER_EXCLUDED_BUILD_PATH_ACCEPTED'; Passed = -not $dockerExcludedIgnored.HasIgnoredBuildInputs -and (Test-CheckoutBinding $expected $dockerExcludedIgnored) }
     Remove-Item -LiteralPath (Join-Path $primary 'packages/database/dist') -Recurse -Force
+
+    New-Item -ItemType Directory -Path (Join-Path $primary 'packages/database/dist') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $primary 'packages/database/dist/prod credential.key') -Value 'synthetic-non-secret' -Encoding utf8
+    $quotedDockerExcludedIgnored = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
+    $cases += @{ Name = 'IGNORED_QUOTED_DOCKER_EXCLUDED_PATH_ACCEPTED'; Passed = -not $quotedDockerExcludedIgnored.HasIgnoredBuildInputs -and (Test-CheckoutBinding $expected $quotedDockerExcludedIgnored) }
+    Remove-Item -LiteralPath (Join-Path $primary 'packages/database/dist') -Recurse -Force
+
+    $trackedBuildInput = 'packages/database/prisma/schema.prisma'
+    Invoke-TestGit $primary @('update-index','--assume-unchanged',$trackedBuildInput)
+    Add-Content -LiteralPath (Join-Path $primary $trackedBuildInput) -Value '// hidden assume unchanged' -Encoding utf8
+    $assumeStatus = Get-RepositoryGitOutput 'status --porcelain=v1 -z --untracked-files=all --ignored=matching' $primary
+    $assumeInspection = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
+    $cases += @{ Name = 'ASSUME_UNCHANGED_BUILD_INPUT_BLOCKED'; Passed = $assumeStatus.Succeeded -and $assumeStatus.Output.Length -eq 0 -and $assumeInspection.HasHiddenBuildInputIndexFlags -and -not (Test-CheckoutBinding $expected $assumeInspection) }
+    Invoke-TestGit $primary @('update-index','--no-assume-unchanged',$trackedBuildInput)
+    Invoke-TestGit $primary @('checkout','--',$trackedBuildInput)
+
+    Invoke-TestGit $primary @('update-index','--skip-worktree',$trackedBuildInput)
+    Add-Content -LiteralPath (Join-Path $primary $trackedBuildInput) -Value '// hidden skip worktree' -Encoding utf8
+    $skipStatus = Get-RepositoryGitOutput 'status --porcelain=v1 -z --untracked-files=all --ignored=matching' $primary
+    $skipInspection = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
+    $cases += @{ Name = 'SKIP_WORKTREE_BUILD_INPUT_BLOCKED'; Passed = $skipStatus.Succeeded -and $skipStatus.Output.Length -eq 0 -and $skipInspection.HasHiddenBuildInputIndexFlags -and -not (Test-CheckoutBinding $expected $skipInspection) }
+    Invoke-TestGit $primary @('update-index','--no-skip-worktree',$trackedBuildInput)
+    Invoke-TestGit $primary @('checkout','--',$trackedBuildInput)
+
+    $outsideBuildInput = 'scratch/outside.ts'
+    Invoke-TestGit $primary @('update-index','--assume-unchanged',$outsideBuildInput)
+    Add-Content -LiteralPath (Join-Path $primary $outsideBuildInput) -Value '// hidden outside input' -Encoding utf8
+    $outsideHiddenInspection = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
+    $cases += @{ Name = 'OUTSIDE_BUILD_INPUT_HIDDEN_FLAG_ALLOWED'; Passed = -not $outsideHiddenInspection.HasHiddenBuildInputIndexFlags -and (Test-CheckoutBinding $expected $outsideHiddenInspection) }
+    Invoke-TestGit $primary @('update-index','--no-assume-unchanged',$outsideBuildInput)
+    Invoke-TestGit $primary @('checkout','--',$outsideBuildInput)
 
     Add-Content -LiteralPath (Join-Path $primary 'packages/database/prisma/schema.prisma') -Value '// redirected dirty' -Encoding utf8
     $redirectGitDir = Join-Path $redirect '.git'
