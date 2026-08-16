@@ -181,15 +181,25 @@ function Get-HiddenIndexBuildInputInspection([string]$Output, [string[]]$BuildIn
   if (-not $records.Succeeded) { return [pscustomobject]@{ Succeeded = $false } }
   $hiddenBuildInputs = @()
   foreach ($record in $records.Records) {
-    # git ls-files -v -z emits "<tag> <path>\0". h is assume-unchanged and
-    # S is skip-worktree; both can hide a modified tracked Docker input.
+    # git ls-files -v -z emits "<tag> <path>\0". h is assume-unchanged,
+    # S is skip-worktree, and lowercase s is both flags at once. Each can hide
+    # a modified tracked Docker input from normal porcelain status.
     if ($record.Length -lt 3 -or $record[1] -ne ' ') { return [pscustomobject]@{ Succeeded = $false } }
     $tag = $record[0]
     $path = $record.Substring(2)
     if ([string]::IsNullOrEmpty($path)) { return [pscustomobject]@{ Succeeded = $false } }
-    if (($tag -ceq 'h' -or $tag -ceq 'S') -and (Test-PathWithinBuildInput $path $BuildInputPrefixes)) { $hiddenBuildInputs += $path }
+    if (($tag -ceq 'h' -or $tag -ceq 'S' -or $tag -ceq 's') -and (Test-PathWithinBuildInput $path $BuildInputPrefixes)) { $hiddenBuildInputs += $path }
   }
   return [pscustomobject]@{ Succeeded = $true; HasHiddenBuildInputs = $hiddenBuildInputs.Count -gt 0 }
+}
+
+function Get-IndexTagForPath([string]$Output, [string]$Path) {
+  $records = Get-NulDelimitedRecords $Output
+  if (-not $records.Succeeded) { return $null }
+  foreach ($record in $records.Records) {
+    if ($record.Length -ge 3 -and $record[1] -eq ' ' -and $record.Substring(2) -ceq $Path) { return [string]$record[0] }
+  }
+  return $null
 }
 
 function Get-RepositoryInspection([string]$RepositoryRoot, [string[]]$BuildInputPrefixes) {
@@ -359,25 +369,41 @@ function Invoke-SelfTest {
     Invoke-TestGit $primary @('update-index','--assume-unchanged',$trackedBuildInput)
     Add-Content -LiteralPath (Join-Path $primary $trackedBuildInput) -Value '// hidden assume unchanged' -Encoding utf8
     $assumeStatus = Get-RepositoryGitOutput 'status --porcelain=v1 -z --untracked-files=all --ignored=matching' $primary
+    $assumeTag = Get-IndexTagForPath (Get-RepositoryGitOutput 'ls-files -v -z' $primary).Output $trackedBuildInput
     $assumeInspection = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
-    $cases += @{ Name = 'ASSUME_UNCHANGED_BUILD_INPUT_BLOCKED'; Passed = $assumeStatus.Succeeded -and $assumeStatus.Output.Length -eq 0 -and $assumeInspection.HasHiddenBuildInputIndexFlags -and -not (Test-CheckoutBinding $expected $assumeInspection) }
+    $cases += @{ Name = 'ASSUME_UNCHANGED_BUILD_INPUT_BLOCKED'; Passed = $assumeTag -ceq 'h' -and $assumeStatus.Succeeded -and $assumeStatus.Output.Length -eq 0 -and $assumeInspection.HasHiddenBuildInputIndexFlags -and -not (Test-CheckoutBinding $expected $assumeInspection) }
     Invoke-TestGit $primary @('update-index','--no-assume-unchanged',$trackedBuildInput)
     Invoke-TestGit $primary @('checkout','--',$trackedBuildInput)
 
     Invoke-TestGit $primary @('update-index','--skip-worktree',$trackedBuildInput)
     Add-Content -LiteralPath (Join-Path $primary $trackedBuildInput) -Value '// hidden skip worktree' -Encoding utf8
     $skipStatus = Get-RepositoryGitOutput 'status --porcelain=v1 -z --untracked-files=all --ignored=matching' $primary
+    $skipTag = Get-IndexTagForPath (Get-RepositoryGitOutput 'ls-files -v -z' $primary).Output $trackedBuildInput
     $skipInspection = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
-    $cases += @{ Name = 'SKIP_WORKTREE_BUILD_INPUT_BLOCKED'; Passed = $skipStatus.Succeeded -and $skipStatus.Output.Length -eq 0 -and $skipInspection.HasHiddenBuildInputIndexFlags -and -not (Test-CheckoutBinding $expected $skipInspection) }
+    $cases += @{ Name = 'SKIP_WORKTREE_BUILD_INPUT_BLOCKED'; Passed = $skipTag -ceq 'S' -and $skipStatus.Succeeded -and $skipStatus.Output.Length -eq 0 -and $skipInspection.HasHiddenBuildInputIndexFlags -and -not (Test-CheckoutBinding $expected $skipInspection) }
+    Invoke-TestGit $primary @('update-index','--no-skip-worktree',$trackedBuildInput)
+    Invoke-TestGit $primary @('checkout','--',$trackedBuildInput)
+
+    Invoke-TestGit $primary @('update-index','--assume-unchanged',$trackedBuildInput)
+    Invoke-TestGit $primary @('update-index','--skip-worktree',$trackedBuildInput)
+    Add-Content -LiteralPath (Join-Path $primary $trackedBuildInput) -Value '// hidden combined flags' -Encoding utf8
+    $combinedStatus = Get-RepositoryGitOutput 'status --porcelain=v1 -z --untracked-files=all --ignored=matching' $primary
+    $combinedTag = Get-IndexTagForPath (Get-RepositoryGitOutput 'ls-files -v -z' $primary).Output $trackedBuildInput
+    $combinedInspection = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
+    $cases += @{ Name = 'COMBINED_ASSUME_UNCHANGED_SKIP_WORKTREE_BUILD_INPUT_BLOCKED'; Passed = $combinedTag -ceq 's' -and $combinedStatus.Succeeded -and $combinedStatus.Output.Length -eq 0 -and $combinedInspection.HasHiddenBuildInputIndexFlags -and -not (Test-CheckoutBinding $expected $combinedInspection) }
+    Invoke-TestGit $primary @('update-index','--no-assume-unchanged',$trackedBuildInput)
     Invoke-TestGit $primary @('update-index','--no-skip-worktree',$trackedBuildInput)
     Invoke-TestGit $primary @('checkout','--',$trackedBuildInput)
 
     $outsideBuildInput = 'scratch/outside.ts'
     Invoke-TestGit $primary @('update-index','--assume-unchanged',$outsideBuildInput)
-    Add-Content -LiteralPath (Join-Path $primary $outsideBuildInput) -Value '// hidden outside input' -Encoding utf8
+    Invoke-TestGit $primary @('update-index','--skip-worktree',$outsideBuildInput)
+    Add-Content -LiteralPath (Join-Path $primary $outsideBuildInput) -Value '// hidden combined outside input' -Encoding utf8
+    $outsideTag = Get-IndexTagForPath (Get-RepositoryGitOutput 'ls-files -v -z' $primary).Output $outsideBuildInput
     $outsideHiddenInspection = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
-    $cases += @{ Name = 'OUTSIDE_BUILD_INPUT_HIDDEN_FLAG_ALLOWED'; Passed = -not $outsideHiddenInspection.HasHiddenBuildInputIndexFlags -and (Test-CheckoutBinding $expected $outsideHiddenInspection) }
+    $cases += @{ Name = 'COMBINED_OUTSIDE_EFFECTIVE_INPUT_ALLOWED'; Passed = $outsideTag -ceq 's' -and -not $outsideHiddenInspection.HasHiddenBuildInputIndexFlags -and (Test-CheckoutBinding $expected $outsideHiddenInspection) }
     Invoke-TestGit $primary @('update-index','--no-assume-unchanged',$outsideBuildInput)
+    Invoke-TestGit $primary @('update-index','--no-skip-worktree',$outsideBuildInput)
     Invoke-TestGit $primary @('checkout','--',$outsideBuildInput)
 
     Add-Content -LiteralPath (Join-Path $primary 'packages/database/prisma/schema.prisma') -Value '// redirected dirty' -Encoding utf8

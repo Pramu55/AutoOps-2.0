@@ -205,9 +205,10 @@ and Unicode pathnames are evaluated as real paths rather than C-quoted display
 text. An ignored file blocks the gate when it survives `.dockerignore` and
 falls under an API or worker Dockerfile `COPY` source. An ignored path outside
 those effective inputs, or one excluded by `.dockerignore`, does not falsely
-block a candidate. The validator also rejects `assume-unchanged` and
-`skip-worktree` index entries under those effective inputs, because either bit
-can conceal a modified Docker input from normal status output. The validator
+block a candidate. The validator also rejects `assume-unchanged`,
+`skip-worktree`, and their combined index state under those effective inputs,
+because any of those states can conceal a modified Docker input from normal
+status output. The validator
 otherwise fails closed for a dirty or mismatched checkout, or missing,
 malformed, stale, or API/worker-mismatched revisions. It does not inspect
 container environments or secret files. Passing provenance and mounted-secret delivery
