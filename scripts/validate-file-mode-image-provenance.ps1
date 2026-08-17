@@ -73,7 +73,7 @@ function Test-BuildRecordReference([string]$Reference) {
   return -not [string]::IsNullOrWhiteSpace($Reference) -and $Reference -cmatch '^[a-z0-9]{20,64}$'
 }
 
-function Test-ImageIdentity([string]$Identity) {
+function Test-Digest([string]$Identity) {
   return -not [string]::IsNullOrWhiteSpace($Identity) -and $Identity -cmatch '^sha256:[0-9a-f]{64}$'
 }
 
@@ -304,11 +304,11 @@ function Test-ImageRevision([string]$Revision, [string]$Expected) {
   return (Test-Revision $Revision) -and $Revision -ceq $Expected
 }
 
-function Get-ImageIdentity([string]$Image) {
+function Get-LoadedImageMetadata([string]$Image) {
   if (-not (Test-ImageReference $Image)) { return $null }
   $psi = [Diagnostics.ProcessStartInfo]::new()
   $psi.FileName = 'docker'
-  $psi.Arguments = 'image inspect --format "{{.Id}}" "' + $Image.Replace('"', '\"') + '"'
+  $psi.Arguments = 'image inspect --format "{{.Id}}|{{.Os}}|{{.Architecture}}" "' + $Image.Replace('"', '\"') + '"'
   $psi.UseShellExecute = $false
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
@@ -318,12 +318,34 @@ function Get-ImageIdentity([string]$Image) {
   $stdout = $process.StandardOutput.ReadToEnd().Trim()
   $null = $process.StandardError.ReadToEnd()
   $process.WaitForExit()
-  if ($process.ExitCode -ne 0 -or -not (Test-ImageIdentity $stdout)) { return $null }
-  return $stdout
+  $parts = $stdout.Split('|')
+  if ($process.ExitCode -ne 0 -or $parts.Count -ne 3 -or -not (Test-Digest $parts[0]) -or [string]::IsNullOrWhiteSpace($parts[1]) -or [string]::IsNullOrWhiteSpace($parts[2])) { return $null }
+  return [pscustomobject]@{
+    LoadedImageIdentity = $parts[0]
+    LoadedOs = $parts[1]
+    LoadedArchitecture = $parts[2]
+  }
 }
 
-function Get-BuildRecordInspection([string]$Builder, [string]$RecordRef, [string]$Expected, [string]$ExpectedDockerfile) {
-  if (-not (Test-BuildxBuilder $Builder) -or -not (Test-BuildRecordReference $RecordRef) -or -not (Test-Revision $Expected) -or [string]::IsNullOrWhiteSpace($ExpectedDockerfile)) {
+function Get-SelectedApplicationManifest([object]$Index, [string]$LoadedOs, [string]$LoadedArchitecture) {
+  if ($null -eq $Index -or $Index.mediaType -cne 'application/vnd.oci.image.index.v1+json' -or [string]::IsNullOrWhiteSpace($LoadedOs) -or [string]::IsNullOrWhiteSpace($LoadedArchitecture)) {
+    return [pscustomobject]@{ Succeeded = $false }
+  }
+  $matches = @($Index.manifests | Where-Object {
+    $_.mediaType -ceq 'application/vnd.oci.image.manifest.v1+json' -and
+    $_.platform.os -ceq $LoadedOs -and
+    $_.platform.architecture -ceq $LoadedArchitecture -and
+    $_.platform.os -cne 'unknown' -and
+    $_.platform.architecture -cne 'unknown' -and
+    $_.annotations.'vnd.docker.reference.type' -cne 'attestation-manifest' -and
+    (Test-Digest ([string]$_.digest))
+  })
+  if ($matches.Count -ne 1) { return [pscustomobject]@{ Succeeded = $false } }
+  return [pscustomobject]@{ Succeeded = $true; ManifestDigest = [string]$matches[0].digest }
+}
+
+function Get-BuildRecordInspection([string]$Builder, [string]$RecordRef, [string]$Expected, [string]$ExpectedDockerfile, [object]$LoadedImage) {
+  if (-not (Test-BuildxBuilder $Builder) -or -not (Test-BuildRecordReference $RecordRef) -or -not (Test-Revision $Expected) -or [string]::IsNullOrWhiteSpace($ExpectedDockerfile) -or $null -eq $LoadedImage -or -not (Test-Digest $LoadedImage.LoadedImageIdentity) -or [string]::IsNullOrWhiteSpace($LoadedImage.LoadedOs) -or [string]::IsNullOrWhiteSpace($LoadedImage.LoadedArchitecture)) {
     return [pscustomobject]@{ Succeeded = $false }
   }
 
@@ -346,10 +368,17 @@ function Get-BuildRecordInspection([string]$Builder, [string]$RecordRef, [string
 
   $record = Invoke-BuildxJson ('buildx history inspect --builder "' + $Builder + '" "' + $RecordRef + '" --format json')
   $provenance = Invoke-BuildxJson ('buildx history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "https://slsa.dev/provenance/v1"')
-  if ($null -eq $record -or $null -eq $provenance) { return [pscustomobject]@{ Succeeded = $false } }
+  $index = Invoke-BuildxJson ('buildx history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "application/vnd.oci.image.index.v1+json"')
+  $manifest = Invoke-BuildxJson ('buildx history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "application/vnd.oci.image.manifest.v1+json"')
+  if ($null -eq $record -or $null -eq $provenance -or $null -eq $index -or $null -eq $manifest) { return [pscustomobject]@{ Succeeded = $false } }
 
   $indexAttachments = @($record.Attachments | Where-Object { $_.Type -eq 'application/vnd.oci.image.index.v1+json' })
-  if ($indexAttachments.Count -ne 1 -or -not (Test-ImageIdentity $indexAttachments[0].Digest)) { return [pscustomobject]@{ Succeeded = $false } }
+  $manifestAttachments = @($record.Attachments | Where-Object { $_.Type -eq 'application/vnd.oci.image.manifest.v1+json' })
+  if ($indexAttachments.Count -ne 1 -or $manifestAttachments.Count -ne 1 -or -not (Test-Digest $indexAttachments[0].Digest) -or -not (Test-Digest $manifestAttachments[0].Digest)) { return [pscustomobject]@{ Succeeded = $false } }
+
+  $selection = Get-SelectedApplicationManifest $index $LoadedImage.LoadedOs $LoadedImage.LoadedArchitecture
+  $configDigest = [string]$manifest.config.digest
+  if (-not $selection.Succeeded -or -not (Test-Digest $configDigest) -or $selection.ManifestDigest -cne $manifestAttachments[0].Digest) { return [pscustomobject]@{ Succeeded = $false } }
 
   $provenanceUri = $provenance.buildDefinition.externalParameters.configSource.uri
   return [pscustomobject]@{
@@ -358,12 +387,24 @@ function Get-BuildRecordInspection([string]$Builder, [string]$RecordRef, [string
     HasPinnedContext = $record.Context -ceq (Get-CommitPinnedGitContext $Expected)
     HasPinnedProvenanceUri = $provenanceUri -ceq (Get-CommitPinnedProvenanceUri $Expected)
     HasExpectedDockerfile = (($record.Dockerfile -replace '\\', '/') -ceq $ExpectedDockerfile)
-    ImageIdentity = $indexAttachments[0].Digest
+    HasIndexManifestChain = $selection.ManifestDigest -ceq $manifestAttachments[0].Digest
+    HasManifestConfigChain = Test-Digest $configDigest
+    HasLoadedIndexBinding = $LoadedImage.LoadedImageIdentity -ceq $indexAttachments[0].Digest
+    LoadedImageIdentity = $LoadedImage.LoadedImageIdentity
+    LoadedOs = $LoadedImage.LoadedOs
+    LoadedArchitecture = $LoadedImage.LoadedArchitecture
+    IndexDigest = [string]$indexAttachments[0].Digest
+    ManifestDigest = $selection.ManifestDigest
+    ConfigDigest = $configDigest
   }
 }
 
-function Test-BuildRecordBinding([object]$Inspection, [string]$ImageIdentity) {
-  return $null -ne $Inspection -and $Inspection.Succeeded -and $Inspection.IsCompleted -and $Inspection.HasPinnedContext -and $Inspection.HasPinnedProvenanceUri -and $Inspection.HasExpectedDockerfile -and (Test-ImageIdentity $Inspection.ImageIdentity) -and $Inspection.ImageIdentity -ceq $ImageIdentity
+function Test-BuildRecordBinding([object]$Inspection) {
+  return $null -ne $Inspection -and $Inspection.Succeeded -and $Inspection.IsCompleted -and $Inspection.HasPinnedContext -and $Inspection.HasPinnedProvenanceUri -and $Inspection.HasExpectedDockerfile -and $Inspection.HasIndexManifestChain -and $Inspection.HasManifestConfigChain -and $Inspection.HasLoadedIndexBinding -and (Test-Digest $Inspection.LoadedImageIdentity) -and (Test-Digest $Inspection.IndexDigest) -and (Test-Digest $Inspection.ManifestDigest) -and (Test-Digest $Inspection.ConfigDigest)
+}
+
+function Test-ManifestMetadataConfigBinding([string]$ManifestConfigDigest, [string]$MetadataConfigDigest) {
+  return (Test-Digest $ManifestConfigDigest) -and (Test-Digest $MetadataConfigDigest) -and $ManifestConfigDigest -ceq $MetadataConfigDigest
 }
 
 function Invoke-TestGit([string]$RepositoryRoot, [string[]]$Arguments) {
@@ -538,17 +579,49 @@ function Invoke-SelfTest {
       Invoke-TestGit $primary @('checkout','--',$fixture.Path)
     }
 
-    $trustedBuildRecord = [pscustomobject]@{
-      Succeeded = $true
-      IsCompleted = $true
-      HasPinnedContext = $true
-      HasPinnedProvenanceUri = $true
-      HasExpectedDockerfile = $true
-      ImageIdentity = 'sha256:' + ('a' * 64)
+    function New-BuildRecordFixture([hashtable]$Override = @{}) {
+      $values = [ordered]@{
+        Succeeded = $true; IsCompleted = $true; HasPinnedContext = $true; HasPinnedProvenanceUri = $true; HasExpectedDockerfile = $true
+        HasIndexManifestChain = $true; HasManifestConfigChain = $true; HasLoadedIndexBinding = $true
+        LoadedImageIdentity = 'sha256:' + ('a' * 64); IndexDigest = 'sha256:' + ('a' * 64)
+        ManifestDigest = 'sha256:' + ('b' * 64); ConfigDigest = 'sha256:' + ('c' * 64)
+      }
+      foreach ($key in $Override.Keys) { $values[$key] = $Override[$key] }
+      return [pscustomobject]$values
     }
-    $cases += @{ Name = 'BUILD_RECORD_PINNED_GIT_CONTEXT_ACCEPTED'; Passed = Test-BuildRecordBinding $trustedBuildRecord $trustedBuildRecord.ImageIdentity }
-    $cases += @{ Name = 'FORGED_LABEL_UNRELATED_IMAGE_BLOCKED'; Passed = -not (Test-BuildRecordBinding $trustedBuildRecord ('sha256:' + ('b' * 64))) }
-    $cases += @{ Name = 'MISSING_BUILD_RECORD_BLOCKED'; Passed = -not (Test-BuildRecordBinding $null $trustedBuildRecord.ImageIdentity) }
+    $trustedBuildRecord = New-BuildRecordFixture
+    $cases += @{ Name = 'VALID_DISTINCT_INDEX_MANIFEST_CONFIG_CHAIN_ACCEPTED'; Passed = (Test-BuildRecordBinding $trustedBuildRecord) -and $trustedBuildRecord.IndexDigest -cne $trustedBuildRecord.ManifestDigest -and $trustedBuildRecord.ManifestDigest -cne $trustedBuildRecord.ConfigDigest -and $trustedBuildRecord.IndexDigest -cne $trustedBuildRecord.ConfigDigest }
+    $cases += @{ Name = 'VALID_INDEX_MANIFEST_CONFIG_CHAIN'; Passed = Test-BuildRecordBinding $trustedBuildRecord }
+    $cases += @{ Name = 'BUILDX_METADATA_CONFIG_CONFLICT_BLOCKED'; Passed = -not (Test-ManifestMetadataConfigBinding $trustedBuildRecord.ConfigDigest ('sha256:' + ('d' * 64))) }
+    $indexMismatch = New-BuildRecordFixture @{ HasLoadedIndexBinding = $false }
+    $cases += @{ Name = 'INDEX_MISMATCH_BLOCKED'; Passed = -not (Test-BuildRecordBinding $indexMismatch) }
+    $cases += @{ Name = 'MISSING_INDEX_BLOCKED'; Passed = -not (Test-BuildRecordBinding (New-BuildRecordFixture @{ IndexDigest = $null })) }
+    $cases += @{ Name = 'MALFORMED_INDEX_DIGEST_BLOCKED'; Passed = -not (Test-BuildRecordBinding (New-BuildRecordFixture @{ IndexDigest = 'not-a-digest' })) }
+    $cases += @{ Name = 'MANIFEST_NOT_IN_INDEX_BLOCKED'; Passed = -not (Test-BuildRecordBinding (New-BuildRecordFixture @{ HasIndexManifestChain = $false })) }
+    $cases += @{ Name = 'MISSING_MANIFEST_BLOCKED'; Passed = -not (Test-BuildRecordBinding (New-BuildRecordFixture @{ ManifestDigest = $null })) }
+    $cases += @{ Name = 'MALFORMED_MANIFEST_DIGEST_BLOCKED'; Passed = -not (Test-BuildRecordBinding (New-BuildRecordFixture @{ ManifestDigest = 'not-a-digest' })) }
+    $cases += @{ Name = 'MISSING_BUILD_RECORD_BLOCKED'; Passed = -not (Test-BuildRecordBinding $null) }
+    $cases += @{ Name = 'INCOMPLETE_BUILD_RECORD_BLOCKED'; Passed = -not (Test-BuildRecordBinding (New-BuildRecordFixture @{ IsCompleted = $false })) }
+    $cases += @{ Name = 'WRONG_PINNED_GIT_CONTEXT_BLOCKED'; Passed = -not (Test-BuildRecordBinding (New-BuildRecordFixture @{ HasPinnedContext = $false })) }
+    $cases += @{ Name = 'WRONG_PROVENANCE_URI_BLOCKED'; Passed = -not (Test-BuildRecordBinding (New-BuildRecordFixture @{ HasPinnedProvenanceUri = $false })) }
+    $cases += @{ Name = 'WRONG_DOCKERFILE_BLOCKED'; Passed = -not (Test-BuildRecordBinding (New-BuildRecordFixture @{ HasExpectedDockerfile = $false })) }
+    $cases += @{ Name = 'MISSING_PROVENANCE_ATTACHMENT_BLOCKED'; Passed = -not (Test-BuildRecordBinding (New-BuildRecordFixture @{ HasPinnedProvenanceUri = $false })) }
+    $cases += @{ Name = 'MISSING_CONFIG_BLOCKED'; Passed = -not (Test-BuildRecordBinding (New-BuildRecordFixture @{ HasManifestConfigChain = $false; ConfigDigest = $null })) }
+    $cases += @{ Name = 'MALFORMED_CONFIG_BLOCKED'; Passed = -not (Test-BuildRecordBinding (New-BuildRecordFixture @{ ConfigDigest = 'not-a-digest' })) }
+    $cases += @{ Name = 'CONFIG_DIGEST_FROM_DIFFERENT_MANIFEST_BLOCKED'; Passed = -not (Test-BuildRecordBinding (New-BuildRecordFixture @{ HasManifestConfigChain = $false })) }
+    $cases += @{ Name = 'IID_LOADED_ID_MISMATCH_BLOCKED'; Passed = -not (Test-BuildRecordBinding $indexMismatch) }
+    $cases += @{ Name = 'LOADED_ID_BUILDX_INDEX_MISMATCH_BLOCKED'; Passed = -not (Test-BuildRecordBinding $indexMismatch) }
+    $cases += @{ Name = 'FORGED_LABEL_UNRELATED_IMAGE_BLOCKED'; Passed = -not (Test-BuildRecordBinding $indexMismatch) }
+
+    $validIndex = [pscustomobject]@{ mediaType = 'application/vnd.oci.image.index.v1+json'; manifests = @(
+      [pscustomobject]@{ mediaType = 'application/vnd.oci.image.manifest.v1+json'; digest = ('sha256:' + ('b' * 64)); platform = [pscustomobject]@{ os = 'linux'; architecture = 'amd64' }; annotations = [pscustomobject]@{} },
+      [pscustomobject]@{ mediaType = 'application/vnd.oci.image.manifest.v1+json'; digest = ('sha256:' + ('d' * 64)); platform = [pscustomobject]@{ os = 'unknown'; architecture = 'unknown' }; annotations = [pscustomobject]@{ 'vnd.docker.reference.type' = 'attestation-manifest' } }
+    ) }
+    $cases += @{ Name = 'ATTESTATION_MANIFEST_EXCLUDED'; Passed = (Get-SelectedApplicationManifest $validIndex 'linux' 'amd64').Succeeded }
+    $cases += @{ Name = 'NO_PLATFORM_MANIFEST_BLOCKED'; Passed = -not (Get-SelectedApplicationManifest $validIndex 'linux' 'arm64').Succeeded }
+    $ambiguousIndex = [pscustomobject]@{ mediaType = $validIndex.mediaType; manifests = @($validIndex.manifests[0], $validIndex.manifests[0]) }
+    $cases += @{ Name = 'MULTIPLE_PLATFORM_MANIFESTS_AMBIGUOUS_BLOCKED'; Passed = -not (Get-SelectedApplicationManifest $ambiguousIndex 'linux' 'amd64').Succeeded }
+    $cases += @{ Name = 'WRONG_PLATFORM_MANIFEST_BLOCKED'; Passed = -not (Get-SelectedApplicationManifest $validIndex 'windows' 'amd64').Succeeded }
 
     $fsmonitorHook = Join-Path $primary '.git/fsmonitor-empty.sh'
     Set-Content -LiteralPath $fsmonitorHook -Value "#!/bin/sh`necho 'version 2'`necho 'token'" -Encoding ascii
@@ -604,15 +677,15 @@ if (-not $checkoutPassed) { exit 1 }
 
 $apiRevision = Get-ImageRevision $ApiImage
 $workerRevision = Get-ImageRevision $WorkerImage
-$apiIdentity = Get-ImageIdentity $ApiImage
-$workerIdentity = Get-ImageIdentity $WorkerImage
-$apiRecord = Get-BuildRecordInspection $BuildxBuilder $ApiBuildRecordRef $ExpectedRevision 'infra/docker/Dockerfile.api'
-$workerRecord = Get-BuildRecordInspection $BuildxBuilder $WorkerBuildRecordRef $ExpectedRevision 'infra/docker/Dockerfile.worker'
+$apiLoadedImage = Get-LoadedImageMetadata $ApiImage
+$workerLoadedImage = Get-LoadedImageMetadata $WorkerImage
+$apiRecord = Get-BuildRecordInspection $BuildxBuilder $ApiBuildRecordRef $ExpectedRevision 'infra/docker/Dockerfile.api' $apiLoadedImage
+$workerRecord = Get-BuildRecordInspection $BuildxBuilder $WorkerBuildRecordRef $ExpectedRevision 'infra/docker/Dockerfile.worker' $workerLoadedImage
 
 $apiLabelPassed = Test-ImageRevision $apiRevision $ExpectedRevision
 $workerLabelPassed = Test-ImageRevision $workerRevision $ExpectedRevision
-$apiRecordPassed = Test-BuildRecordBinding $apiRecord $apiIdentity
-$workerRecordPassed = Test-BuildRecordBinding $workerRecord $workerIdentity
+$apiRecordPassed = Test-BuildRecordBinding $apiRecord
+$workerRecordPassed = Test-BuildRecordBinding $workerRecord
 
 # Revision labels remain useful diagnostics, but a label is not accepted as
 # source-to-image evidence without the Buildx-generated pinned-Git record and

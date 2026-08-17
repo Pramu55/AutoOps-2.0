@@ -178,11 +178,14 @@ metadata, but the preflight does not trust that caller-supplied label by itself.
 File-mode candidates are built only by the maintained candidate builder. It
 passes BuildKit a Git context pinned by both `ref` and `checksum` to the exact
 accepted revision, requests Buildx provenance, and records the Buildx build
-record reference and resulting OCI-index digest. The preflight then requires a
+record reference and distinct digest-domain evidence. The preflight requires a
 completed local Buildx record whose context and SLSA provenance URI are pinned
-to that revision and whose OCI-index attachment digest equals the exact loaded
-image identity. A label on an unrelated image therefore cannot pass after the
-checkout is restored.
+to that revision, then follows the actual Docker Desktop chain: loaded image
+identity and Buildx IID bind to the OCI index digest; the index selects exactly
+one non-attestation manifest matching the loaded image OS and architecture;
+that manifest supplies its distinct configuration digest. The validator never
+substitutes one digest domain for another. A label on an unrelated image
+therefore cannot pass after the checkout is restored.
 
 For a separately authorized activation window, build candidates from the
 accepted full Git revision, retain the non-secret build-record references
@@ -222,12 +225,13 @@ otherwise fails closed for a dirty or mismatched checkout, or missing,
 malformed, stale, or API/worker-mismatched provenance. This bounded local proof
 trusts the Docker Desktop Buildx history and local image store as administrative
 security components. If a completed build record or its provenance attachment
-is unavailable, or its digest does not match the loaded image, preflight fails
-closed. It does not inspect container environments or secret files. Passing
-provenance and mounted-secret delivery validation remains preflight only; live
-activation requires separate owner authorization. The initial M01.3 activation
-and its single rollback attempt are historical incident evidence, not
-authorization to retry activation.
+is unavailable, the index cannot be bound to the loaded image, platform
+selection is ambiguous, or a selected manifest/config is missing or malformed,
+preflight fails closed. It does not inspect container environments or secret
+files. Passing provenance and mounted-secret delivery validation remains
+preflight only; live activation requires separate owner authorization. The
+initial M01.3 activation and its single rollback attempt are historical incident
+evidence, not authorization to retry activation.
 
 The M01.3 incident established why this gate is required: the failed API image
 contained an older compiled environment schema that still required migrated JWT

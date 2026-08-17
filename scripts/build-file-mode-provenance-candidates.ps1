@@ -21,7 +21,7 @@ function Test-BuildxBuilder([string]$Builder) {
   return -not [string]::IsNullOrWhiteSpace($Builder) -and $Builder -cmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$'
 }
 
-function Test-ImageIdentity([string]$Identity) {
+function Test-Digest([string]$Identity) {
   return -not [string]::IsNullOrWhiteSpace($Identity) -and $Identity -cmatch '^sha256:[0-9a-f]{64}$'
 }
 
@@ -42,25 +42,42 @@ function Invoke-CommitPinnedCandidateBuild([string]$Name, [string]$Image, [strin
 
   $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json -ErrorAction Stop
   $fullRecordRef = [string]$metadata.'buildx.build.ref'
-  $descriptorDigest = [string]$metadata.'containerimage.descriptor'.digest
-  $iid = (Get-Content -LiteralPath $iidPath -Raw).Trim()
-  $loadedIdentity = (& docker image inspect --format '{{.Id}}' $Image).Trim()
+  $indexDigest = [string]$metadata.'containerimage.descriptor'.digest
+  $configDigest = [string]$metadata.'containerimage.config.digest'
+  $iidIdentity = (Get-Content -LiteralPath $iidPath -Raw).Trim()
+  $loadedImageIdentity = (& docker image inspect --format '{{.Id}}' $Image).Trim()
 
-  if ([string]::IsNullOrWhiteSpace($fullRecordRef) -or -not (Test-ImageIdentity $descriptorDigest) -or -not (Test-ImageIdentity $iid) -or -not (Test-ImageIdentity $loadedIdentity)) {
+  # Docker Desktop's local image store uses the OCI index identity for --load
+  # image IDs. The Buildx config digest is a distinct manifest child and must
+  # never be substituted for either of these identities.
+  if ([string]::IsNullOrWhiteSpace($fullRecordRef) -or -not (Test-Digest $indexDigest) -or -not (Test-Digest $configDigest) -or -not (Test-Digest $iidIdentity) -or -not (Test-Digest $loadedImageIdentity)) {
     throw "FILE_MODE_CANDIDATE_BUILD_METADATA_INVALID_$Name"
   }
-  if ($descriptorDigest -cne $iid -or $descriptorDigest -cne $loadedIdentity) {
-    throw "FILE_MODE_CANDIDATE_BUILD_IDENTITY_MISMATCH_$Name"
+  if ($iidIdentity -cne $loadedImageIdentity -or $indexDigest -cne $loadedImageIdentity) {
+    throw "FILE_MODE_CANDIDATE_BUILD_LOADED_INDEX_BINDING_MISMATCH_$Name"
   }
 
   $recordRef = $fullRecordRef.Split('/')[-1]
   if ([string]::IsNullOrWhiteSpace($recordRef) -or $recordRef -notmatch '^[a-z0-9]{20,64}$') {
     throw "FILE_MODE_CANDIDATE_BUILD_RECORD_INVALID_$Name"
   }
+  $manifestOutput = (& docker buildx history inspect attachment --builder $BuildxBuilder $recordRef --type application/vnd.oci.image.manifest.v1+json)
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($manifestOutput)) {
+    throw "FILE_MODE_CANDIDATE_BUILD_MANIFEST_EVIDENCE_UNAVAILABLE_$Name"
+  }
+  try { $manifest = $manifestOutput | ConvertFrom-Json -ErrorAction Stop } catch { throw "FILE_MODE_CANDIDATE_BUILD_MANIFEST_EVIDENCE_INVALID_$Name" }
+  $manifestConfigDigest = [string]$manifest.config.digest
+  if (-not (Test-Digest $manifestConfigDigest) -or $manifestConfigDigest -cne $configDigest) {
+    throw "FILE_MODE_CANDIDATE_BUILD_CONFIG_DIGEST_CONFLICT_$Name"
+  }
 
   Write-Host "$Name`_IMAGE=$Image"
   Write-Host "$Name`_BUILD_RECORD_REF=$recordRef"
-  Write-Host "$Name`_IMAGE_IDENTITY=$loadedIdentity"
+  Write-Host "$Name`_IID_IDENTITY=$iidIdentity"
+  Write-Host "$Name`_LOADED_IMAGE_IDENTITY=$loadedImageIdentity"
+  Write-Host "$Name`_INDEX_DIGEST=$indexDigest"
+  Write-Host "$Name`_CONFIG_DIGEST=$configDigest"
+  Write-Host "$Name`_METADATA_CONFIG_EQUALS_MANIFEST_CONFIG=PASS"
 }
 
 try {
