@@ -169,37 +169,45 @@ only; they do not start, stop, recreate, or activate containers.
 
 ## Image provenance preflight
 
-Mounted-secret activation must validate the API and worker image revision before
-using `--no-build`. A stale image can retain an older environment schema even
-when the repository, transfer set, and Compose model are current. The API and
-worker Dockerfiles label their build output with
-`org.opencontainers.image.revision`. Compose supplies that label from the
-non-secret `AUTOOPS_IMAGE_REVISION` build input; it defaults to `unknown` for
-ordinary local environment-mode development and is intentionally rejected by
-the file-mode preflight. The preflight also requires the requested revision to
-equal a clean local checkout `HEAD`, so a caller cannot label a different or
-dirty build context as an accepted revision.
+Mounted-secret activation must validate the API and worker image provenance
+before using `--no-build`. A stale image can retain an older environment schema
+even when the repository, transfer set, and Compose model are current. The API
+and worker Dockerfiles retain `org.opencontainers.image.revision` as useful
+metadata, but the preflight does not trust that caller-supplied label by itself.
 
-For a separately authorized activation window, set `AUTOOPS_IMAGE_REVISION` to
-the accepted full Git revision, build API and worker, then run:
+File-mode candidates are built only by the maintained candidate builder. It
+passes BuildKit a Git context pinned by both `ref` and `checksum` to the exact
+accepted revision, requests Buildx provenance, and records the Buildx build
+record reference and resulting OCI-index digest. The preflight then requires a
+completed local Buildx record whose context and SLSA provenance URI are pinned
+to that revision and whose OCI-index attachment digest equals the exact loaded
+image identity. A label on an unrelated image therefore cannot pass after the
+checkout is restored.
+
+For a separately authorized activation window, build candidates from the
+accepted full Git revision, retain the non-secret build-record references
+printed by the builder, then run:
 
 ```powershell
 $revision = (git rev-parse HEAD).Trim().ToLowerInvariant()
-if (git status --porcelain --untracked-files=all) {
-  throw 'Build a file-mode candidate only from a clean checkout.'
-}
-$env:AUTOOPS_IMAGE_REVISION = $revision
-docker compose build api worker
+.\scripts\build-file-mode-provenance-candidates.ps1 `
+  -ExpectedRevision $revision `
+  -ApiImage autoops-api:file-mode-candidate `
+  -WorkerImage autoops-worker:file-mode-candidate
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\validate-file-mode-image-provenance.ps1 `
   -ExpectedRevision $revision `
-  -ApiImage autoops-api `
-  -WorkerImage autoops-worker
+  -ApiImage autoops-api:file-mode-candidate `
+  -WorkerImage autoops-worker:file-mode-candidate `
+  -ApiBuildRecordRef <api-build-record-ref> `
+  -WorkerBuildRecordRef <worker-build-record-ref>
 ```
 
 The provenance validator invokes Git with the actual checkout root explicitly
 bound and with inherited repository-selection variables (including `GIT_DIR`,
-`GIT_WORK_TREE`, and `GIT_INDEX_FILE`) removed from its child process. It also
+`GIT_WORK_TREE`, and `GIT_INDEX_FILE`) removed from its child process. Its
+security status probe disables fsmonitor and the untracked cache for that
+command only, without changing repository or global configuration. It also
 examines ignored paths with NUL-delimited Git porcelain records, so whitespace
 and Unicode pathnames are evaluated as real paths rather than C-quoted display
 text. An ignored file blocks the gate when it survives `.dockerignore` and
@@ -207,14 +215,19 @@ falls under an API or worker Dockerfile `COPY` source. An ignored path outside
 those effective inputs, or one excluded by `.dockerignore`, does not falsely
 block a candidate. The validator also rejects `assume-unchanged`,
 `skip-worktree`, and their combined index state under those effective inputs,
-because any of those states can conceal a modified Docker input from normal
-status output. The validator
+including `.dockerignore`, `Dockerfile.api`, and `Dockerfile.worker`, because
+any of those states can conceal a modified Docker input from normal status
+output. The validator
 otherwise fails closed for a dirty or mismatched checkout, or missing,
-malformed, stale, or API/worker-mismatched revisions. It does not inspect
-container environments or secret files. Passing provenance and mounted-secret delivery
-validation remains preflight only; live activation requires separate owner
-authorization. The initial M01.3 activation and its single rollback attempt are
-historical incident evidence, not authorization to retry activation.
+malformed, stale, or API/worker-mismatched provenance. This bounded local proof
+trusts the Docker Desktop Buildx history and local image store as administrative
+security components. If a completed build record or its provenance attachment
+is unavailable, or its digest does not match the loaded image, preflight fails
+closed. It does not inspect container environments or secret files. Passing
+provenance and mounted-secret delivery validation remains preflight only; live
+activation requires separate owner authorization. The initial M01.3 activation
+and its single rollback attempt are historical incident evidence, not
+authorization to retry activation.
 
 The M01.3 incident established why this gate is required: the failed API image
 contained an older compiled environment schema that still required migrated JWT
