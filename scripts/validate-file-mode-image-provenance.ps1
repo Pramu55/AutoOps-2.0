@@ -78,7 +78,7 @@ function Test-ImageIdentity([string]$Identity) {
 }
 
 function Get-CommitPinnedGitContext([string]$Revision) {
-  return "$gitContextRepository?ref=$Revision&checksum=$Revision"
+  return "${gitContextRepository}?ref=$Revision&checksum=$Revision"
 }
 
 function Get-CommitPinnedProvenanceUri([string]$Revision) {
@@ -428,6 +428,8 @@ function Invoke-SelfTest {
     $builderParseErrors = $null
     [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'build-file-mode-provenance-candidates.ps1'), [ref]$builderTokens, [ref]$builderParseErrors)
     $cases += @{ Name = 'COMMIT_PINNED_CANDIDATE_BUILDER_SYNTAX_VALID'; Passed = $builderParseErrors.Count -eq 0 }
+    $expectedGitContext = "${gitContextRepository}?ref=$expected&checksum=$expected"
+    $cases += @{ Name = 'COMMIT_PINNED_GIT_CONTEXT_FORMAT_VALID'; Passed = (Get-CommitPinnedGitContext $expected) -ceq $expectedGitContext }
 
     Add-Content -LiteralPath (Join-Path $primary 'packages/database/prisma/schema.prisma') -Value '// dirty' -Encoding utf8
     $cases += @{ Name = 'IMAGE_PROVENANCE_DIRTY_CHECKOUT_BLOCKED'; Passed = -not (Test-CheckoutBinding $expected (Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes)) }

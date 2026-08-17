@@ -29,7 +29,7 @@ if (-not (Test-Revision $ExpectedRevision) -or -not (Test-ImageReference $ApiIma
   throw 'FILE_MODE_CANDIDATE_BUILD_ARGUMENT_INVALID'
 }
 
-$gitContext = "$gitContextRepository?ref=$ExpectedRevision&checksum=$ExpectedRevision"
+$gitContext = "${gitContextRepository}?ref=$ExpectedRevision&checksum=$ExpectedRevision"
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ('autoops-file-mode-build-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
 
