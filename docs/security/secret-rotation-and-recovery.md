@@ -1,0 +1,93 @@
+# Governed mounted-secret rotation and recovery
+
+M01.4 adds planning and validation tooling around the immutable mounted-secret
+sets produced by `prepare-mounted-secret-transfer.ps1`. It does not perform an
+activation, retag an image, or select a secret generation implicitly.
+
+## Lifecycle
+
+Each generation is an explicit, lower-case 32-hex transaction ID in the secure
+root's `sets` directory. A published generation contains exactly `.published`,
+`runtime.env`, `sensitive.env`, `jwt-access`, `jwt-refresh`, and
+`github-actions-token`. A staging sibling or any unexpected item is rejected.
+
+The governed states are `PREPARED`, `VALIDATED`, `ACTIVATION_CANDIDATE`,
+`ACTIVE`, `PREVIOUS_GOOD`, `REJECTED`, `ROLLBACK_TARGET`, and `ARCHIVED`.
+`ACTIVE` is never assigned by preparation: it requires a separately authorized
+runtime activation and successful acceptance harness result.
+
+The plan names the candidate, current-good, and optional previous-good IDs.
+There is deliberately no `latest` directory selection or mutable current
+pointer. The plan is an atomically created metadata file under the protected
+secret root's `rotation-plans` directory and contains no secret material. The
+directory must be a non-reparse path with a protected Windows ACL limited to
+the current operator, SYSTEM, and Administrators; plan reads and writes fail
+closed otherwise.
+
+## Preflight
+
+Use `scripts/prepare-secret-rotation.ps1` only after a new published generation
+has been independently prepared. It requires explicit transaction IDs,
+repository revision, immutable candidate and rollback image IDs, and positive
+mounted-secret delivery and image-provenance evidence. The preflight rejects a
+candidate equal to current/previous-good, missing sets, staging remnants,
+ineligible IDs, malformed paths, malformed plans, invalid overlays, and any
+provider-policy drift.
+
+For the `core,sensitive-env,github` deployment contract, GitHub must be
+enabled and Jenkins must be disabled. Provider allowlists are compared without
+printing their values:
+
+- organization slugs and legacy organization slugs use exact nullable ordinal
+  equality;
+- organization IDs use exact nullable ordinal equality, with one narrow
+  compatibility rule: an env-mode empty value may be absent in `runtime.env`
+  because the maintained transfer serializer omits only that empty key.
+
+`runtime.env` parsing accepts the maintained literal single-quoted values and
+unquoted boolean flags. Duplicate approved keys, malformed quotes, unsupported
+escaping, and ambiguous values fail closed.
+
+## Activation and rollback boundary
+
+The preflight produces an auditable plan with activation and rollback limits of
+one. It is not an activation authority. A future owner-authorized change window
+must bind the exact planned images, retain the rollback image identities and
+non-target/volume metadata, then run one activation. `validate-secret-rotation-runtime.ps1`
+is the maintained read-only acceptance harness for that window. It reads the
+expected images and preservation metadata from the immutable operation plan,
+rather than accepting those expectations as independent operator parameters.
+It checks image identity, health/readiness, file secret mounts, worker
+isolation, migrated environment-key absence, enablement, provider parity, and
+non-target/volume preservation. It returns a named failed gate rather than
+treating uncertainty as success.
+
+If a hard gate fails, the separately authorized rollback contract restores the
+explicit previous-good image identities and validates the legacy/previous-good
+runtime. The tooling never retries activation or rollback automatically.
+
+## Interrupted operations
+
+`inspect-secret-rotation-recovery.ps1` classifies safe metadata only. It does
+not mutate Docker or secret sets. Valid classifications are
+`NO_ACTION_REQUIRED`, `SAFE_TO_RESUME_PREFLIGHT`, `ACTIVATION_IN_PROGRESS`,
+`ROLLBACK_REQUIRED`, and `MANUAL_INTERVENTION_REQUIRED`. Exhausted budgets,
+unknown plan states, or incomplete rollback require operator intervention.
+
+## Operator checklist
+
+1. Prepare a new generation with the maintained transfer tool; do not overwrite
+   or delete historical sets.
+2. Validate the new generation and preserve current-good/previous-good IDs.
+3. Create and review a preflight plan with explicit image identities and
+   evidence. Do not activate based on timestamps or directory ordering.
+4. In a separately authorized live window, execute at most one activation and
+   use the maintained acceptance harness.
+5. On a hard failure, execute at most one explicit rollback and validate it.
+6. If interrupted, run the recovery inspector and follow its classification;
+   do not infer a safe resume path.
+
+Never display secret files, secret values, lengths, hashes, tokens, complete
+environment arrays, or complete `runtime.env`/`sensitive.env` content. FT3 is
+historical M01.3 evidence only; it is not an authority to reuse or replace any
+generation.

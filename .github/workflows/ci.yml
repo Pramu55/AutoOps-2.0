@@ -80,5 +80,8 @@ jobs:
       - name: Run synthetic transfer qualification
         run: pnpm test:mounted-secret-transfer
 
+      - name: Run secret rotation and recovery qualification
+        run: pnpm test:secret-rotation-recovery
+
       - name: Validate file-mode image provenance contract
         run: pnpm test:file-mode-image-provenance
