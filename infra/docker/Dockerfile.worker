@@ -53,8 +53,11 @@ RUN pnpm --filter @autoops/types build \
 # ─────────────────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
 
+ARG AUTOOPS_SOURCE_REVISION=unknown
 ARG OPENTOFU_VERSION=1.8.8
 ARG TERRAFORM_VERSION=1.9.8
+
+LABEL org.opencontainers.image.revision="${AUTOOPS_SOURCE_REVISION}"
 
 RUN apk add --no-cache openssl ca-certificates curl unzip ansible docker-cli helm kubectl kustomize \
  && case "$(apk --print-arch)" in \

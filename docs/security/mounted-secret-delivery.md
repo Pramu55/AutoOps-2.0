@@ -167,6 +167,79 @@ Run the validator before any controlled activation and use `docker compose
 config` with the selected explicit overlay(s). These checks render structure
 only; they do not start, stop, recreate, or activate containers.
 
+## Image provenance preflight
+
+Mounted-secret activation must validate the API and worker image provenance
+before using `--no-build`. A stale image can retain an older environment schema
+even when the repository, transfer set, and Compose model are current. The API
+and worker Dockerfiles retain `org.opencontainers.image.revision` as useful
+metadata, but the preflight does not trust that caller-supplied label by itself.
+
+File-mode candidates are built only by the maintained candidate builder. It
+passes BuildKit a Git context pinned by both `ref` and `checksum` to the exact
+accepted revision, requests Buildx provenance, and records the Buildx build
+record reference and distinct digest-domain evidence. The preflight requires a
+completed local Buildx record whose context and SLSA provenance URI are pinned
+to that revision, then follows the actual Docker Desktop chain: loaded image
+identity and Buildx IID bind to the OCI index digest; the index selects exactly
+one non-attestation manifest matching the loaded image OS and architecture;
+that manifest supplies its distinct configuration digest. The validator never
+substitutes one digest domain for another. A label on an unrelated image
+therefore cannot pass after the checkout is restored.
+
+For a separately authorized activation window, build candidates from the
+accepted full Git revision, retain the non-secret build-record references
+printed by the builder, then run:
+
+```powershell
+$revision = (git rev-parse HEAD).Trim().ToLowerInvariant()
+.\scripts\build-file-mode-provenance-candidates.ps1 `
+  -ExpectedRevision $revision `
+  -ApiImage autoops-api:file-mode-candidate `
+  -WorkerImage autoops-worker:file-mode-candidate
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\validate-file-mode-image-provenance.ps1 `
+  -ExpectedRevision $revision `
+  -ApiImage autoops-api:file-mode-candidate `
+  -WorkerImage autoops-worker:file-mode-candidate `
+  -ApiBuildRecordRef <api-build-record-ref> `
+  -WorkerBuildRecordRef <worker-build-record-ref>
+```
+
+The provenance validator invokes Git with the actual checkout root explicitly
+bound and with inherited repository-selection variables (including `GIT_DIR`,
+`GIT_WORK_TREE`, and `GIT_INDEX_FILE`) removed from its child process. Its
+security status probe disables fsmonitor and the untracked cache for that
+command only, without changing repository or global configuration. It also
+examines ignored paths with NUL-delimited Git porcelain records, so whitespace
+and Unicode pathnames are evaluated as real paths rather than C-quoted display
+text. An ignored file blocks the gate when it survives `.dockerignore` and
+falls under an API or worker Dockerfile `COPY` source. An ignored path outside
+those effective inputs, or one excluded by `.dockerignore`, does not falsely
+block a candidate. The validator also rejects `assume-unchanged`,
+`skip-worktree`, and their combined index state under those effective inputs,
+including `.dockerignore`, `Dockerfile.api`, and `Dockerfile.worker`, because
+any of those states can conceal a modified Docker input from normal status
+output. The validator
+otherwise fails closed for a dirty or mismatched checkout, or missing,
+malformed, stale, or API/worker-mismatched provenance. This bounded local proof
+trusts the Docker Desktop Buildx history and local image store as administrative
+security components. If a completed build record or its provenance attachment
+is unavailable, the index cannot be bound to the loaded image, platform
+selection is ambiguous, or a selected manifest/config is missing or malformed,
+preflight fails closed. It does not inspect container environments or secret
+files. Passing provenance and mounted-secret delivery validation remains
+preflight only; live activation requires separate owner authorization. The
+initial M01.3 activation and its single rollback attempt are historical incident
+evidence, not authorization to retry activation.
+
+The M01.3 incident established why this gate is required: the failed API image
+contained an older compiled environment schema that still required migrated JWT
+environment variables, while the accepted source and an isolated exact-head
+candidate resolved them through the typed file provider. Filesystem identity,
+mount metadata, and provider initialization were not the cause. This does not
+authorize another activation attempt.
+
 ## Audited transfer preparation
 
 `scripts/prepare-mounted-secret-transfer.ps1` is the maintained operator tool

@@ -107,6 +107,15 @@ function Test-BaseEnvironmentDriftGuard($BaseKeys, $OverlayKeys) {
   return $true
 }
 
+function Test-ProvenanceBuildArguments($Service, [string]$ExpectedRevision) {
+  $arguments = $Service.build.args
+  if ($null -eq $arguments) { return $false }
+  $properties = @($arguments.PSObject.Properties)
+  return $properties.Count -eq 1 -and
+    $null -ne $arguments.PSObject.Properties['AUTOOPS_SOURCE_REVISION'] -and
+    $arguments.AUTOOPS_SOURCE_REVISION -eq $ExpectedRevision
+}
+
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "autoops-mounted-secret-compose-test-$([guid]::NewGuid())"
 $script:composeInputEnvironment = Join-Path $temporaryRoot 'compose-input.env'
 $script:composeInputOverride = Join-Path $temporaryRoot 'compose-input-override.yml'
@@ -115,7 +124,8 @@ $variables = @(
   'AUTOOPS_SECRET_JWT_REFRESH_FILE', 'AUTOOPS_SECRET_GITHUB_ACTIONS_TOKEN_FILE',
   'AUTOOPS_SECRET_JENKINS_API_TOKEN_FILE', 'AUTOOPS_FILE_MODE_SENSITIVE_ENV_FILE', 'GITHUB_ACTIONS_ENABLED',
   'JENKINS_INTEGRATION_ENABLED', 'DATABASE_URL', 'REDIS_URL',
-  'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS', 'PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS'
+  'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS', 'PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS', 'PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS',
+  'AUTOOPS_IMAGE_REVISION'
 )
 $original = @{}
 foreach ($variable in $variables) { $original[$variable] = [Environment]::GetEnvironmentVariable($variable) }
@@ -144,6 +154,7 @@ try {
   $hostProviderSlugs = 'r6-host-override-should-not-win'
   $hostProviderAlias = 'r6-host-alias-should-not-win'
   $hostProviderIds = 'r6-host-id-should-not-win'
+  $provenanceRevision = 'a' * 40
   $composeInputValues = [ordered]@{
     POSTGRES_USER = 'synthetic'; POSTGRES_PASSWORD = 'synthetic'; POSTGRES_DB = 'synthetic'
     GRAFANA_ADMIN_PASSWORD = 'synthetic'
@@ -156,6 +167,7 @@ try {
   $env:PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_SLUGS = $hostProviderSlugs
   $env:PROVIDER_INVENTORY_ALLOWED_ORG_SLUGS = $hostProviderAlias
   $env:PROVIDER_INVENTORY_ALLOWED_ORGANIZATION_IDS = $hostProviderIds
+  $env:AUTOOPS_IMAGE_REVISION = $provenanceRevision
 
   $default = Get-ComposeModel @('docker-compose.yml')
   $core = Get-ComposeModel @('docker-compose.yml', 'docker-compose.secrets-core.yml')
@@ -221,7 +233,8 @@ try {
   Assert-Condition 'ALL_SECRET_MOUNTS_READ_ONLY' (@($allMounts | Where-Object { -not $_.read_only }).Count -eq 0)
   Assert-Condition 'COMBINED_API_MIGRATED_ENV_REMOVED' (Test-MigratedEnvironmentAbsent $combined.services.api)
   Assert-Condition 'COMBINED_WORKER_MIGRATED_ENV_REMOVED' (Test-MigratedEnvironmentAbsent $combined.services.worker)
-  Assert-Condition 'NO_SECRET_BUILD_ARGUMENTS' ($null -eq $combined.services.api.build.args -and $null -eq $combined.services.worker.build.args)
+  Assert-Condition 'NO_SECRET_BUILD_ARGUMENTS' ((Test-ProvenanceBuildArguments $combined.services.api $provenanceRevision) -and (Test-ProvenanceBuildArguments $combined.services.worker $provenanceRevision))
+  Assert-Condition 'API_AND_WORKER_BUILD_PROVENANCE_MATCH' ((Test-ProvenanceBuildArguments $combined.services.api $provenanceRevision) -and (Test-ProvenanceBuildArguments $combined.services.worker $provenanceRevision))
   Assert-Condition 'NO_RENDERED_KUBERNETES_SECRET_DATA' (-not (($combined | ConvertTo-Json -Depth 20) -match 'stringData'))
 
   & powershell -ExecutionPolicy Bypass -File scripts/validate-mounted-secret-delivery.ps1 -RunSelfTest
