@@ -43,14 +43,14 @@ function Invoke-CommitPinnedCandidateBuild([string]$Name, [string]$Image, [strin
   $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json -ErrorAction Stop
   $fullRecordRef = [string]$metadata.'buildx.build.ref'
   $indexDigest = [string]$metadata.'containerimage.descriptor'.digest
-  $configDigest = [string]$metadata.'containerimage.config.digest'
+  $metadataConfigDigest = [string]$metadata.'containerimage.config.digest'
   $iidIdentity = (Get-Content -LiteralPath $iidPath -Raw).Trim()
   $loadedImageIdentity = (& docker image inspect --format '{{.Id}}' $Image).Trim()
 
   # Docker Desktop's local image store uses the OCI index identity for --load
   # image IDs. The Buildx config digest is a distinct manifest child and must
   # never be substituted for either of these identities.
-  if ([string]::IsNullOrWhiteSpace($fullRecordRef) -or -not (Test-Digest $indexDigest) -or -not (Test-Digest $configDigest) -or -not (Test-Digest $iidIdentity) -or -not (Test-Digest $loadedImageIdentity)) {
+  if ([string]::IsNullOrWhiteSpace($fullRecordRef) -or -not (Test-Digest $indexDigest) -or -not (Test-Digest $iidIdentity) -or -not (Test-Digest $loadedImageIdentity)) {
     throw "FILE_MODE_CANDIDATE_BUILD_METADATA_INVALID_$Name"
   }
   if ($iidIdentity -cne $loadedImageIdentity -or $indexDigest -cne $loadedImageIdentity) {
@@ -67,17 +67,24 @@ function Invoke-CommitPinnedCandidateBuild([string]$Name, [string]$Image, [strin
   }
   try { $manifest = $manifestOutput | ConvertFrom-Json -ErrorAction Stop } catch { throw "FILE_MODE_CANDIDATE_BUILD_MANIFEST_EVIDENCE_INVALID_$Name" }
   $manifestConfigDigest = [string]$manifest.config.digest
-  if (-not (Test-Digest $manifestConfigDigest) -or $manifestConfigDigest -cne $configDigest) {
+  if (-not (Test-Digest $manifestConfigDigest)) {
+    throw "FILE_MODE_CANDIDATE_BUILD_MANIFEST_CONFIG_DIGEST_INVALID_$Name"
+  }
+  # Buildx metadata does not expose this optional field in every local image
+  # store.  When it is present, it must agree with the trusted manifest;
+  # otherwise the manifest attachment is the sole ConfigDigest evidence.
+  if (-not [string]::IsNullOrWhiteSpace($metadataConfigDigest) -and (-not (Test-Digest $metadataConfigDigest) -or $manifestConfigDigest -cne $metadataConfigDigest)) {
     throw "FILE_MODE_CANDIDATE_BUILD_CONFIG_DIGEST_CONFLICT_$Name"
   }
+  $metadataConfigBinding = if ([string]::IsNullOrWhiteSpace($metadataConfigDigest)) { 'NOT_AVAILABLE' } else { 'PASS' }
 
   Write-Host "$Name`_IMAGE=$Image"
   Write-Host "$Name`_BUILD_RECORD_REF=$recordRef"
   Write-Host "$Name`_IID_IDENTITY=$iidIdentity"
   Write-Host "$Name`_LOADED_IMAGE_IDENTITY=$loadedImageIdentity"
   Write-Host "$Name`_INDEX_DIGEST=$indexDigest"
-  Write-Host "$Name`_CONFIG_DIGEST=$configDigest"
-  Write-Host "$Name`_METADATA_CONFIG_EQUALS_MANIFEST_CONFIG=PASS"
+  Write-Host "$Name`_CONFIG_DIGEST=$manifestConfigDigest"
+  Write-Host "$Name`_METADATA_CONFIG_EQUALS_MANIFEST_CONFIG=$metadataConfigBinding"
 }
 
 try {
