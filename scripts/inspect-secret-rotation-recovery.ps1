@@ -2,8 +2,6 @@
 param(
   [Parameter(Mandatory, ParameterSetName = 'Inspect')][string]$TargetRoot,
   [Parameter(Mandatory, ParameterSetName = 'Inspect')][ValidatePattern('^[a-f0-9]{32}$')][string]$OperationId,
-  [Parameter(ParameterSetName = 'Inspect')][string]$ApiContainer = 'autoops-api',
-  [Parameter(ParameterSetName = 'Inspect')][string]$WorkerContainer = 'autoops-worker',
   [Parameter(Mandatory, ParameterSetName = 'SelfTest')][switch]$RunSelfTest
 )
 
@@ -15,14 +13,15 @@ function Get-RotationSyntheticObservation([bool]$ApiCandidate, [bool]$WorkerCand
   return [pscustomobject]@{ ApiCandidate = $ApiCandidate; WorkerCandidate = $WorkerCandidate; CandidateAcceptancePassed = $CandidateAcceptancePassed; RollbackAcceptancePassed = $RollbackAcceptancePassed }
 }
 
-function Get-RotationObservedRuntime([string]$TargetRoot, $Plan, [string]$ApiContainer, [string]$WorkerContainer) {
+function Get-RotationObservedRuntime([string]$TargetRoot, $Plan) {
+  $ApiContainer = $Plan.runtimeServices.api; $WorkerContainer = $Plan.runtimeServices.worker
   $api = Get-RotationContainerRuntimeMetadata $ApiContainer; $worker = Get-RotationContainerRuntimeMetadata $WorkerContainer
   $candidateApiMounts = Test-RotationMountBindingData (Get-RotationContainerMountRecords $ApiContainer) $TargetRoot $Plan.candidateGenerationId $true
   $candidateWorkerMounts = Test-RotationMountBindingData (Get-RotationContainerMountRecords $WorkerContainer) $TargetRoot $Plan.candidateGenerationId $false
   $rollbackApiMounts = Test-RotationMountBindingData (Get-RotationContainerMountRecords $ApiContainer) $TargetRoot $Plan.rollback.TargetGenerationId $true
   $rollbackWorkerMounts = Test-RotationMountBindingData (Get-RotationContainerMountRecords $WorkerContainer) $TargetRoot $Plan.rollback.TargetGenerationId $false
-  $candidateAcceptance = Invoke-RotationRuntimeAcceptanceValidator $TargetRoot $Plan.operationId 'Candidate' $ApiContainer $WorkerContainer
-  $rollbackAcceptance = Invoke-RotationRuntimeAcceptanceValidator $TargetRoot $Plan.operationId 'Rollback' $ApiContainer $WorkerContainer
+  $candidateAcceptance = Invoke-RotationRuntimeAcceptanceValidator $TargetRoot $Plan.operationId 'Candidate'
+  $rollbackAcceptance = Invoke-RotationRuntimeAcceptanceValidator $TargetRoot $Plan.operationId 'Rollback'
   return [pscustomobject]@{ ApiCandidate = $api.ImageId -ceq $Plan.apiImageId; WorkerCandidate = $worker.ImageId -ceq $Plan.workerImageId; ApiRollback = $api.ImageId -ceq $Plan.rollback.ApiImageId; WorkerRollback = $worker.ImageId -ceq $Plan.rollback.WorkerImageId; CandidateApiMountsBound = $candidateApiMounts; RollbackApiMountsBound = $rollbackApiMounts; WorkerMountsIsolated = ($candidateWorkerMounts -and $rollbackWorkerMounts); CandidateAcceptancePassed = $candidateAcceptance; RollbackAcceptancePassed = $rollbackAcceptance }
 }
 
@@ -41,7 +40,7 @@ try {
     exit 0
   }
   $state = Get-RotationOperationState $TargetRoot $OperationId
-  $observation = Get-RotationObservedRuntime $TargetRoot $state.Plan $ApiContainer $WorkerContainer
+  $observation = Get-RotationObservedRuntime $TargetRoot $state.Plan
   $classification = Get-RotationRecoveryClassification $state $observation
   [Console]::WriteLine(('RECOVERY_CLASSIFICATION ' + $classification))
   exit 0

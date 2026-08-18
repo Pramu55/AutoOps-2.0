@@ -10,9 +10,6 @@ param(
   [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$CandidateWorkerImageId,
   [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$RollbackApiImageId,
   [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$RollbackWorkerImageId,
-  [Parameter(ParameterSetName = 'Prepare')][string]$RollbackApiContainer = 'autoops-api',
-  [Parameter(ParameterSetName = 'Prepare')][string]$RollbackWorkerContainer = 'autoops-worker',
-  [Parameter(ParameterSetName = 'Prepare')][string[]]$NonTargetContainer = @('autoops-postgres', 'autoops-redis', 'autoops-web', 'autoops-nginx', 'autoops-prometheus', 'autoops-grafana'),
   [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$ApiImage,
   [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$WorkerImage,
   [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$ApiBuildRecordRef,
@@ -54,20 +51,14 @@ function Test-RotationSelfTest {
   Write-RotationResult 'ROTATION_PLAN_VALID' (($plan.status -eq 'PREPARED') -and (Test-RotationAttemptBudget $plan))
   Write-RotationResult 'ROTATION_REPEATED_OPERATION_BLOCKED' (-not (Test-RotationGenerationId 'not-a-transaction'))
   $state = [pscustomobject]@{ State = 'ACTIVATION_ATTEMPT_CONSUMED' }
-  $classification = Get-RotationRecoveryClassification $state ([pscustomobject]@{ ApiCandidate = $true; WorkerCandidate = $false; ApiRollback = $false; WorkerRollback = $false; ApiHealthy = $true; WorkerHealthy = $false; CandidateApiMountsBound = $true; RollbackApiMountsBound = $false; WorkerMountsIsolated = $true })
+  $classification = Get-RotationRecoveryClassification $state ([pscustomobject]@{ ApiCandidate = $true; WorkerCandidate = $false; ApiRollback = $false; WorkerRollback = $false; CandidateAcceptancePassed = $false; RollbackAcceptancePassed = $false; ApiHealthy = $true; WorkerHealthy = $false; CandidateApiMountsBound = $true; RollbackApiMountsBound = $false; WorkerMountsIsolated = $true })
   Write-RotationResult 'ROTATION_INTERRUPTED_RECOVERY' ($classification -eq 'ROLLBACK_REQUIRED')
   $actual = [pscustomobject]@{ ApiImageId = $plan.apiImageId; WorkerImageId = $plan.workerImageId; ApiRunning = $true; ApiHealthy = $true; ApiHealth200 = $true; ApiReady200 = $true; WorkerRunning = $true; WorkerHealthy = $true; WorkerHealth200 = $true; WorkerReady200 = $true; SecretProviderMode = 'file'; SecretProviderStatus = 'READY'; ApiRequiredFileMounts = $true; ApiJenkinsMount = $false; WorkerApplicationSecretMount = $false; ApiMigratedEnvironmentAbsent = $true; WorkerMigratedEnvironmentAbsent = $true; GitHubActionsEnabled = $true; JenkinsIntegrationDisabled = $true; ApiProviderEquivalent = $true; WorkerProviderEquivalent = $true; NonTargetContainerIdsPreserved = $true; VolumeInventoryPreserved = $true }
   Write-RotationResult 'ROTATION_RUNTIME_ACCEPTANCE' (Test-RotationRuntimeAcceptanceData $actual ([pscustomobject]@{ ApiImageId = $plan.apiImageId; WorkerImageId = $plan.workerImageId })).Passed
 }
 
 function Invoke-RotationEvidenceCommand([string]$File, [string[]]$Arguments, [hashtable]$Environment, [string]$FailureCode) {
-  $psi = [Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = 'powershell'; $psi.UseShellExecute = $false
-  $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-  foreach ($argument in @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $File) + $Arguments) { $null = $psi.ArgumentList.Add($argument) }
-  foreach ($entry in $Environment.GetEnumerator()) { $psi.Environment[$entry.Key] = $entry.Value }
-  $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
-  if (-not $process.Start()) { Stop-Rotation $FailureCode }
+  $process = Start-RotationProcess 'powershell' (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $File) + $Arguments) $FailureCode $Environment
   # Maintained validators may handle sensitive material internally. Their
   # diagnostics remain redirected and are never surfaced by rotation preflight.
   $null = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
@@ -76,11 +67,7 @@ function Invoke-RotationEvidenceCommand([string]$File, [string[]]$Arguments, [ha
 
 function Get-RotationLocalImageId([string]$ImageReference) {
   if ([string]::IsNullOrWhiteSpace($ImageReference) -or $ImageReference -match '[\s"'']') { Stop-Rotation 'IMAGE_REFERENCE_INVALID' }
-  $psi = [Diagnostics.ProcessStartInfo]::new(); $psi.FileName = 'docker'; $psi.UseShellExecute = $false
-  $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-  foreach ($argument in @('image', 'inspect', '--format', '{{.Id}}', $ImageReference)) { $null = $psi.ArgumentList.Add($argument) }
-  $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
-  if (-not $process.Start()) { Stop-Rotation 'IMAGE_INSPECTION_FAILED' }
+  $process = Start-RotationProcess 'docker' @('image', 'inspect', '--format', '{{.Id}}', $ImageReference) 'IMAGE_INSPECTION_FAILED'
   $value = $process.StandardOutput.ReadToEnd().Trim(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -ne 0 -or -not (Test-RotationSha256 $value)) { Stop-Rotation 'IMAGE_INSPECTION_FAILED' }
   return $value
@@ -88,11 +75,7 @@ function Get-RotationLocalImageId([string]$ImageReference) {
 
 function Get-RotationContainerMetadata([string]$Container) {
   if ($Container -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*$') { Stop-Rotation 'ROLLBACK_CONTAINER_INVALID' }
-  $psi = [Diagnostics.ProcessStartInfo]::new(); $psi.FileName = 'docker'; $psi.UseShellExecute = $false
-  $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-  foreach ($argument in @('inspect', '--format', '{{.Id}}|{{.Image}}|{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}},{{end}}{{end}}', $Container)) { $null = $psi.ArgumentList.Add($argument) }
-  $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
-  if (-not $process.Start()) { Stop-Rotation 'ROLLBACK_CONTAINER_INSPECTION_FAILED' }
+  $process = Start-RotationProcess 'docker' @('inspect', '--format', '{{.Id}}|{{.Image}}|{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}},{{end}}{{end}}', $Container) 'ROLLBACK_CONTAINER_INSPECTION_FAILED'
   $line = $process.StandardOutput.ReadToEnd().Trim(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -ne 0) { Stop-Rotation 'ROLLBACK_CONTAINER_INSPECTION_FAILED' }
   $parts = $line.Split('|', 3)
@@ -133,13 +116,13 @@ try {
   $currentConfiguration = Get-RotationRuntimeConfiguration (Join-Path $currentPath 'runtime.env')
   if (-not (Test-RotationEnablementContract $candidateConfiguration $overlays)) { Stop-Rotation 'CANDIDATE_ENABLEMENT_CONTRACT_INVALID' }
   if (-not (Test-RotationProviderSemanticEquivalence $currentConfiguration $candidateConfiguration)) { Stop-Rotation 'CANDIDATE_PROVIDER_CONFIGURATION_DRIFT' }
-  $rollbackApi = Get-RotationContainerMetadata $RollbackApiContainer
-  $rollbackWorker = Get-RotationContainerMetadata $RollbackWorkerContainer
+  $rollbackApi = Get-RotationContainerMetadata $script:RotationRuntimeServices.api
+  $rollbackWorker = Get-RotationContainerMetadata $script:RotationRuntimeServices.worker
   if ($rollbackApi.ImageId -cne $RollbackApiImageId -or $rollbackWorker.ImageId -cne $RollbackWorkerImageId) { Stop-Rotation 'ROLLBACK_IMAGE_IDENTITY_MISMATCH' }
   $nonTargetIds = [ordered]@{}
   $volumes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
   foreach ($volume in @($rollbackApi.Volumes + $rollbackWorker.Volumes)) { $null = $volumes.Add($volume) }
-  foreach ($container in $NonTargetContainer) {
+  foreach ($container in $script:RotationNonTargetContainers) {
     $metadata = Get-RotationContainerMetadata $container
     $nonTargetIds[$container] = $metadata.ContainerId
     foreach ($volume in $metadata.Volumes) { $null = $volumes.Add($volume) }

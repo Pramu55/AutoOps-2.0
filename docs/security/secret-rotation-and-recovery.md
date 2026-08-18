@@ -92,6 +92,16 @@ on the supported Docker Desktop host. A translated VM/Posix source form is not
 treated as equivalent to an expected Windows generation path; it fails closed
 until a separately reviewed canonical mapping can prove exact source identity.
 
+Acceptance evidence is authored only by the confirmation finalizer after the
+maintained validator succeeds; the shared rotation module contains no
+acceptance-writing primitive. Plans bind `autoops-api`/`autoops-worker` and the
+complete base Compose non-target inventory, so callers cannot substitute decoy
+containers or shrink the preservation scope. Generation-root sources are
+checked at every destination, not only at named secret targets. Security JSON
+records reject duplicate keys recursively before deserialization. An
+`ACTIVATION_FAILED` marker authorizes rollback only for a conclusive known
+candidate/rollback observation; restored and unknown states fail closed.
+
 If a hard gate fails, the separately authorized rollback contract restores the
 explicit previous-good image identities and validates the legacy/previous-good
 runtime. The tooling never retries activation or rollback automatically.

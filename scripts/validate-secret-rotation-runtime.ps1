@@ -3,8 +3,6 @@ param(
   [Parameter(Mandatory, ParameterSetName = 'Validate')][string]$TargetRoot,
   [Parameter(Mandatory, ParameterSetName = 'Validate')][ValidatePattern('^[a-f0-9]{32}$')][string]$OperationId,
   [Parameter(ParameterSetName = 'Validate')][ValidateSet('Candidate', 'Rollback')][string]$Mode = 'Candidate',
-  [Parameter(ParameterSetName = 'Validate')][string]$ApiContainer = 'autoops-api',
-  [Parameter(ParameterSetName = 'Validate')][string]$WorkerContainer = 'autoops-worker',
   [Parameter(Mandatory, ParameterSetName = 'SelfTest')][switch]$RunSelfTest
 )
 
@@ -13,12 +11,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'secret-rotation-common.ps1')
 
 function Invoke-RotationDocker([string[]]$Arguments, [string]$FailureCode) {
-  $psi = [Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = 'docker'; $psi.UseShellExecute = $false
-  $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-  foreach ($argument in $Arguments) { $null = $psi.ArgumentList.Add($argument) }
-  $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
-  if (-not $process.Start()) { Stop-Rotation $FailureCode }
+  $process = Start-RotationProcess 'docker' $Arguments $FailureCode
   $stdout = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -ne 0) { Stop-Rotation $FailureCode }
   return $stdout
@@ -46,11 +39,7 @@ function Get-RotationEnvironmentValue([string]$Container, [string]$Key) {
   Assert-RotationContainerName $Container
   if ($Key -notin @($script:RotationProviderKeys + $script:RotationFlagKeys)) { Stop-Rotation 'ENVIRONMENT_KEY_INVALID' }
   $script = 'if [ "${' + $Key + '+x}" ]; then printf %s "${' + $Key + '}"; else exit 3; fi'
-  $psi = [Diagnostics.ProcessStartInfo]::new(); $psi.FileName = 'docker'; $psi.UseShellExecute = $false
-  $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-  foreach ($argument in @('exec', $Container, 'sh', '-c', $script)) { $null = $psi.ArgumentList.Add($argument) }
-  $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
-  if (-not $process.Start()) { Stop-Rotation 'ENVIRONMENT_INSPECTION_FAILED' }
+  $process = Start-RotationProcess 'docker' @('exec', $Container, 'sh', '-c', $script) 'ENVIRONMENT_INSPECTION_FAILED'
   $value = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -eq 3) { return [pscustomobject]@{ Present = $false; Value = $null } }
   if ($process.ExitCode -ne 0) { Stop-Rotation 'ENVIRONMENT_INSPECTION_FAILED' }
@@ -103,6 +92,7 @@ function Test-RotationRuntimeSelfTest {
 try {
   if ($RunSelfTest) { Test-RotationRuntimeSelfTest; exit 0 }
   $plan = Read-RotationPlan $TargetRoot $OperationId
+  $ApiContainer = $plan.runtimeServices.api; $WorkerContainer = $plan.runtimeServices.worker
   $expectedGeneration = if ($Mode -eq 'Candidate') { $plan.candidateGenerationId } else { $plan.rollback.TargetGenerationId }
   $expectedApiImage = if ($Mode -eq 'Candidate') { $plan.apiImageId } else { $plan.rollback.ApiImageId }
   $expectedWorkerImage = if ($Mode -eq 'Candidate') { $plan.workerImageId } else { $plan.rollback.WorkerImageId }
