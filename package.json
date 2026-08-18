@@ -29,6 +29,7 @@
     "test:mounted-secret-delivery": "powershell -ExecutionPolicy Bypass -File scripts/test-mounted-secret-delivery.ps1",
     "test:mounted-secret-transfer": "powershell -ExecutionPolicy Bypass -File scripts/test-mounted-secret-transfer.ps1",
     "test:secret-rotation-recovery": "powershell -ExecutionPolicy Bypass -File scripts/test-secret-rotation-recovery.ps1",
+    "test:secret-rotation-operation-state": "powershell -ExecutionPolicy Bypass -File scripts/update-secret-rotation-operation-state.ps1 -RunSelfTest",
     "test:file-mode-image-provenance": "powershell -ExecutionPolicy Bypass -File scripts/validate-file-mode-image-provenance.ps1 -RunSelfTest",
     "check:container-hardening": "node scripts/validate-container-hardening.mjs",
     "check:terraform-foundation": "node scripts/validate-terraform-foundation.mjs",

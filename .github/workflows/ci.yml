@@ -83,5 +83,8 @@ jobs:
       - name: Run secret rotation and recovery qualification
         run: pnpm test:secret-rotation-recovery
 
+      - name: Run secret rotation operation-state qualification
+        run: pnpm test:secret-rotation-operation-state
+
       - name: Validate file-mode image provenance contract
         run: pnpm test:file-mode-image-provenance

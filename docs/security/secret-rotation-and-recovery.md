@@ -11,10 +11,12 @@ root's `sets` directory. A published generation contains exactly `.published`,
 `runtime.env`, `sensitive.env`, `jwt-access`, `jwt-refresh`, and
 `github-actions-token`. A staging sibling or any unexpected item is rejected.
 
-The governed states are `PREPARED`, `VALIDATED`, `ACTIVATION_CANDIDATE`,
-`ACTIVE`, `PREVIOUS_GOOD`, `REJECTED`, `ROLLBACK_TARGET`, and `ARCHIVED`.
-`ACTIVE` is never assigned by preparation: it requires a separately authorized
-runtime activation and successful acceptance harness result.
+The immutable plan is always `PREPARED`. Durable operation evidence has the
+strict transition sequence `PREPARED` → `ACTIVATION_ATTEMPT_CONSUMED` → either
+`ACTIVE_ACCEPTED` or `ACTIVATION_FAILED` → `ROLLBACK_ATTEMPT_CONSUMED` →
+`ROLLED_BACK`. A `MANUAL_INTERVENTION_REQUIRED` marker is terminal. Each record
+is create-new, plan-SHA-256-bound non-secret metadata under
+`rotation-operations/<operation-id>`; a transition cannot be replayed.
 
 The plan names the candidate, current-good, and optional previous-good IDs.
 There is deliberately no `latest` directory selection or mutable current
@@ -54,13 +56,22 @@ The preflight produces an auditable plan with activation and rollback limits of
 one. It is not an activation authority. A future owner-authorized change window
 must bind the exact planned images, retain the rollback image identities and
 non-target/volume metadata, then run one activation. `validate-secret-rotation-runtime.ps1`
-is the maintained read-only acceptance harness for that window. It reads the
+is the maintained read-only acceptance harness for that window. It supports
+explicit `Candidate` and `Rollback` modes and reads the
 expected images and preservation metadata from the immutable operation plan,
 rather than accepting those expectations as independent operator parameters.
-It checks image identity, health/readiness, file secret mounts, worker
-isolation, migrated environment-key absence, enablement, provider parity, and
+It checks image identity, health/readiness, exact one-per-target read-only file
+mount source binding to the planned generation, worker isolation, migrated
+environment-key absence using an exit-code-only presence probe, enablement, provider parity, and
 non-target/volume preservation. It returns a named failed gate rather than
 treating uncertainty as success.
+
+Immediately before an authorized live action, the operator uses
+`update-secret-rotation-operation-state.ps1` to atomically consume the matching
+attempt marker. The script cannot overwrite an existing marker or advance an
+invalid transition. Recovery inspection derives its classification from the
+immutable plan, those durable records, and safe Docker runtime metadata; it
+never accepts a caller-provided runtime classification.
 
 If a hard gate fails, the separately authorized rollback contract restores the
 explicit previous-good image identities and validates the legacy/previous-good

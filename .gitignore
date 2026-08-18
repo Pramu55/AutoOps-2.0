@@ -35,6 +35,7 @@ credentials
 !scripts/prepare-secret-rotation.ps1
 !scripts/validate-secret-rotation-runtime.ps1
 !scripts/inspect-secret-rotation-recovery.ps1
+!scripts/update-secret-rotation-operation-state.ps1
 !scripts/test-secret-rotation-recovery.ps1
 !docs/security/secret-rotation-and-recovery.md
 

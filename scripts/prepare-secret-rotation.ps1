@@ -53,8 +53,8 @@ function Test-RotationSelfTest {
   $plan = New-RotationPlanObject ('a' * 32) ('b' * 32) ('c' * 32) ('d' * 32) ('e' * 40) ('sha256:' + ('1' * 64)) ('sha256:' + ('2' * 64)) @('core', 'sensitive-env', 'github') @{ TargetGenerationId = 'c' * 32; ApiImageId = 'sha256:' + ('3' * 64); WorkerImageId = 'sha256:' + ('4' * 64); ExpectedRuntimeMode = 'file'; ExpectedHealthEndpoints = @('/health', '/ready', '/healthz', '/readyz'); NonTargetContainerIds = @{}; VolumeInventory = @() }
   Write-RotationResult 'ROTATION_PLAN_VALID' (($plan.status -eq 'PREPARED') -and (Test-RotationAttemptBudget $plan))
   Write-RotationResult 'ROTATION_REPEATED_OPERATION_BLOCKED' (-not (Test-RotationGenerationId 'not-a-transaction'))
-  $plan.status = 'ACTIVATION_CANDIDATE'; $plan.activationAttempts = 1
-  $classification = Get-RotationRecoveryClassification $plan ([pscustomobject]@{ ApiCandidate = $true; WorkerCandidate = $false; ApiHealthy = $true; WorkerHealthy = $false })
+  $state = [pscustomobject]@{ State = 'ACTIVATION_ATTEMPT_CONSUMED' }
+  $classification = Get-RotationRecoveryClassification $state ([pscustomobject]@{ ApiCandidate = $true; WorkerCandidate = $false; ApiRollback = $false; WorkerRollback = $false; ApiHealthy = $true; WorkerHealthy = $false; CandidateApiMountsBound = $true; RollbackApiMountsBound = $false; WorkerMountsIsolated = $true })
   Write-RotationResult 'ROTATION_INTERRUPTED_RECOVERY' ($classification -eq 'ROLLBACK_REQUIRED')
   $actual = [pscustomobject]@{ ApiImageId = $plan.apiImageId; WorkerImageId = $plan.workerImageId; ApiRunning = $true; ApiHealthy = $true; ApiHealth200 = $true; ApiReady200 = $true; WorkerRunning = $true; WorkerHealthy = $true; WorkerHealth200 = $true; WorkerReady200 = $true; SecretProviderMode = 'file'; SecretProviderStatus = 'READY'; ApiRequiredFileMounts = $true; ApiJenkinsMount = $false; WorkerApplicationSecretMount = $false; ApiMigratedEnvironmentAbsent = $true; WorkerMigratedEnvironmentAbsent = $true; GitHubActionsEnabled = $true; JenkinsIntegrationDisabled = $true; ApiProviderEquivalent = $true; WorkerProviderEquivalent = $true; NonTargetContainerIdsPreserved = $true; VolumeInventoryPreserved = $true }
   Write-RotationResult 'ROTATION_RUNTIME_ACCEPTANCE' (Test-RotationRuntimeAcceptanceData $actual ([pscustomobject]@{ ApiImageId = $plan.apiImageId; WorkerImageId = $plan.workerImageId })).Passed
@@ -147,6 +147,7 @@ try {
   $rollback = @{ TargetGenerationId = $CurrentGoodGenerationId; ApiImageId = $RollbackApiImageId; WorkerImageId = $RollbackWorkerImageId; ExpectedRuntimeMode = 'file'; ExpectedHealthEndpoints = @('/health', '/ready', '/healthz', '/readyz'); NonTargetContainerIds = $nonTargetIds; VolumeInventory = @($volumes | Sort-Object) }
   $plan = New-RotationPlanObject $OperationId $CandidateGenerationId $CurrentGoodGenerationId $PreviousGoodGenerationId $RepositoryRevision $CandidateApiImageId $CandidateWorkerImageId $overlays $rollback
   $null = Write-RotationPlanAtomically $TargetRoot $plan
+  Initialize-RotationOperation $TargetRoot $OperationId
   [Console]::WriteLine('ROTATION_PREFLIGHT PASS')
   [Console]::WriteLine('ROTATION_PLAN_STATUS PREPARED')
   [Console]::WriteLine('ROTATION_PLAN_CREATED YES')
