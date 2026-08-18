@@ -16,7 +16,11 @@ strict transition sequence `PREPARED` → `ACTIVATION_ATTEMPT_CONSUMED` → eith
 `ACTIVE_ACCEPTED` or `ACTIVATION_FAILED` → `ROLLBACK_ATTEMPT_CONSUMED` →
 `ROLLED_BACK`. A `MANUAL_INTERVENTION_REQUIRED` marker is terminal. Each record
 is create-new, plan-SHA-256-bound non-secret metadata under
-`rotation-operations/<operation-id>`; a transition cannot be replayed.
+`rotation-operations/<operation-id>`; a transition cannot be replayed. An
+accepted transition additionally requires a create-new, plan-bound acceptance
+evidence record. The ordinary transition tool can consume only intent,
+failure, rollback-intent, and manual-intervention markers; it cannot assert
+acceptance.
 
 The plan names the candidate, current-good, and optional previous-good IDs.
 There is deliberately no `latest` directory selection or mutable current
@@ -69,9 +73,24 @@ treating uncertainty as success.
 Immediately before an authorized live action, the operator uses
 `update-secret-rotation-operation-state.ps1` to atomically consume the matching
 attempt marker. The script cannot overwrite an existing marker or advance an
-invalid transition. Recovery inspection derives its classification from the
-immutable plan, those durable records, and safe Docker runtime metadata; it
-never accepts a caller-provided runtime classification.
+invalid transition. After the maintained validator has passed, only
+`confirm-secret-rotation-runtime.ps1` may append the typed acceptance evidence
+and corresponding accepted marker. It re-reads the immutable plan/state and
+runs `validate-secret-rotation-runtime.ps1` itself; a caller cannot substitute
+a claimed acceptance result.
+
+Recovery inspection calls the same maintained validator in candidate and
+rollback modes. `PREPARED` may resume only when the complete current-good
+rollback acceptance passes. `ACTIVE_ACCEPTED` and `ROLLED_BACK` produce
+`NO_ACTION_REQUIRED` only when their corresponding complete validator result
+passes; unknown state, stale images, incomplete mounts, unhealthy services,
+provider drift, or migrated secret environment-key presence require manual
+intervention. It never accepts a caller-provided runtime classification.
+
+Mounted secret-source comparison is Windows-native canonical path comparison
+on the supported Docker Desktop host. A translated VM/Posix source form is not
+treated as equivalent to an expected Windows generation path; it fails closed
+until a separately reviewed canonical mapping can prove exact source identity.
 
 If a hard gate fails, the separately authorized rollback contract restores the
 explicit previous-good image identities and validates the legacy/previous-good
@@ -97,6 +116,12 @@ unknown plan states, or incomplete rollback require operator intervention.
 5. On a hard failure, execute at most one explicit rollback and validate it.
 6. If interrupted, run the recovery inspector and follow its classification;
    do not infer a safe resume path.
+
+`SourceMode Runtime` transfer preparation is generation rollover: it captures
+the current logical values in the maintained tool's process memory and writes a
+new immutable generation. It is not cryptographic secret-value rotation. M01.4
+does not manufacture new JWT or provider credentials; a future true value
+rotation needs a separately approved credential-source and rotation design.
 
 Never display secret files, secret values, lengths, hashes, tokens, complete
 environment arrays, or complete `runtime.env`/`sensitive.env` content. FT3 is

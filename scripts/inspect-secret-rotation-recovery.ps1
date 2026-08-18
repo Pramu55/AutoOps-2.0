@@ -11,8 +11,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'secret-rotation-common.ps1')
 
-function Get-RotationSyntheticObservation([bool]$ApiCandidate, [bool]$WorkerCandidate, [bool]$ApiHealthy, [bool]$WorkerHealthy) {
-  return [pscustomobject]@{ ApiCandidate = $ApiCandidate; WorkerCandidate = $WorkerCandidate; ApiRollback = $false; WorkerRollback = $false; ApiHealthy = $ApiHealthy; WorkerHealthy = $WorkerHealthy; CandidateApiMountsBound = $true; RollbackApiMountsBound = $true; WorkerMountsIsolated = $true }
+function Get-RotationSyntheticObservation([bool]$ApiCandidate, [bool]$WorkerCandidate, [bool]$CandidateAcceptancePassed, [bool]$RollbackAcceptancePassed) {
+  return [pscustomobject]@{ ApiCandidate = $ApiCandidate; WorkerCandidate = $WorkerCandidate; CandidateAcceptancePassed = $CandidateAcceptancePassed; RollbackAcceptancePassed = $RollbackAcceptancePassed }
 }
 
 function Get-RotationObservedRuntime([string]$TargetRoot, $Plan, [string]$ApiContainer, [string]$WorkerContainer) {
@@ -21,18 +21,20 @@ function Get-RotationObservedRuntime([string]$TargetRoot, $Plan, [string]$ApiCon
   $candidateWorkerMounts = Test-RotationMountBindingData (Get-RotationContainerMountRecords $WorkerContainer) $TargetRoot $Plan.candidateGenerationId $false
   $rollbackApiMounts = Test-RotationMountBindingData (Get-RotationContainerMountRecords $ApiContainer) $TargetRoot $Plan.rollback.TargetGenerationId $true
   $rollbackWorkerMounts = Test-RotationMountBindingData (Get-RotationContainerMountRecords $WorkerContainer) $TargetRoot $Plan.rollback.TargetGenerationId $false
-  return [pscustomobject]@{ ApiCandidate = $api.ImageId -ceq $Plan.apiImageId; WorkerCandidate = $worker.ImageId -ceq $Plan.workerImageId; ApiRollback = $api.ImageId -ceq $Plan.rollback.ApiImageId; WorkerRollback = $worker.ImageId -ceq $Plan.rollback.WorkerImageId; ApiHealthy = ($api.Running -and $api.Healthy); WorkerHealthy = ($worker.Running -and $worker.Healthy); CandidateApiMountsBound = $candidateApiMounts; RollbackApiMountsBound = $rollbackApiMounts; WorkerMountsIsolated = ($candidateWorkerMounts -and $rollbackWorkerMounts) }
+  $candidateAcceptance = Invoke-RotationRuntimeAcceptanceValidator $TargetRoot $Plan.operationId 'Candidate' $ApiContainer $WorkerContainer
+  $rollbackAcceptance = Invoke-RotationRuntimeAcceptanceValidator $TargetRoot $Plan.operationId 'Rollback' $ApiContainer $WorkerContainer
+  return [pscustomobject]@{ ApiCandidate = $api.ImageId -ceq $Plan.apiImageId; WorkerCandidate = $worker.ImageId -ceq $Plan.workerImageId; ApiRollback = $api.ImageId -ceq $Plan.rollback.ApiImageId; WorkerRollback = $worker.ImageId -ceq $Plan.rollback.WorkerImageId; CandidateApiMountsBound = $candidateApiMounts; RollbackApiMountsBound = $rollbackApiMounts; WorkerMountsIsolated = ($candidateWorkerMounts -and $rollbackWorkerMounts); CandidateAcceptancePassed = $candidateAcceptance; RollbackAcceptancePassed = $rollbackAcceptance }
 }
 
 try {
   if ($RunSelfTest) {
     $state = [pscustomobject]@{ State = 'PREPARED' }
-    if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $false $false $false $false)) -ne 'SAFE_TO_RESUME_PREFLIGHT') { Stop-Rotation 'RECOVERY_SELF_TEST_PREPARED' }
+    if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $false $false $false $true)) -ne 'SAFE_TO_RESUME_PREFLIGHT') { Stop-Rotation 'RECOVERY_SELF_TEST_PREPARED' }
     $state.State = 'ACTIVATION_ATTEMPT_CONSUMED'
-    if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $true $false $true $false)) -ne 'ROLLBACK_REQUIRED') { Stop-Rotation 'RECOVERY_SELF_TEST_PARTIAL' }
-    if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $true $true $true $true)) -ne 'ACTIVATION_IN_PROGRESS') { Stop-Rotation 'RECOVERY_SELF_TEST_ACTIVE' }
+    if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $true $false $false $false)) -ne 'ROLLBACK_REQUIRED') { Stop-Rotation 'RECOVERY_SELF_TEST_PARTIAL' }
+    if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $true $true $true $false)) -ne 'ACTIVATION_IN_PROGRESS') { Stop-Rotation 'RECOVERY_SELF_TEST_ACTIVE' }
     $state.State = 'ROLLED_BACK'
-    if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $false $false $true $true)) -ne 'MANUAL_INTERVENTION_REQUIRED') { Stop-Rotation 'RECOVERY_SELF_TEST_FAIL_CLOSED' }
+    if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $false $false $false $false)) -ne 'MANUAL_INTERVENTION_REQUIRED') { Stop-Rotation 'RECOVERY_SELF_TEST_FAIL_CLOSED' }
     [Console]::WriteLine('RECOVERY_OBSERVATION_SOURCE PLAN_BOUND_REAL_RUNTIME_METADATA')
     [Console]::WriteLine('CALLER_RUNTIME_CLASSIFICATION_AUTHORITY NO')
     [Console]::WriteLine('RECOVERY_SELF_TEST PASS')

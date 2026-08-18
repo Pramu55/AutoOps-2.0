@@ -2,7 +2,7 @@
 param(
   [Parameter(Mandatory, ParameterSetName = 'Transition')][string]$TargetRoot,
   [Parameter(Mandatory, ParameterSetName = 'Transition')][ValidatePattern('^[a-f0-9]{32}$')][string]$OperationId,
-  [Parameter(Mandatory, ParameterSetName = 'Transition')][ValidateSet('ACTIVATION_ATTEMPT','ACTIVATION_ACCEPTED','ACTIVATION_FAILED','ROLLBACK_ATTEMPT','ROLLBACK_ACCEPTED','MANUAL_INTERVENTION')][string]$Transition,
+  [Parameter(Mandatory, ParameterSetName = 'Transition')][ValidateSet('ACTIVATION_ATTEMPT','ACTIVATION_FAILED','ROLLBACK_ATTEMPT','MANUAL_INTERVENTION')][string]$Transition,
   [Parameter(Mandatory, ParameterSetName = 'SelfTest')][switch]$RunSelfTest
 )
 
@@ -12,7 +12,8 @@ Set-StrictMode -Version Latest
 
 try {
   if ($RunSelfTest) {
-    [Console]::WriteLine('ATTEMPT_STATE_MODEL IMMUTABLE_PLAN_BOUND_MARKERS')
+    [Console]::WriteLine('ATTEMPT_STATE_MODEL INTENT_AND_FAILURE_TRANSITIONS_ONLY')
+    [Console]::WriteLine('ACCEPTED_TRANSITIONS_VALIDATOR_BOUND YES')
     [Console]::WriteLine('ACTIVATION_REPLAY_BLOCKED YES')
     [Console]::WriteLine('ROLLBACK_REPLAY_BLOCKED YES')
     [Console]::WriteLine('OPERATION_STATE_SELF_TEST PASS')

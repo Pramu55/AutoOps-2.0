@@ -1,5 +1,7 @@
 Set-StrictMode -Version Latest
 
+$script:RotationModuleRoot = $PSScriptRoot
+
 # Shared, non-secret primitives for M01.4 rotation planning, acceptance, and
 # recovery.  This file intentionally contains no Compose mutation command.
 
@@ -480,12 +482,17 @@ function Get-RotationOperationState([string]$TargetRoot, [string]$OperationId, [
   # that an activation has not been attempted.
   if (-not (Test-Path -LiteralPath $operationRoot -PathType Container)) { Stop-Rotation 'ROTATION_OPERATION_RECORD_INVALID' }
   Assert-RotationNoReparse $operationRoot 'ROTATION_OPERATION_REPARSE_PATH'; if (-not $AllowSyntheticTestPermissions) { Assert-RotationOperationDirectorySecurity $operationRoot }
-  $allowed = @('operation-created.json','activation-attempt.json','activation-accepted.json','activation-failed.json','rollback-attempt.json','rollback-accepted.json','manual-intervention.json')
+  $allowed = @('operation-created.json','activation-attempt.json','candidate-acceptance.json','activation-accepted.json','activation-failed.json','rollback-attempt.json','rollback-acceptance.json','rollback-accepted.json','manual-intervention.json')
   $items = @(Get-ChildItem -Force -LiteralPath $operationRoot); foreach ($item in $items) { if ($item.PSIsContainer -or $item.Name -notin $allowed -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { Stop-Rotation 'ROTATION_OPERATION_RECORD_INVALID' } }
   $planIdentity = Get-RotationPlanIdentity $TargetRoot $OperationId
   $recordRequired = @('schemaVersion','operationId','planIdentity','transition','createdAtUtc')
   $expectedTransitionByRecord = @{ 'operation-created.json' = 'OPERATION_CREATED'; 'activation-attempt.json' = 'ACTIVATION_ATTEMPT'; 'activation-accepted.json' = 'ACTIVATION_ACCEPTED'; 'activation-failed.json' = 'ACTIVATION_FAILED'; 'rollback-attempt.json' = 'ROLLBACK_ATTEMPT'; 'rollback-accepted.json' = 'ROLLBACK_ACCEPTED'; 'manual-intervention.json' = 'MANUAL_INTERVENTION' }
-  foreach ($item in $items) { try { $record = Get-Content -LiteralPath $item.FullName -Raw | ConvertFrom-Json } catch { Stop-Rotation 'ROTATION_OPERATION_RECORD_INVALID' }; if (-not (Test-RotationExactPropertyNames $record $recordRequired) -or -not (Test-RotationExactInteger $record.schemaVersion $script:RotationSchemaVersion) -or $record.operationId -cne $OperationId -or $record.planIdentity -cne $planIdentity -or $record.transition -cne $expectedTransitionByRecord[$item.Name] -or $record.createdAtUtc -isnot [string]) { Stop-Rotation 'ROTATION_OPERATION_RECORD_INVALID' } }
+  foreach ($item in $items) {
+    try { $record = Get-Content -LiteralPath $item.FullName -Raw | ConvertFrom-Json } catch { Stop-Rotation 'ROTATION_OPERATION_RECORD_INVALID' }
+    if ($item.Name -in @('candidate-acceptance.json','rollback-acceptance.json')) {
+      if (-not (Test-RotationAcceptanceEvidenceRecord $record $item.Name $OperationId $planIdentity $plan)) { Stop-Rotation 'ROTATION_ACCEPTANCE_EVIDENCE_INVALID' }
+    } elseif (-not (Test-RotationExactPropertyNames $record $recordRequired) -or -not (Test-RotationExactInteger $record.schemaVersion $script:RotationSchemaVersion) -or $record.operationId -cne $OperationId -or $record.planIdentity -cne $planIdentity -or $record.transition -cne $expectedTransitionByRecord[$item.Name] -or -not (Test-RotationUtcTimestamp $record.createdAtUtc)) { Stop-Rotation 'ROTATION_OPERATION_RECORD_INVALID' }
+  }
   $names = @($items.Name)
   # Every persisted state has one exact, append-only marker sequence.  Parsing
   # individual records is not sufficient: a conflicting set of otherwise
@@ -495,10 +502,10 @@ function Get-RotationOperationState([string]$TargetRoot, [string]$OperationId, [
   $stateBySignature = @{
     'operation-created.json' = 'PREPARED'
     'activation-attempt.json|operation-created.json' = 'ACTIVATION_ATTEMPT_CONSUMED'
-    'activation-accepted.json|activation-attempt.json|operation-created.json' = 'ACTIVE_ACCEPTED'
+    'activation-accepted.json|activation-attempt.json|candidate-acceptance.json|operation-created.json' = 'ACTIVE_ACCEPTED'
     'activation-attempt.json|activation-failed.json|operation-created.json' = 'ACTIVATION_FAILED'
     'activation-attempt.json|activation-failed.json|operation-created.json|rollback-attempt.json' = 'ROLLBACK_ATTEMPT_CONSUMED'
-    'activation-attempt.json|activation-failed.json|operation-created.json|rollback-accepted.json|rollback-attempt.json' = 'ROLLED_BACK'
+    'activation-attempt.json|activation-failed.json|operation-created.json|rollback-acceptance.json|rollback-accepted.json|rollback-attempt.json' = 'ROLLED_BACK'
   }
   if (-not $stateBySignature.ContainsKey($baseSignature)) { Stop-Rotation 'ROTATION_OPERATION_TRANSITION_INVALID' }
   $baseState = $stateBySignature[$baseSignature]
@@ -509,14 +516,43 @@ function Get-RotationOperationState([string]$TargetRoot, [string]$OperationId, [
   return [pscustomobject]@{ State = $state; Plan = $plan; PlanIdentity = $planIdentity; OperationRoot = $operationRoot }
 }
 
-function Consume-RotationOperationTransition([string]$TargetRoot, [string]$OperationId, [ValidateSet('ACTIVATION_ATTEMPT','ACTIVATION_ACCEPTED','ACTIVATION_FAILED','ROLLBACK_ATTEMPT','ROLLBACK_ACCEPTED','MANUAL_INTERVENTION')][string]$Transition) {
+function Consume-RotationOperationTransition([string]$TargetRoot, [string]$OperationId, [ValidateSet('ACTIVATION_ATTEMPT','ACTIVATION_FAILED','ROLLBACK_ATTEMPT','MANUAL_INTERVENTION')][string]$Transition) {
   $state = Get-RotationOperationState $TargetRoot $OperationId
-  $expectations = @{ ACTIVATION_ATTEMPT = 'PREPARED'; ACTIVATION_ACCEPTED = 'ACTIVATION_ATTEMPT_CONSUMED'; ACTIVATION_FAILED = 'ACTIVATION_ATTEMPT_CONSUMED'; ROLLBACK_ATTEMPT = 'ACTIVATION_FAILED'; ROLLBACK_ACCEPTED = 'ROLLBACK_ATTEMPT_CONSUMED' }
+  $expectations = @{ ACTIVATION_ATTEMPT = 'PREPARED'; ACTIVATION_FAILED = 'ACTIVATION_ATTEMPT_CONSUMED'; ROLLBACK_ATTEMPT = 'ACTIVATION_FAILED' }
   if ($Transition -ne 'MANUAL_INTERVENTION' -and $state.State -cne $expectations[$Transition]) { Stop-Rotation 'ROTATION_OPERATION_TRANSITION_INVALID' }
   if ($Transition -eq 'MANUAL_INTERVENTION' -and $state.State -in @('ACTIVE_ACCEPTED','ROLLED_BACK','MANUAL_INTERVENTION_REQUIRED')) { Stop-Rotation 'ROTATION_OPERATION_TRANSITION_INVALID' }
-  $names = @{ ACTIVATION_ATTEMPT = 'activation-attempt.json'; ACTIVATION_ACCEPTED = 'activation-accepted.json'; ACTIVATION_FAILED = 'activation-failed.json'; ROLLBACK_ATTEMPT = 'rollback-attempt.json'; ROLLBACK_ACCEPTED = 'rollback-accepted.json'; MANUAL_INTERVENTION = 'manual-intervention.json' }
+  $names = @{ ACTIVATION_ATTEMPT = 'activation-attempt.json'; ACTIVATION_FAILED = 'activation-failed.json'; ROLLBACK_ATTEMPT = 'rollback-attempt.json'; MANUAL_INTERVENTION = 'manual-intervention.json' }
   $record = [ordered]@{ schemaVersion = $script:RotationSchemaVersion; operationId = $OperationId; planIdentity = $state.PlanIdentity; transition = $Transition; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
   Write-RotationOperationRecord $state.OperationRoot $names[$Transition] $record
+}
+
+function Test-RotationUtcTimestamp($Value) {
+  if ($Value -isnot [string]) { return $false }
+  $parsed = [DateTime]::MinValue
+  return [DateTime]::TryParseExact($Value, 'o', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$parsed)
+}
+
+function Test-RotationAcceptanceEvidenceRecord($Record, [string]$Name, [string]$OperationId, [string]$PlanIdentity, $Plan) {
+  $required = @('schemaVersion','operationId','planIdentity','transition','mode','repositoryRevision','expectedApiImageId','expectedWorkerImageId','acceptanceResult','createdAtUtc')
+  $mode = if ($Name -ceq 'candidate-acceptance.json') { 'Candidate' } elseif ($Name -ceq 'rollback-acceptance.json') { 'Rollback' } else { return $false }
+  $expectedApi = if ($mode -ceq 'Candidate') { $Plan.apiImageId } else { $Plan.rollback.ApiImageId }
+  $expectedWorker = if ($mode -ceq 'Candidate') { $Plan.workerImageId } else { $Plan.rollback.WorkerImageId }
+  return (Test-RotationExactPropertyNames $Record $required) -and (Test-RotationExactInteger $Record.schemaVersion $script:RotationSchemaVersion) -and $Record.operationId -ceq $OperationId -and $Record.planIdentity -ceq $PlanIdentity -and $Record.transition -ceq 'ACCEPTANCE_EVIDENCE' -and $Record.mode -ceq $mode -and $Record.repositoryRevision -ceq $Plan.repositoryRevision -and $Record.expectedApiImageId -ceq $expectedApi -and $Record.expectedWorkerImageId -ceq $expectedWorker -and $Record.acceptanceResult -ceq 'PASS' -and (Test-RotationUtcTimestamp $Record.createdAtUtc)
+}
+
+function Write-RotationVerifiedAcceptance([string]$TargetRoot, [string]$OperationId, [ValidateSet('Candidate','Rollback')][string]$Mode) {
+  $state = Get-RotationOperationState $TargetRoot $OperationId
+  $expectedState = if ($Mode -ceq 'Candidate') { 'ACTIVATION_ATTEMPT_CONSUMED' } else { 'ROLLBACK_ATTEMPT_CONSUMED' }
+  if ($state.State -cne $expectedState) { Stop-Rotation 'ROTATION_ACCEPTANCE_TRANSITION_INVALID' }
+  $evidenceName = if ($Mode -ceq 'Candidate') { 'candidate-acceptance.json' } else { 'rollback-acceptance.json' }
+  $acceptedName = if ($Mode -ceq 'Candidate') { 'activation-accepted.json' } else { 'rollback-accepted.json' }
+  $transition = if ($Mode -ceq 'Candidate') { 'ACTIVATION_ACCEPTED' } else { 'ROLLBACK_ACCEPTED' }
+  $expectedApi = if ($Mode -ceq 'Candidate') { $state.Plan.apiImageId } else { $state.Plan.rollback.ApiImageId }
+  $expectedWorker = if ($Mode -ceq 'Candidate') { $state.Plan.workerImageId } else { $state.Plan.rollback.WorkerImageId }
+  $evidence = [ordered]@{ schemaVersion = $script:RotationSchemaVersion; operationId = $OperationId; planIdentity = $state.PlanIdentity; transition = 'ACCEPTANCE_EVIDENCE'; mode = $Mode; repositoryRevision = $state.Plan.repositoryRevision; expectedApiImageId = $expectedApi; expectedWorkerImageId = $expectedWorker; acceptanceResult = 'PASS'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
+  Write-RotationOperationRecord $state.OperationRoot $evidenceName $evidence
+  $accepted = [ordered]@{ schemaVersion = $script:RotationSchemaVersion; operationId = $OperationId; planIdentity = $state.PlanIdentity; transition = $transition; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
+  Write-RotationOperationRecord $state.OperationRoot $acceptedName $accepted
 }
 
 function Assert-RotationContainerName([string]$Name) {
@@ -597,14 +633,27 @@ function Test-RotationContainerSecretKeyAbsent([string]$Container, [string]$Key)
   return Test-RotationPresenceOnlyExitCode $process.ExitCode
 }
 
+function Invoke-RotationRuntimeAcceptanceValidator([string]$TargetRoot, [string]$OperationId, [ValidateSet('Candidate','Rollback')][string]$Mode, [string]$ApiContainer, [string]$WorkerContainer) {
+  $validator = Join-Path $script:RotationModuleRoot 'validate-secret-rotation-runtime.ps1'
+  $psi = [Diagnostics.ProcessStartInfo]::new(); $psi.FileName = 'powershell'; $psi.UseShellExecute = $false
+  $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  foreach ($argument in @('-NoProfile','-ExecutionPolicy','Bypass','-File',$validator,'-TargetRoot',$TargetRoot,'-OperationId',$OperationId,'-Mode',$Mode,'-ApiContainer',$ApiContainer,'-WorkerContainer',$WorkerContainer)) { $null = $psi.ArgumentList.Add($argument) }
+  $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
+  if (-not $process.Start()) { return $false }
+  # Validation is a named gate only. Its output is intentionally discarded so
+  # recovery classification never relays container or secret-adjacent details.
+  $null = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
+  return $process.ExitCode -eq 0
+}
+
 function Get-RotationRecoveryClassification($OperationState, $Observation) {
   switch ($OperationState.State) {
-    'PREPARED' { if (-not $Observation.ApiCandidate -and -not $Observation.WorkerCandidate) { return 'SAFE_TO_RESUME_PREFLIGHT' }; return 'MANUAL_INTERVENTION_REQUIRED' }
-    'ACTIVATION_ATTEMPT_CONSUMED' { if ($Observation.ApiCandidate -and $Observation.WorkerCandidate -and $Observation.ApiHealthy -and $Observation.WorkerHealthy -and $Observation.CandidateApiMountsBound -and $Observation.WorkerMountsIsolated) { return 'ACTIVATION_IN_PROGRESS' }; return 'ROLLBACK_REQUIRED' }
-    'ACTIVE_ACCEPTED' { if ($Observation.ApiCandidate -and $Observation.WorkerCandidate -and $Observation.ApiHealthy -and $Observation.WorkerHealthy -and $Observation.CandidateApiMountsBound -and $Observation.WorkerMountsIsolated) { return 'NO_ACTION_REQUIRED' }; return 'MANUAL_INTERVENTION_REQUIRED' }
+    'PREPARED' { if ($Observation.RollbackAcceptancePassed -and -not $Observation.CandidateAcceptancePassed) { return 'SAFE_TO_RESUME_PREFLIGHT' }; return 'MANUAL_INTERVENTION_REQUIRED' }
+    'ACTIVATION_ATTEMPT_CONSUMED' { if ($Observation.CandidateAcceptancePassed) { return 'ACTIVATION_IN_PROGRESS' }; if ($Observation.ApiCandidate -or $Observation.WorkerCandidate) { return 'ROLLBACK_REQUIRED' }; return 'MANUAL_INTERVENTION_REQUIRED' }
+    'ACTIVE_ACCEPTED' { if ($Observation.CandidateAcceptancePassed) { return 'NO_ACTION_REQUIRED' }; return 'MANUAL_INTERVENTION_REQUIRED' }
     'ACTIVATION_FAILED' { return 'ROLLBACK_REQUIRED' }
     'ROLLBACK_ATTEMPT_CONSUMED' { return 'MANUAL_INTERVENTION_REQUIRED' }
-    'ROLLED_BACK' { if ($Observation.ApiRollback -and $Observation.WorkerRollback -and $Observation.ApiHealthy -and $Observation.WorkerHealthy -and $Observation.RollbackApiMountsBound -and $Observation.WorkerMountsIsolated) { return 'NO_ACTION_REQUIRED' }; return 'MANUAL_INTERVENTION_REQUIRED' }
+    'ROLLED_BACK' { if ($Observation.RollbackAcceptancePassed) { return 'NO_ACTION_REQUIRED' }; return 'MANUAL_INTERVENTION_REQUIRED' }
     default { return 'MANUAL_INTERVENTION_REQUIRED' }
   }
 }

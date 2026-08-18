@@ -28,6 +28,15 @@ function New-ProviderLines([string]$Slug = 'alpha,組織', [string]$Legacy = 'le
   return $lines
 }
 
+function New-RotationSyntheticObservation([bool]$ApiCandidate = $false, [bool]$WorkerCandidate = $false, [bool]$CandidateAcceptancePassed = $false, [bool]$RollbackAcceptancePassed = $false) {
+  return [pscustomobject]@{
+    ApiCandidate = $ApiCandidate
+    WorkerCandidate = $WorkerCandidate
+    CandidateAcceptancePassed = $CandidateAcceptancePassed
+    RollbackAcceptancePassed = $RollbackAcceptancePassed
+  }
+}
+
 $root = Join-Path ([IO.Path]::GetTempPath()) ('autoops-m01-4-' + [Guid]::NewGuid().ToString('N'))
 try {
   New-Item -ItemType Directory -Path $root | Out-Null
@@ -78,7 +87,17 @@ try {
   $plan.activationAttempts = 2
   Assert-RotationTest 'ACTIVATION_ATTEMPT_OVER_LIMIT_BLOCKED' ( { Test-RotationAttemptBudget $plan } ) $false
   $operationState = [pscustomobject]@{ State = 'ACTIVATION_ATTEMPT_CONSUMED' }
-  Assert-RotationTest 'INTERRUPTED_PARTIAL_ROTATION_CLASSIFIED' { if ((Get-RotationRecoveryClassification $operationState ([pscustomobject]@{ ApiCandidate = $true; WorkerCandidate = $false; ApiRollback = $false; WorkerRollback = $false; ApiHealthy = $true; WorkerHealthy = $false; CandidateApiMountsBound = $true; RollbackApiMountsBound = $false; WorkerMountsIsolated = $true })) -ne 'ROLLBACK_REQUIRED') { throw } } $true
+  Assert-RotationTest 'INTERRUPTED_PARTIAL_ROTATION_CLASSIFIED' { if ((Get-RotationRecoveryClassification $operationState (New-RotationSyntheticObservation -ApiCandidate $true)) -ne 'ROLLBACK_REQUIRED') { throw } } $true
+  $preparedState = [pscustomobject]@{ State = 'PREPARED' }
+  Assert-RotationTest 'PREPARED_CURRENT_GOOD_ACCEPTANCE_REQUIRED' { if ((Get-RotationRecoveryClassification $preparedState (New-RotationSyntheticObservation -RollbackAcceptancePassed $true)) -ne 'SAFE_TO_RESUME_PREFLIGHT') { throw } } $true
+  foreach ($unsafePreparedCase in @(
+    (New-RotationSyntheticObservation),
+    (New-RotationSyntheticObservation -ApiCandidate $true),
+    (New-RotationSyntheticObservation -WorkerCandidate $true),
+    (New-RotationSyntheticObservation -CandidateAcceptancePassed $true)
+  )) {
+    Assert-RotationTest 'PREPARED_UNKNOWN_OR_STALE_BASELINE_MANUAL' { if ((Get-RotationRecoveryClassification $preparedState $unsafePreparedCase) -ne 'MANUAL_INTERVENTION_REQUIRED') { throw } } $true
+  }
   $expected = [pscustomobject]@{ ApiImageId = 'sha256:' + ('1' * 64); WorkerImageId = 'sha256:' + ('2' * 64) }
   $actual = [pscustomobject]@{ ApiImageId = $expected.ApiImageId; WorkerImageId = $expected.WorkerImageId; ApiRunning = $true; ApiHealthy = $true; ApiHealth200 = $true; ApiReady200 = $true; WorkerRunning = $true; WorkerHealthy = $true; WorkerHealth200 = $true; WorkerReady200 = $true; SecretProviderMode = 'file'; SecretProviderStatus = 'READY'; ApiRequiredFileMounts = $true; ApiJenkinsMount = $false; WorkerApplicationSecretMount = $false; ApiMigratedEnvironmentAbsent = $true; WorkerMigratedEnvironmentAbsent = $true; GitHubActionsEnabled = $true; JenkinsIntegrationDisabled = $true; ApiProviderEquivalent = $true; WorkerProviderEquivalent = $true; NonTargetContainerIdsPreserved = $true; VolumeInventoryPreserved = $true }
   Assert-RotationTest 'SYNTHETIC_FULL_ACCEPTANCE' { if (-not (Test-RotationRuntimeAcceptanceData $actual $expected).Passed) { throw } } $true
@@ -99,12 +118,32 @@ try {
   $planIdentityBefore = Get-RotationPlanIdentity $secureRoot $secureOperation
   Assert-RotationTest 'ACTIVATION_FIRST_CONSUME' { Initialize-RotationOperation $secureRoot $secureOperation; Consume-RotationOperationTransition $secureRoot $secureOperation 'ACTIVATION_ATTEMPT' } $true
   Assert-RotationTest 'ACTIVATION_REPLAY_BLOCKED' { Consume-RotationOperationTransition $secureRoot $secureOperation 'ACTIVATION_ATTEMPT' } $false
+  Assert-RotationTest 'DIRECT_ACTIVATION_ACCEPTED_CALLER_ASSERTION_BLOCKED' { Consume-RotationOperationTransition $secureRoot $secureOperation 'ACTIVATION_ACCEPTED' } $false
+  Assert-RotationTest 'UPDATE_SCRIPT_DIRECT_ACTIVATION_ACCEPTED_BLOCKED' { & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'update-secret-rotation-operation-state.ps1') -TargetRoot $secureRoot -OperationId $secureOperation -Transition 'ACTIVATION_ACCEPTED' 2>$null; return ($LASTEXITCODE -eq 0) } $false
   Assert-RotationTest 'ACTIVATION_FAILURE_RECORDED' { Consume-RotationOperationTransition $secureRoot $secureOperation 'ACTIVATION_FAILED' } $true
   Assert-RotationTest 'ROLLBACK_FIRST_CONSUME' { Consume-RotationOperationTransition $secureRoot $secureOperation 'ROLLBACK_ATTEMPT' } $true
   Assert-RotationTest 'ROLLBACK_REPLAY_BLOCKED' { Consume-RotationOperationTransition $secureRoot $secureOperation 'ROLLBACK_ATTEMPT' } $false
-  Assert-RotationTest 'ROLLBACK_ACCEPTED' { Consume-RotationOperationTransition $secureRoot $secureOperation 'ROLLBACK_ACCEPTED' } $true
+  Assert-RotationTest 'DIRECT_ROLLBACK_ACCEPTED_CALLER_ASSERTION_BLOCKED' { Consume-RotationOperationTransition $secureRoot $secureOperation 'ROLLBACK_ACCEPTED' } $false
+  Assert-RotationTest 'UPDATE_SCRIPT_DIRECT_ROLLBACK_ACCEPTED_BLOCKED' { & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'update-secret-rotation-operation-state.ps1') -TargetRoot $secureRoot -OperationId $secureOperation -Transition 'ROLLBACK_ACCEPTED' 2>$null; return ($LASTEXITCODE -eq 0) } $false
+  Assert-RotationTest 'ROLLBACK_ACCEPTANCE_EVIDENCE_REQUIRED_AND_BOUND' { Write-RotationVerifiedAcceptance $secureRoot $secureOperation 'Rollback'; (Get-RotationOperationState $secureRoot $secureOperation).State -ceq 'ROLLED_BACK' } $true
   Assert-RotationTest 'TERMINAL_TRANSITION_BLOCKED' { Consume-RotationOperationTransition $secureRoot $secureOperation 'ACTIVATION_ATTEMPT' } $false
   Assert-RotationTest 'IMMUTABLE_PLAN_PRESERVED' { (Get-RotationPlanIdentity $secureRoot $secureOperation) -ceq $planIdentityBefore } $true
+  $activeOperation = '6' * 32
+  $activePlan = New-RotationPlanObject $activeOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $activePlan
+  Initialize-RotationOperation $secureRoot $activeOperation
+  Consume-RotationOperationTransition $secureRoot $activeOperation 'ACTIVATION_ATTEMPT'
+  Assert-RotationTest 'CANDIDATE_ACCEPTANCE_EVIDENCE_REQUIRED_AND_BOUND' { Write-RotationVerifiedAcceptance $secureRoot $activeOperation 'Candidate'; (Get-RotationOperationState $secureRoot $activeOperation).State -ceq 'ACTIVE_ACCEPTED' } $true
+  Assert-RotationTest 'ACTIVE_NO_ACTION_REQUIRES_FULL_VALIDATOR_ACCEPTANCE' { if ((Get-RotationRecoveryClassification ([pscustomobject]@{ State = 'ACTIVE_ACCEPTED' }) (New-RotationSyntheticObservation -ApiCandidate $true -WorkerCandidate $true -CandidateAcceptancePassed $true)) -ne 'NO_ACTION_REQUIRED') { throw } } $true
+  foreach ($unsafeActiveCase in @(
+    (New-RotationSyntheticObservation -ApiCandidate $true -WorkerCandidate $true),
+    (New-RotationSyntheticObservation -ApiCandidate $true),
+    (New-RotationSyntheticObservation -CandidateAcceptancePassed $false)
+  )) {
+    Assert-RotationTest 'ACTIVE_PARTIAL_OR_DRIFT_MANUAL' { if ((Get-RotationRecoveryClassification ([pscustomobject]@{ State = 'ACTIVE_ACCEPTED' }) $unsafeActiveCase) -ne 'MANUAL_INTERVENTION_REQUIRED') { throw } } $true
+  }
+  Assert-RotationTest 'ROLLED_BACK_NO_ACTION_REQUIRES_FULL_VALIDATOR_ACCEPTANCE' { if ((Get-RotationRecoveryClassification ([pscustomobject]@{ State = 'ROLLED_BACK' }) (New-RotationSyntheticObservation -RollbackAcceptancePassed $true)) -ne 'NO_ACTION_REQUIRED') { throw } } $true
+  Assert-RotationTest 'ROLLED_BACK_PARTIAL_OR_DRIFT_MANUAL' { if ((Get-RotationRecoveryClassification ([pscustomobject]@{ State = 'ROLLED_BACK' }) (New-RotationSyntheticObservation)) -ne 'MANUAL_INTERVENTION_REQUIRED') { throw } } $true
   $missingStateOperation = 'f' * 32
   $missingStatePlan = New-RotationPlanObject $missingStateOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
   $null = Write-RotationPlanAtomically $secureRoot $missingStatePlan
@@ -134,6 +173,27 @@ try {
   $conflictRecord.transition = 'ACTIVATION_FAILED'
   Write-RotationOperationRecord $conflictState.OperationRoot 'activation-failed.json' $conflictRecord
   Assert-RotationTest 'CONFLICTING_DURABLE_TRANSITIONS_BLOCKED' { Get-RotationOperationState $secureRoot $conflictOperation | Out-Null } $false
+  $missingEvidenceOperation = '8' * 32
+  $missingEvidencePlan = New-RotationPlanObject $missingEvidenceOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $missingEvidencePlan
+  Initialize-RotationOperation $secureRoot $missingEvidenceOperation
+  Consume-RotationOperationTransition $secureRoot $missingEvidenceOperation 'ACTIVATION_ATTEMPT'
+  $missingEvidenceState = Get-RotationOperationState $secureRoot $missingEvidenceOperation
+  $directAcceptedRecord = [ordered]@{ schemaVersion = 1; operationId = $missingEvidenceOperation; planIdentity = $missingEvidenceState.PlanIdentity; transition = 'ACTIVATION_ACCEPTED'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
+  Write-RotationOperationRecord $missingEvidenceState.OperationRoot 'activation-accepted.json' $directAcceptedRecord
+  Assert-RotationTest 'ACCEPTED_MARKER_WITHOUT_VALIDATOR_EVIDENCE_BLOCKED' { Get-RotationOperationState $secureRoot $missingEvidenceOperation | Out-Null } $false
+  Assert-RotationTest 'ACCEPTANCE_FINALIZER_VALIDATOR_BOUND' { $finalizer = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'confirm-secret-rotation-runtime.ps1') -Raw; $validatorAt = $finalizer.IndexOf('Invoke-RotationRuntimeAcceptanceValidator'); $writerAt = $finalizer.IndexOf('Write-RotationVerifiedAcceptance'); $validatorAt -ge 0 -and $writerAt -gt $validatorAt } $true
+  $badEvidenceOperation = '7' * 32
+  $badEvidencePlan = New-RotationPlanObject $badEvidenceOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $badEvidencePlan
+  Initialize-RotationOperation $secureRoot $badEvidenceOperation
+  Consume-RotationOperationTransition $secureRoot $badEvidenceOperation 'ACTIVATION_ATTEMPT'
+  $badEvidenceState = Get-RotationOperationState $secureRoot $badEvidenceOperation
+  $badEvidence = [ordered]@{ schemaVersion = 1; operationId = $badEvidenceOperation; planIdentity = $badEvidenceState.PlanIdentity; transition = 'ACCEPTANCE_EVIDENCE'; mode = 'Candidate'; repositoryRevision = ('b' * 40); expectedApiImageId = 'sha256:' + ('7' * 64); expectedWorkerImageId = 'sha256:' + ('8' * 64); acceptanceResult = 'PASS'; createdAtUtc = 'malformed' }
+  Write-RotationOperationRecord $badEvidenceState.OperationRoot 'candidate-acceptance.json' $badEvidence
+  $badAccepted = [ordered]@{ schemaVersion = 1; operationId = $badEvidenceOperation; planIdentity = $badEvidenceState.PlanIdentity; transition = 'ACTIVATION_ACCEPTED'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
+  Write-RotationOperationRecord $badEvidenceState.OperationRoot 'activation-accepted.json' $badAccepted
+  Assert-RotationTest 'MALFORMED_ACCEPTANCE_EVIDENCE_TIMESTAMP_BLOCKED' { Get-RotationOperationState $secureRoot $badEvidenceOperation | Out-Null } $false
   $mountRecords = @(
     [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-access'; Destination = '/run/secrets/autoops/jwt-access'; ReadWrite = $false },
     [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-refresh'; Destination = '/run/secrets/autoops/jwt-refresh'; ReadWrite = $false },
@@ -142,6 +202,8 @@ try {
   Assert-RotationTest 'CANDIDATE_MOUNT_EXACT_SOURCE' { Test-RotationMountBindingData $mountRecords $secureRoot $secureCandidate $true -SkipSourceMetadata } $true
   $wrongGenerationMounts = @($mountRecords); $wrongGenerationMounts[0] = [pscustomobject]@{ Source = Join-Path $secureCurrentPath 'jwt-access'; Destination = '/run/secrets/autoops/jwt-access'; ReadWrite = $false }
   Assert-RotationTest 'CANDIDATE_MOUNT_CURRENT_GOOD_BLOCKED' { Test-RotationMountBindingData $wrongGenerationMounts $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
+  $translatedMounts = @($mountRecords); $translatedMounts[0] = [pscustomobject]@{ Source = '/run/desktop/mnt/host/c/untrusted/jwt-access'; Destination = '/run/secrets/autoops/jwt-access'; ReadWrite = $false }
+  Assert-RotationTest 'TRANSLATED_VM_MOUNT_SOURCE_BLOCKED' { Test-RotationMountBindingData $translatedMounts $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
   Assert-RotationTest 'DUPLICATE_SECRET_MOUNT_BLOCKED' { Test-RotationMountBindingData @($mountRecords + $mountRecords[0]) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
   $rwMounts = @($mountRecords); $rwMounts[1] = [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-refresh'; Destination = '/run/secrets/autoops/jwt-refresh'; ReadWrite = $true }
   Assert-RotationTest 'READ_WRITE_SECRET_MOUNT_BLOCKED' { Test-RotationMountBindingData $rwMounts $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
