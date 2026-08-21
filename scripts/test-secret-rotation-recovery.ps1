@@ -200,6 +200,26 @@ try {
     [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'github-actions-token'; Destination = '/run/secrets/autoops/github-actions-token'; ReadWrite = $false }
   )
   Assert-RotationTest 'CANDIDATE_MOUNT_EXACT_SOURCE' { Test-RotationMountBindingData $mountRecords $secureRoot $secureCandidate $true -SkipSourceMetadata } $true
+  $setsRoot = Join-Path $secureRoot 'sets'
+  $setsAncestor = Split-Path -Parent $secureRoot
+  Assert-RotationTest 'SETS_ROOT_EQUALITY_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = $setsRoot; Destination = '/tmp/sets'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata } $false
+  Assert-RotationTest 'TARGET_ROOT_BIND_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = $secureRoot; Destination = '/tmp/root'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata } $false
+  Assert-RotationTest 'SETS_ANCESTOR_BIND_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = $setsAncestor; Destination = '/tmp/ancestor'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata } $false
+  Assert-RotationTest 'SETS_DESCENDANT_BIND_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = $secureCandidatePath; Destination = '/tmp/candidate'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata } $false
+  Assert-RotationTest 'WORKER_PROTECTED_TREE_OVERLAP_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-access'; Destination = '/tmp/jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata } $false
+  Assert-RotationTest 'API_BROAD_PROTECTED_TREE_BIND_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = $setsRoot; Destination = '/tmp/sets'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
+  Assert-RotationTest 'API_TARGET_ROOT_BIND_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = $secureRoot; Destination = '/tmp/root'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
+  Assert-RotationTest 'API_ANCESTOR_SECRET_ROOT_BIND_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = $setsAncestor; Destination = '/tmp/ancestor'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
+  Assert-RotationTest 'API_EXACT_PLANNED_BINDINGS_PASS' { Test-RotationMountBindingData $mountRecords $secureRoot $secureCandidate $true -SkipSourceMetadata } $true
+  Assert-RotationTest 'SETS_PATH_OVERLAP_EQUALITY' { if (-not (Test-RotationPathOverlap $setsRoot $setsRoot)) { throw } } $true
+  Assert-RotationTest 'SETS_PATH_OVERLAP_DESCENDANT' { if (-not (Test-RotationPathOverlap (Join-Path $setsRoot 'child') $setsRoot)) { throw } } $true
+  Assert-RotationTest 'SETS_PATH_OVERLAP_ANCESTOR' { if (-not (Test-RotationPathOverlap $secureRoot $setsRoot)) { throw } } $true
+  Assert-RotationTest 'SETS_PATH_OVERLAP_CASE_INSENSITIVE' { if (-not (Test-RotationPathOverlap $setsRoot.ToUpperInvariant() $setsRoot)) { throw } } $true
+  Assert-RotationTest 'SETS_PATH_OVERLAP_TRAILING_SEPARATOR' { if (-not (Test-RotationPathOverlap ($setsRoot + [IO.Path]::DirectorySeparatorChar) $setsRoot)) { throw } } $true
+  Assert-RotationTest 'SETS_PATH_OVERLAP_CANONICALIZED_TRAVERSAL' { if (-not (Test-RotationPathOverlap (Join-Path $secureRoot 'sets\..\sets') $setsRoot)) { throw } } $true
+  Assert-RotationTest 'SETS_PATH_PREFIX_COLLISION_SAFE' { if (Test-RotationPathOverlap (Join-Path $secureRoot 'sets-old') $setsRoot) { throw } } $true
+  Assert-RotationTest 'SETS_PATH_PREFIX_COLLISION_BACKUP_SAFE' { if (Test-RotationPathOverlap (Join-Path $secureRoot 'sets_backup') $setsRoot) { throw } } $true
+  Assert-RotationTest 'SETS_PATH_PREFIX_COLLISION_NUMERIC_SAFE' { if (Test-RotationPathOverlap (Join-Path $secureRoot 'sets2') $setsRoot) { throw } } $true
   $wrongGenerationMounts = @($mountRecords); $wrongGenerationMounts[0] = [pscustomobject]@{ Source = Join-Path $secureCurrentPath 'jwt-access'; Destination = '/run/secrets/autoops/jwt-access'; ReadWrite = $false }
   Assert-RotationTest 'CANDIDATE_MOUNT_CURRENT_GOOD_BLOCKED' { Test-RotationMountBindingData $wrongGenerationMounts $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
   Assert-RotationTest 'API_OTHER_GENERATION_SECRET_SOURCE_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = Join-Path $secureCurrentPath 'jwt-access'; Destination = '/tmp/current-good-jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false

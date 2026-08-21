@@ -89,6 +89,13 @@ function Test-RotationPathInside([string]$Path, [string]$Root) {
   return $fullPath.StartsWith($trimmedRoot + [IO.Path]::DirectorySeparatorChar, $comparison)
 }
 
+function Test-RotationPathOverlap([string]$Left, [string]$Right) {
+  $fullLeft = Get-RotationFullPath $Left 'ROTATION_PATH_INVALID'
+  $fullRight = Get-RotationFullPath $Right 'ROTATION_ROOT_INVALID'
+  $comparison = Get-RotationPathComparison
+  return [string]::Equals($fullLeft, $fullRight, $comparison) -or (Test-RotationPathInside $fullLeft $fullRight) -or (Test-RotationPathInside $fullRight $fullLeft)
+}
+
 function Assert-RotationPlanDirectorySecurity([string]$Path) {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Stop-Rotation 'ROTATION_PLAN_PERMISSION_MODEL_UNSUPPORTED' }
   try {
@@ -655,9 +662,10 @@ function Test-RotationMountBindingData($Records, [string]$TargetRoot, [string]$G
   foreach ($target in $expected.Keys) { $expectedBySource[(Get-RotationFullPath $expected[$target] 'MOUNT_SOURCE_INVALID')] = $target }
   foreach ($record in @($Records)) {
     try { $actualSource = Get-RotationFullPath $record.Source 'MOUNT_SOURCE_INVALID' } catch { return $false }
-    # A source from any published generation is application-secret material,
-    # not merely a source from the generation currently being validated.
-    $generationSource = (Test-RotationPathInside $actualSource $setsRoot) -or [string]::Equals($actualSource, $setsRoot, $comparison)
+    # Any source that overlaps the published-generation tree can expose
+    # application-secret material: an exact file, a generation directory,
+    # the sets root, or an ancestor bind containing the sets root.
+    $generationSource = Test-RotationPathOverlap $actualSource $setsRoot
     if (-not $IsApi -and $generationSource) { return $false }
     if ($generationSource) {
       if (-not $expectedBySource.ContainsKey($actualSource) -or $record.Destination -cne $expectedBySource[$actualSource] -or $record.ReadWrite) { return $false }
