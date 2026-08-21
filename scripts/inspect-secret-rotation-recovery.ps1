@@ -29,6 +29,8 @@ try {
   if ($RunSelfTest) {
     $state = [pscustomobject]@{ State = 'PREPARED' }
     if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $false $false $false $true)) -ne 'SAFE_TO_RESUME_PREFLIGHT') { Stop-Rotation 'RECOVERY_SELF_TEST_PREPARED' }
+    $state.State = 'OPERATION_INITIALIZATION_INTERRUPTED'
+    if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $false $false $false $false)) -ne 'MANUAL_INTERVENTION_REQUIRED') { Stop-Rotation 'RECOVERY_SELF_TEST_INITIALIZATION_INTERRUPTED' }
     $state.State = 'ACTIVATION_ATTEMPT_CONSUMED'
     if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $true $false $false $false)) -ne 'ROLLBACK_REQUIRED') { Stop-Rotation 'RECOVERY_SELF_TEST_PARTIAL' }
     if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $true $true $true $false)) -ne 'ACTIVATION_IN_PROGRESS') { Stop-Rotation 'RECOVERY_SELF_TEST_ACTIVE' }

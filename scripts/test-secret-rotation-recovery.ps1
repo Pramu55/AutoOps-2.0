@@ -137,6 +137,20 @@ try {
   $emptyPreviousJson = Get-Content -LiteralPath $emptyPreviousPath -Raw
   [IO.File]::WriteAllText($emptyPreviousPath, ($emptyPreviousJson -replace '"previousGoodGenerationId"\s*:\s*"[a-f0-9]{32}"', '"previousGoodGenerationId":""'), [Text.UTF8Encoding]::new($false))
   Assert-RotationTest 'PREVIOUS_GOOD_EMPTY_STRING_REJECTED' { Read-RotationPlan $secureRoot $emptyPreviousOperation | Out-Null } $false
+  $planOnlyOperation = ('01' * 16)
+  $planOnlyPlan = New-RotationPlanObject $planOnlyOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $planOnlyPlan
+  Assert-RotationTest 'PLAN_ONLY_INITIALIZATION_INTERRUPTION_RECOGNIZED' { if ((Get-RotationOperationState $secureRoot $planOnlyOperation).State -ne 'OPERATION_INITIALIZATION_INTERRUPTED') { throw } } $true
+  Assert-RotationTest 'PLAN_ONLY_INITIALIZATION_NOT_ACCEPTED' { if ((Get-RotationRecoveryClassification (Get-RotationOperationState $secureRoot $planOnlyOperation) (New-RotationSyntheticObservation)) -ne 'MANUAL_INTERVENTION_REQUIRED') { throw } } $true
+  Assert-RotationTest 'PLAN_ONLY_MANUAL_INTERVENTION_SUPPORTED' { Consume-RotationOperationTransition $secureRoot $planOnlyOperation 'MANUAL_INTERVENTION' } $true
+  $directoryOnlyOperation = ('03' * 16)
+  $directoryOnlyPlan = New-RotationPlanObject $directoryOnlyOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $directoryOnlyPlan
+  $null = Ensure-RotationOperationsRoot $secureRoot
+  $directoryOnlyPath = Get-RotationOperationRoot $secureRoot $directoryOnlyOperation
+  [IO.Directory]::CreateDirectory($directoryOnlyPath) | Out-Null; Set-RotationOperationDirectorySecurity $directoryOnlyPath
+  Assert-RotationTest 'DIRECTORY_ONLY_INITIALIZATION_INTERRUPTION_RECOGNIZED' { if ((Get-RotationOperationState $secureRoot $directoryOnlyOperation).State -ne 'OPERATION_INITIALIZATION_INTERRUPTED') { throw } } $true
+  Assert-RotationTest 'DIRECTORY_ONLY_MANUAL_INTERVENTION_SUPPORTED' { Consume-RotationOperationTransition $secureRoot $directoryOnlyOperation 'MANUAL_INTERVENTION' } $true
   $planIdentityBefore = Get-RotationPlanIdentity $secureRoot $secureOperation
   Assert-RotationTest 'ACTIVATION_FIRST_CONSUME' { Initialize-RotationOperation $secureRoot $secureOperation; Consume-RotationOperationTransition $secureRoot $secureOperation 'ACTIVATION_ATTEMPT' } $true
   Assert-RotationTest 'ACTIVATION_REPLAY_BLOCKED' { Consume-RotationOperationTransition $secureRoot $secureOperation 'ACTIVATION_ATTEMPT' } $false
@@ -169,7 +183,7 @@ try {
   $missingStateOperation = 'f' * 32
   $missingStatePlan = New-RotationPlanObject $missingStateOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
   $null = Write-RotationPlanAtomically $secureRoot $missingStatePlan
-  Assert-RotationTest 'MISSING_OPERATION_STATE_BLOCKED' { Get-RotationOperationState $secureRoot $missingStateOperation | Out-Null } $false
+  Assert-RotationTest 'MISSING_OPERATION_STATE_MANUAL_REQUIRED' { if ((Get-RotationRecoveryClassification (Get-RotationOperationState $secureRoot $missingStateOperation) (New-RotationSyntheticObservation)) -ne 'MANUAL_INTERVENTION_REQUIRED') { throw } } $true
   Assert-RotationTest 'NONINTEGER_ATTEMPT_BUDGET_BLOCKED' { Test-RotationExactInteger 0.5 0 } $false
   $unexpectedOperation = '0' * 32
   $unexpectedPlan = New-RotationPlanObject $unexpectedOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
@@ -278,6 +292,10 @@ try {
   Assert-RotationTest 'WORKER_PROTECTED_SOURCE_AND_DESTINATION_BLOCKED' {
     Test-RotationMountBindingData @([pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-access'; Destination = '/run/secrets/autoops/jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata
   } $false
+  $engineSocketMount = [pscustomobject]@{ Type = 'bind'; Source = '/var/run/docker.sock'; Destination = '/var/run/docker.sock'; ReadWrite = $false }
+  Assert-RotationTest 'ENGINE_SOCKET_BIND_ALLOWED' { Test-RotationMountBindingData @($mountRecords + $engineSocketMount) $secureRoot $secureCandidate $true } $true
+  Assert-RotationTest 'WORKER_ENGINE_SOCKET_BIND_ALLOWED' { Test-RotationMountBindingData @($engineSocketMount) $secureRoot $secureCandidate $false } $true
+  Assert-RotationTest 'UNSUPPORTED_NON_WINDOWS_BIND_SOURCE_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Type = 'bind'; Source = '/var/run/untrusted.sock'; Destination = '/tmp/untrusted'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $false
   $normalSource = Join-Path $root 'normal-bind'; [IO.File]::WriteAllText($normalSource, 'synthetic')
   Assert-RotationTest 'ORDINARY_NON_REPARSE_BIND_ALLOWED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = $normalSource; Destination = '/tmp/data'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $true
   Assert-RotationTest 'EXACT_PLANNED_NON_REPARSE_SOURCES_PASS' { Test-RotationMountBindingData $mountRecords $secureRoot $secureCandidate $true } $true

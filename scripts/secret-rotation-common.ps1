@@ -527,10 +527,13 @@ function Read-RotationPlan([string]$TargetRoot, [string]$OperationId) {
 
 function Test-RotationAttemptBudget($Plan) { return (Test-RotationExactInteger $Plan.activationAttemptLimit 1) -and (Test-RotationExactInteger $Plan.rollbackAttemptLimit 1) -and (Test-RotationExactInteger $Plan.activationAttempts 0) -and (Test-RotationExactInteger $Plan.rollbackAttempts 0) }
 
-function Get-RotationOperationRoot([string]$TargetRoot, [string]$OperationId) {
+function Get-RotationOperationRoot([string]$TargetRoot, [string]$OperationId, [switch]$AllowMissingOperationsRoot) {
   if (-not (Test-RotationGenerationId $OperationId)) { Stop-Rotation 'ROTATION_OPERATION_ID_INVALID' }
   $root = Get-RotationFullPath $TargetRoot 'ROTATION_ROOT_INVALID'; $operationsRoot = Join-Path $root 'rotation-operations'
-  if (-not (Test-Path -LiteralPath $operationsRoot -PathType Container)) { Stop-Rotation 'ROTATION_OPERATION_ROOT_MISSING' }
+  if (-not (Test-Path -LiteralPath $operationsRoot -PathType Container)) {
+    if (-not $AllowMissingOperationsRoot) { Stop-Rotation 'ROTATION_OPERATION_ROOT_MISSING' }
+    return (Join-Path $operationsRoot $OperationId)
+  }
   Assert-RotationNoReparse $operationsRoot 'ROTATION_OPERATION_REPARSE_PATH'; Assert-RotationOperationDirectorySecurity $operationsRoot
   $operationRoot = Join-Path $operationsRoot $OperationId
   if (-not (Test-RotationPathInside $operationRoot $operationsRoot)) { Stop-Rotation 'ROTATION_OPERATION_PATH_ESCAPE' }
@@ -567,15 +570,19 @@ function Write-RotationOperationRecord([string]$OperationRoot, [string]$Name, $R
 }
 
 function Get-RotationOperationState([string]$TargetRoot, [string]$OperationId, [switch]$AllowSyntheticTestPermissions) {
-  $plan = Read-RotationPlan $TargetRoot $OperationId; $operationRoot = Get-RotationOperationRoot $TargetRoot $OperationId
+  $plan = Read-RotationPlan $TargetRoot $OperationId; $operationRoot = Get-RotationOperationRoot $TargetRoot $OperationId -AllowMissingOperationsRoot
   # A strict M01.4 plan is initialized with its create-new operation marker.
   # Missing durable evidence is an interruption/tamper ambiguity, never proof
   # that an activation has not been attempted.
-  if (-not (Test-Path -LiteralPath $operationRoot -PathType Container)) { Stop-Rotation 'ROTATION_OPERATION_RECORD_INVALID' }
+  if (-not (Test-Path -LiteralPath $operationRoot -PathType Container)) {
+    if (Test-Path -LiteralPath $operationRoot) { Stop-Rotation 'ROTATION_OPERATION_RECORD_INVALID' }
+    return [pscustomobject]@{ State = 'OPERATION_INITIALIZATION_INTERRUPTED'; Plan = $plan; PlanIdentity = Get-RotationPlanIdentity $TargetRoot $OperationId; OperationRoot = $operationRoot }
+  }
   Assert-RotationNoReparse $operationRoot 'ROTATION_OPERATION_REPARSE_PATH'; if (-not $AllowSyntheticTestPermissions) { Assert-RotationOperationDirectorySecurity $operationRoot }
   $allowed = @('operation-created.json','activation-attempt.json','candidate-acceptance.json','activation-accepted.json','activation-failed.json','rollback-attempt.json','rollback-acceptance.json','rollback-accepted.json','manual-intervention.json')
   $items = @(Get-ChildItem -Force -LiteralPath $operationRoot); foreach ($item in $items) { if ($item.PSIsContainer -or $item.Name -notin $allowed -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { Stop-Rotation 'ROTATION_OPERATION_RECORD_INVALID' } }
   $planIdentity = Get-RotationPlanIdentity $TargetRoot $OperationId
+  if ($items.Count -eq 0) { return [pscustomobject]@{ State = 'OPERATION_INITIALIZATION_INTERRUPTED'; Plan = $plan; PlanIdentity = $planIdentity; OperationRoot = $operationRoot } }
   $recordRequired = @('schemaVersion','operationId','planIdentity','transition','createdAtUtc')
   $expectedTransitionByRecord = @{ 'operation-created.json' = 'OPERATION_CREATED'; 'activation-attempt.json' = 'ACTIVATION_ATTEMPT'; 'activation-accepted.json' = 'ACTIVATION_ACCEPTED'; 'activation-failed.json' = 'ACTIVATION_FAILED'; 'rollback-attempt.json' = 'ROLLBACK_ATTEMPT'; 'rollback-accepted.json' = 'ROLLBACK_ACCEPTED'; 'manual-intervention.json' = 'MANUAL_INTERVENTION' }
   foreach ($item in $items) {
@@ -614,6 +621,12 @@ function Consume-RotationOperationTransition([string]$TargetRoot, [string]$Opera
   $expectations = @{ ACTIVATION_ATTEMPT = 'PREPARED'; ACTIVATION_FAILED = 'ACTIVATION_ATTEMPT_CONSUMED'; ROLLBACK_ATTEMPT = 'ACTIVATION_FAILED' }
   if ($Transition -ne 'MANUAL_INTERVENTION' -and $state.State -cne $expectations[$Transition]) { Stop-Rotation 'ROTATION_OPERATION_TRANSITION_INVALID' }
   if ($Transition -eq 'MANUAL_INTERVENTION' -and $state.State -in @('ACTIVE_ACCEPTED','ROLLED_BACK','MANUAL_INTERVENTION_REQUIRED')) { Stop-Rotation 'ROTATION_OPERATION_TRANSITION_INVALID' }
+  if ($Transition -eq 'MANUAL_INTERVENTION' -and $state.State -eq 'OPERATION_INITIALIZATION_INTERRUPTED') {
+    $null = Ensure-RotationOperationsRoot $TargetRoot
+    if (-not (Test-Path -LiteralPath $state.OperationRoot)) {
+      try { [IO.Directory]::CreateDirectory($state.OperationRoot) | Out-Null; Set-RotationOperationDirectorySecurity $state.OperationRoot; Assert-RotationOperationDirectorySecurity $state.OperationRoot } catch { Stop-Rotation 'ROTATION_OPERATION_CREATE_FAILED' }
+    }
+  }
   $names = @{ ACTIVATION_ATTEMPT = 'activation-attempt.json'; ACTIVATION_FAILED = 'activation-failed.json'; ROLLBACK_ATTEMPT = 'rollback-attempt.json'; MANUAL_INTERVENTION = 'manual-intervention.json' }
   $record = [ordered]@{ schemaVersion = $script:RotationSchemaVersion; operationId = $OperationId; planIdentity = $state.PlanIdentity; transition = $Transition; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
   Write-RotationOperationRecord $state.OperationRoot $names[$Transition] $record
@@ -654,15 +667,27 @@ function Get-RotationContainerRuntimeMetadata([string]$Name) {
 
 function Get-RotationContainerMountRecords([string]$Name) {
   Assert-RotationContainerName $Name
-  $raw = Invoke-RotationDockerMetadata @('inspect','--format','{{range .Mounts}}{{.Source}}|{{.Destination}}|{{.RW}}{{"\n"}}{{end}}',$Name) 'MOUNT_INSPECTION_FAILED'
+  $raw = Invoke-RotationDockerMetadata @('inspect','--format','{{range .Mounts}}{{.Type}}|{{.Source}}|{{.Destination}}|{{.RW}}{{"\n"}}{{end}}',$Name) 'MOUNT_INSPECTION_FAILED'
   $records = @()
   foreach ($line in ($raw -split "`r?`n")) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
-    $parts = $line.Split('|', 3)
-    if ($parts.Count -ne 3 -or [string]::IsNullOrWhiteSpace($parts[0]) -or [string]::IsNullOrWhiteSpace($parts[1]) -or $parts[2] -notin @('true','false')) { Stop-Rotation 'MOUNT_INSPECTION_MALFORMED' }
-    $records += [pscustomobject]@{ Source = $parts[0]; Destination = $parts[1]; ReadWrite = $parts[2] -eq 'true' }
+    $parts = $line.Split('|', 4)
+    if ($parts.Count -ne 4 -or $parts[0] -notin @('bind','volume','tmpfs','npipe','cluster') -or [string]::IsNullOrWhiteSpace($parts[1]) -or [string]::IsNullOrWhiteSpace($parts[2]) -or $parts[3] -notin @('true','false')) { Stop-Rotation 'MOUNT_INSPECTION_MALFORMED' }
+    $records += [pscustomobject]@{ Type = $parts[0]; Source = $parts[1]; Destination = $parts[2]; ReadWrite = $parts[3] -eq 'true' }
   }
   return $records
+}
+
+function Test-RotationWindowsHostBindSource([string]$Source) {
+  return -not [string]::IsNullOrWhiteSpace($Source) -and ($Source -match '^[A-Za-z]:[\\/]' -or $Source.StartsWith('\\'))
+}
+
+function Get-RotationMountSourceDomain($Record) {
+  $type = if ($Record.PSObject.Properties.Name -contains 'Type') { [string]$Record.Type } else { 'bind' }
+  if ($type -eq 'bind' -and (Test-RotationWindowsHostBindSource $Record.Source)) { return 'WINDOWS_HOST_BIND' }
+  if ($type -eq 'bind' -and $Record.Source -ceq '/var/run/docker.sock' -and $Record.Destination -ceq '/var/run/docker.sock') { return 'ENGINE_SOCKET_BIND' }
+  if ($type -in @('volume','tmpfs','npipe','cluster')) { return 'ENGINE_MANAGED' }
+  return 'UNSUPPORTED'
 }
 
 function Test-RotationMountBindingData($Records, [string]$TargetRoot, [string]$GenerationId, [bool]$IsApi, [switch]$SkipSourceMetadata) {
@@ -678,14 +703,19 @@ function Test-RotationMountBindingData($Records, [string]$TargetRoot, [string]$G
   $expectedBySource = @{}
   foreach ($target in $expected.Keys) { $expectedBySource[(Get-RotationFullPath $expected[$target] 'MOUNT_SOURCE_INVALID')] = $target }
   foreach ($record in @($Records)) {
-    try { $actualSource = Get-RotationFullPath $record.Source 'MOUNT_SOURCE_INVALID' } catch { return $false }
+    $sourceDomain = Get-RotationMountSourceDomain $record
+    if ($sourceDomain -eq 'UNSUPPORTED') { return $false }
+    $actualSource = $null
+    if ($sourceDomain -eq 'WINDOWS_HOST_BIND') {
+      try { $actualSource = Get-RotationFullPath $record.Source 'MOUNT_SOURCE_INVALID' } catch { return $false }
+    }
     # Never classify a lexical alias as unrelated. A reparse component can
     # redirect a source outside setsRoot into the protected generation tree.
-    if (-not $SkipSourceMetadata) { try { Assert-RotationNoReparse $actualSource 'MOUNT_SOURCE_REPARSE_PATH' } catch { return $false } }
+    if ($sourceDomain -eq 'WINDOWS_HOST_BIND' -and -not $SkipSourceMetadata) { try { Assert-RotationNoReparse $actualSource 'MOUNT_SOURCE_REPARSE_PATH' } catch { return $false } }
     # Any source that overlaps the published-generation tree can expose
     # application-secret material: an exact file, a generation directory,
     # the sets root, or an ancestor bind containing the sets root.
-    $generationSource = Test-RotationPathOverlap $actualSource $setsRoot
+    $generationSource = $sourceDomain -eq 'WINDOWS_HOST_BIND' -and (Test-RotationPathOverlap $actualSource $setsRoot)
     try { $protectedDestination = Test-RotationContainerPathOverlap $record.Destination '/run/secrets/autoops' } catch { return $false }
     if (-not $IsApi -and ($generationSource -or $protectedDestination)) { return $false }
     if ($generationSource) {
@@ -734,6 +764,7 @@ function Invoke-RotationRuntimeAcceptanceValidator([string]$TargetRoot, [string]
 
 function Get-RotationRecoveryClassification($OperationState, $Observation) {
   switch ($OperationState.State) {
+    'OPERATION_INITIALIZATION_INTERRUPTED' { return 'MANUAL_INTERVENTION_REQUIRED' }
     'PREPARED' { if ($Observation.RollbackAcceptancePassed -and -not $Observation.CandidateAcceptancePassed) { return 'SAFE_TO_RESUME_PREFLIGHT' }; return 'MANUAL_INTERVENTION_REQUIRED' }
     'ACTIVATION_ATTEMPT_CONSUMED' { if ($Observation.CandidateAcceptancePassed) { return 'ACTIVATION_IN_PROGRESS' }; if ($Observation.ApiCandidate -or $Observation.WorkerCandidate) { return 'ROLLBACK_REQUIRED' }; return 'MANUAL_INTERVENTION_REQUIRED' }
     'ACTIVE_ACCEPTED' { if ($Observation.CandidateAcceptancePassed) { return 'NO_ACTION_REQUIRED' }; return 'MANUAL_INTERVENTION_REQUIRED' }
