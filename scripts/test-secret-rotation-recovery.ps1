@@ -386,10 +386,16 @@ try {
       $fakeRoot = Join-Path $root 'caller-controlled-tools'; New-Item -ItemType Directory -Path $fakeRoot | Out-Null
       $env:PATH = $fakeRoot
       $env:WINDIR = $fakeRoot
-      $dockerPath = Get-RotationDockerExecutable
+      $dockerPath = $null
+      try { $dockerPath = Get-RotationDockerExecutable } catch {
+        # Hosted Windows runners may not install Docker Desktop at the local
+        # product location.  That absence must fail closed, never fall back to
+        # a caller-controlled PATH entry.
+        if ($_.Exception.Message -cne 'TRUSTED_DOCKER_UNAVAILABLE') { throw }
+      }
       $systemPath = Get-RotationWindowsSystemExecutable 'fsutil.exe'
-      if ($dockerPath.StartsWith($fakeRoot, [StringComparison]::OrdinalIgnoreCase) -or $systemPath.StartsWith($fakeRoot, [StringComparison]::OrdinalIgnoreCase)) { throw }
-      if (-not (Test-Path -LiteralPath $dockerPath -PathType Leaf) -or -not (Test-Path -LiteralPath $systemPath -PathType Leaf)) { throw }
+      if (($null -ne $dockerPath -and $dockerPath.StartsWith($fakeRoot, [StringComparison]::OrdinalIgnoreCase)) -or $systemPath.StartsWith($fakeRoot, [StringComparison]::OrdinalIgnoreCase)) { throw }
+      if (($null -ne $dockerPath -and -not (Test-Path -LiteralPath $dockerPath -PathType Leaf)) -or -not (Test-Path -LiteralPath $systemPath -PathType Leaf)) { throw }
     } finally {
       $env:PATH = $originalPath; $env:WINDIR = $originalWindir
     }
