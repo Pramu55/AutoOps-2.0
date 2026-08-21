@@ -723,8 +723,13 @@ function Test-RotationMountBindingData($Records, [string]$TargetRoot, [string]$G
     $generationSource = $sourceDomain -eq 'WINDOWS_HOST_BIND' -and (Test-RotationPathOverlap $actualSource $setsRoot)
     try { $protectedDestination = Test-RotationContainerPathOverlap $record.Destination '/run/secrets/autoops' } catch { return $false }
     if (-not $IsApi -and ($generationSource -or $protectedDestination)) { return $false }
+    $approvedApiSecretBinding = $IsApi -and $generationSource -and $expectedBySource.ContainsKey($actualSource) -and $record.Destination -ceq $expectedBySource[$actualSource] -and -not $record.ReadWrite
+    # API file-mode exposure is an allowlist, not merely a required-mount
+    # checklist.  A volume or unrelated bind overlapping the protected
+    # destination tree could otherwise coexist with the three planned files.
+    if ($IsApi -and $protectedDestination -and -not $approvedApiSecretBinding) { return $false }
     if ($generationSource) {
-      if (-not $expectedBySource.ContainsKey($actualSource) -or $record.Destination -cne $expectedBySource[$actualSource] -or $record.ReadWrite) { return $false }
+      if (-not $approvedApiSecretBinding) { return $false }
     }
   }
   if (-not $IsApi) { return $true }

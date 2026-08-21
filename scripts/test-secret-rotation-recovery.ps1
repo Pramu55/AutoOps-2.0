@@ -268,6 +268,8 @@ try {
   Assert-RotationTest 'API_TARGET_ROOT_BIND_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = $secureRoot; Destination = '/tmp/root'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
   Assert-RotationTest 'API_ANCESTOR_SECRET_ROOT_BIND_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = $setsAncestor; Destination = '/tmp/ancestor'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
   Assert-RotationTest 'API_EXACT_PLANNED_BINDINGS_PASS' { Test-RotationMountBindingData $mountRecords $secureRoot $secureCandidate $true -SkipSourceMetadata } $true
+  Assert-RotationTest 'API_PROTECTED_DESTINATION_ROOT_INJECTION_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Type = 'volume'; Source = 'unrelated-volume'; Destination = '/run/secrets/autoops'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
+  Assert-RotationTest 'API_UNPLANNED_JENKINS_DESTINATION_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = (Join-Path $root 'normal-bind'); Destination = '/run/secrets/autoops/jenkins-api-token'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
   Assert-RotationTest 'SETS_PATH_OVERLAP_EQUALITY' { if (-not (Test-RotationPathOverlap $setsRoot $setsRoot)) { throw } } $true
   Assert-RotationTest 'SETS_PATH_OVERLAP_DESCENDANT' { if (-not (Test-RotationPathOverlap (Join-Path $setsRoot 'child') $setsRoot)) { throw } } $true
   Assert-RotationTest 'SETS_PATH_OVERLAP_ANCESTOR' { if (-not (Test-RotationPathOverlap $secureRoot $setsRoot)) { throw } } $true
@@ -336,6 +338,13 @@ try {
   Assert-RotationTest 'UNKNOWN_GENERATION_SOURCE_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'unknown'; Destination = '/tmp/unknown'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
   Assert-RotationTest 'UNRELATED_NORMAL_BIND_ALLOWED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = (Join-Path $root 'normal-bind'); Destination = '/srv/normal'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $true
   Assert-RotationTest 'SETS_PREFIX_COLLISION_OUTSIDE_ROOT_ALLOWED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = (Join-Path $secureRoot 'sets-old\jwt-access'); Destination = '/srv/normal'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $true
+  Assert-RotationTest 'ROLLBACK_BASELINE_VALIDATOR_PRECEDES_INITIALIZATION' {
+    $preflight = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'prepare-secret-rotation.ps1') -Raw
+    $writeAt = $preflight.LastIndexOf('Write-RotationPlanAtomically')
+    $validatorAt = $preflight.LastIndexOf('Assert-RotationRollbackRuntimeBaseline')
+    $initializeAt = $preflight.LastIndexOf('Initialize-RotationOperation')
+    if ($writeAt -lt 0 -or $validatorAt -le $writeAt -or $initializeAt -le $validatorAt) { throw }
+  } $true
   Assert-RotationTest 'DUPLICATE_JSON_KEYS_REJECTED_PRE_DESERIALIZATION' { ConvertFrom-RotationStrictJson '{"transition":"ACTIVATION_ATTEMPT","transition":"ACTIVATION_ACCEPTED"}' 'ROTATION_OPERATION_RECORD_INVALID' | Out-Null } $false
   Assert-RotationTest 'DUPLICATE_PLAN_KEYS_REJECTED_PRE_DESERIALIZATION' {
     $duplicatePlanOperation = 'a' * 32

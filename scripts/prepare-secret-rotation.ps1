@@ -94,6 +94,14 @@ function Invoke-RotationDeliveryValidation([string]$GenerationPath) {
   Invoke-RotationEvidenceCommand (Join-Path $PSScriptRoot 'validate-mounted-secret-delivery.ps1') @('-Overlay', 'core,sensitive-env,github') $deliveryEnvironment 'MOUNTED_SECRET_DELIVERY_REJECTED'
 }
 
+function Assert-RotationRollbackRuntimeBaseline([string]$TargetRoot, [string]$OperationId) {
+  # The immutable plan is written first so the maintained validator can bind
+  # its checks to the exact rollback images, generation, and preservation set.
+  # Initialization (and therefore any activation attempt) is prohibited until
+  # that complete rollback baseline has passed.
+  if (-not (Invoke-RotationRuntimeAcceptanceValidator $TargetRoot $OperationId 'Rollback')) { Stop-Rotation 'ROLLBACK_RUNTIME_BASELINE_REJECTED' }
+}
+
 try {
   if ($RunSelfTest) {
     Test-RotationSelfTest
@@ -130,6 +138,7 @@ try {
   $rollback = @{ TargetGenerationId = $CurrentGoodGenerationId; ApiImageId = $RollbackApiImageId; WorkerImageId = $RollbackWorkerImageId; ExpectedRuntimeMode = 'file'; ExpectedHealthEndpoints = @('/health', '/ready', '/healthz', '/readyz'); NonTargetContainerIds = $nonTargetIds; VolumeInventory = @($volumes | Sort-Object) }
   $plan = New-RotationPlanObject $OperationId $CandidateGenerationId $CurrentGoodGenerationId $PreviousGoodGenerationId $RepositoryRevision $CandidateApiImageId $CandidateWorkerImageId $overlays $rollback
   $null = Write-RotationPlanAtomically $TargetRoot $plan
+  Assert-RotationRollbackRuntimeBaseline $TargetRoot $OperationId
   Initialize-RotationOperation $TargetRoot $OperationId
   [Console]::WriteLine('ROTATION_PREFLIGHT PASS')
   [Console]::WriteLine('ROTATION_PLAN_STATUS PREPARED')
