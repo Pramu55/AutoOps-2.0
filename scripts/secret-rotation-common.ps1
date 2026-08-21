@@ -35,7 +35,10 @@ function ConvertTo-RotationProcessArgument([string]$Value) {
   if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
   $builder = [Text.StringBuilder]::new(); $null = $builder.Append('"'); $slashes = 0
   foreach ($character in $Value.ToCharArray()) {
-    if ($character -eq '\\') { $slashes++; continue }
+    # PowerShell single-quoted strings do not use C-style backslash escaping.
+    # Compare the character directly so trailing separators are doubled before
+    # the closing quote under the Windows CRT argument grammar.
+    if ($character -eq [char]92) { $slashes++; continue }
     if ($character -eq '"') { $null = $builder.Append([string]::new([char]92, (($slashes * 2) + 1))); $null = $builder.Append('"'); $slashes = 0; continue }
     if ($slashes -gt 0) { $null = $builder.Append([string]::new([char]92, $slashes)); $slashes = 0 }
     $null = $builder.Append($character)
@@ -486,7 +489,7 @@ function New-RotationPlanObject(
 
 function Read-RotationPlan([string]$TargetRoot, [string]$OperationId) {
   $path = Get-RotationPlanPath $TargetRoot $OperationId
-  try { $plan = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json } catch { Stop-Rotation 'ROTATION_PLAN_MALFORMED' }
+  try { $plan = ConvertFrom-RotationStrictJson (Get-Content -LiteralPath $path -Raw) 'ROTATION_PLAN_MALFORMED' } catch { Stop-Rotation 'ROTATION_PLAN_MALFORMED' }
   $required = @('schemaVersion','operationId','status','createdAtUtc','candidateGenerationId','currentGoodGenerationId','previousGoodGenerationId','repositoryRevision','apiImageId','workerImageId','runtimeServices','requiredOverlays','requiredGates','activationAttemptLimit','rollbackAttemptLimit','activationAttempts','rollbackAttempts','rollback')
   if (-not (Test-RotationExactPropertyNames $plan $required)) { Stop-Rotation 'ROTATION_PLAN_MALFORMED' }
   if (-not (Test-RotationExactInteger $plan.schemaVersion $script:RotationSchemaVersion) -or $plan.operationId -cne $OperationId -or $plan.status -cne 'PREPARED' -or $plan.createdAtUtc -isnot [string] -or -not (Test-RotationGenerationId $plan.candidateGenerationId) -or -not (Test-RotationGenerationId $plan.currentGoodGenerationId) -or ($null -ne $plan.previousGoodGenerationId -and -not (Test-RotationGenerationId $plan.previousGoodGenerationId)) -or $plan.candidateGenerationId -ceq $plan.currentGoodGenerationId -or $plan.candidateGenerationId -ceq $plan.previousGoodGenerationId -or -not (Test-RotationRevision $plan.repositoryRevision) -or -not (Test-RotationSha256 $plan.apiImageId) -or -not (Test-RotationSha256 $plan.workerImageId) -or $plan.apiImageId -ceq $plan.workerImageId -or -not (Test-RotationExactStringArray $plan.requiredOverlays $script:RotationRequiredOverlays) -or -not (Test-RotationExactStringArray $plan.requiredGates $script:RotationRequiredGates) -or -not (Test-RotationExactInteger $plan.activationAttemptLimit 1) -or -not (Test-RotationExactInteger $plan.rollbackAttemptLimit 1) -or -not (Test-RotationExactInteger $plan.activationAttempts 0) -or -not (Test-RotationExactInteger $plan.rollbackAttempts 0)) { Stop-Rotation 'ROTATION_PLAN_MALFORMED' }
@@ -639,6 +642,8 @@ function Get-RotationContainerMountRecords([string]$Name) {
 }
 
 function Test-RotationMountBindingData($Records, [string]$TargetRoot, [string]$GenerationId, [bool]$IsApi, [switch]$SkipSourceMetadata) {
+  $root = Get-RotationFullPath $TargetRoot 'ROTATION_ROOT_INVALID'
+  $setsRoot = Get-RotationFullPath (Join-Path $root 'sets') 'MOUNT_SOURCE_INVALID'
   $expectedGeneration = Get-RotationGenerationPath $TargetRoot $GenerationId
   $expected = @{
     '/run/secrets/autoops/jwt-access' = Join-Path $expectedGeneration 'jwt-access'
@@ -650,9 +655,11 @@ function Test-RotationMountBindingData($Records, [string]$TargetRoot, [string]$G
   foreach ($target in $expected.Keys) { $expectedBySource[(Get-RotationFullPath $expected[$target] 'MOUNT_SOURCE_INVALID')] = $target }
   foreach ($record in @($Records)) {
     try { $actualSource = Get-RotationFullPath $record.Source 'MOUNT_SOURCE_INVALID' } catch { return $false }
-    $underGeneration = Test-RotationPathInside $actualSource $expectedGeneration
-    if (-not $IsApi -and $underGeneration) { return $false }
-    if ($underGeneration) {
+    # A source from any published generation is application-secret material,
+    # not merely a source from the generation currently being validated.
+    $generationSource = (Test-RotationPathInside $actualSource $setsRoot) -or [string]::Equals($actualSource, $setsRoot, $comparison)
+    if (-not $IsApi -and $generationSource) { return $false }
+    if ($generationSource) {
       if (-not $expectedBySource.ContainsKey($actualSource) -or $record.Destination -cne $expectedBySource[$actualSource] -or $record.ReadWrite) { return $false }
       if (-not $SkipSourceMetadata) { try { Assert-RotationNoReparse $actualSource 'MOUNT_SOURCE_REPARSE_PATH' } catch { return $false } }
     }

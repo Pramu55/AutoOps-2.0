@@ -202,6 +202,20 @@ try {
   Assert-RotationTest 'CANDIDATE_MOUNT_EXACT_SOURCE' { Test-RotationMountBindingData $mountRecords $secureRoot $secureCandidate $true -SkipSourceMetadata } $true
   $wrongGenerationMounts = @($mountRecords); $wrongGenerationMounts[0] = [pscustomobject]@{ Source = Join-Path $secureCurrentPath 'jwt-access'; Destination = '/run/secrets/autoops/jwt-access'; ReadWrite = $false }
   Assert-RotationTest 'CANDIDATE_MOUNT_CURRENT_GOOD_BLOCKED' { Test-RotationMountBindingData $wrongGenerationMounts $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
+  Assert-RotationTest 'API_OTHER_GENERATION_SECRET_SOURCE_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = Join-Path $secureCurrentPath 'jwt-access'; Destination = '/tmp/current-good-jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
+  Assert-RotationTest 'WORKER_OTHER_GENERATION_SECRET_SOURCE_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = Join-Path $secureCurrentPath 'jwt-access'; Destination = '/tmp/current-good-jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata } $false
+  $unknownGenerationPath = Join-Path (Join-Path $secureRoot 'sets') ('e' * 32)
+  Assert-RotationTest 'API_PREVIOUS_GENERATION_SECRET_SOURCE_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = Join-Path $securePreviousPath 'jwt-refresh'; Destination = '/tmp/previous-good-jwt-refresh'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
+  Assert-RotationTest 'API_UNKNOWN_GENERATION_SECRET_SOURCE_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = Join-Path $unknownGenerationPath 'jwt-access'; Destination = '/tmp/unknown-jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
+  Assert-RotationTest 'WORKER_PREVIOUS_GENERATION_SECRET_SOURCE_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = Join-Path $securePreviousPath 'jwt-access'; Destination = '/tmp/previous-good-jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata } $false
+  Assert-RotationTest 'WORKER_UNKNOWN_GENERATION_SECRET_SOURCE_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = Join-Path $unknownGenerationPath 'jwt-access'; Destination = '/tmp/unknown-jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata } $false
+  $rollbackMountRecords = @(
+    [pscustomobject]@{ Source = Join-Path $secureCurrentPath 'jwt-access'; Destination = '/run/secrets/autoops/jwt-access'; ReadWrite = $false },
+    [pscustomobject]@{ Source = Join-Path $secureCurrentPath 'jwt-refresh'; Destination = '/run/secrets/autoops/jwt-refresh'; ReadWrite = $false },
+    [pscustomobject]@{ Source = Join-Path $secureCurrentPath 'github-actions-token'; Destination = '/run/secrets/autoops/github-actions-token'; ReadWrite = $false }
+  )
+  Assert-RotationTest 'ROLLBACK_API_CANDIDATE_SECRET_SOURCE_BLOCKED' { Test-RotationMountBindingData @($rollbackMountRecords + [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-access'; Destination = '/tmp/candidate-jwt-access'; ReadWrite = $false }) $secureRoot $secureCurrent $true -SkipSourceMetadata } $false
+  Assert-RotationTest 'ROLLBACK_WORKER_HISTORICAL_SECRET_SOURCE_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-access'; Destination = '/tmp/candidate-jwt-access'; ReadWrite = $false }) $secureRoot $secureCurrent $false -SkipSourceMetadata } $false
   $translatedMounts = @($mountRecords); $translatedMounts[0] = [pscustomobject]@{ Source = '/run/desktop/mnt/host/c/untrusted/jwt-access'; Destination = '/run/secrets/autoops/jwt-access'; ReadWrite = $false }
   Assert-RotationTest 'TRANSLATED_VM_MOUNT_SOURCE_BLOCKED' { Test-RotationMountBindingData $translatedMounts $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
   Assert-RotationTest 'DUPLICATE_SECRET_MOUNT_BLOCKED' { Test-RotationMountBindingData @($mountRecords + $mountRecords[0]) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
@@ -212,19 +226,42 @@ try {
   Assert-RotationTest 'WORKER_SECRET_SOURCE_ANY_DESTINATION_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-access'; Destination = '/tmp/jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata } $false
   Assert-RotationTest 'UNKNOWN_GENERATION_SOURCE_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'unknown'; Destination = '/tmp/unknown'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
   Assert-RotationTest 'UNRELATED_NORMAL_BIND_ALLOWED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = (Join-Path $root 'normal-bind'); Destination = '/srv/normal'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $true
+  Assert-RotationTest 'SETS_PREFIX_COLLISION_OUTSIDE_ROOT_ALLOWED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = (Join-Path $secureRoot 'sets-old\jwt-access'); Destination = '/srv/normal'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $true
   Assert-RotationTest 'DUPLICATE_JSON_KEYS_REJECTED_PRE_DESERIALIZATION' { ConvertFrom-RotationStrictJson '{"transition":"ACTIVATION_ATTEMPT","transition":"ACTIVATION_ACCEPTED"}' 'ROTATION_OPERATION_RECORD_INVALID' | Out-Null } $false
+  Assert-RotationTest 'DUPLICATE_PLAN_KEYS_REJECTED_PRE_DESERIALIZATION' {
+    $duplicatePlanOperation = 'a' * 32
+    $duplicatePlan = New-RotationPlanObject $duplicatePlanOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+    $path = Write-RotationPlanAtomically $secureRoot $duplicatePlan
+    $json = Get-Content -LiteralPath $path -Raw
+    [IO.File]::WriteAllText($path, ($json -replace '^\{', '{"schemaVersion":1,'), [Text.UTF8Encoding]::new($false))
+    Read-RotationPlan $secureRoot $duplicatePlanOperation | Out-Null
+  } $false
+  Assert-RotationTest 'DUPLICATE_PLAN_OPERATION_ID_BLOCKED' { ConvertFrom-RotationStrictJson '{"operationId":"a","operationId":"b"}' 'ROTATION_PLAN_MALFORMED' | Out-Null } $false
+  Assert-RotationTest 'DUPLICATE_PLAN_RUNTIME_SERVICES_BLOCKED' { ConvertFrom-RotationStrictJson '{"runtimeServices":{},"runtimeServices":{}}' 'ROTATION_PLAN_MALFORMED' | Out-Null } $false
+  Assert-RotationTest 'DUPLICATE_NESTED_PLAN_SERVICE_IDENTITY_BLOCKED' { ConvertFrom-RotationStrictJson '{"runtimeServices":{"api":"autoops-api","api":"fake-api"}}' 'ROTATION_PLAN_MALFORMED' | Out-Null } $false
+  Assert-RotationTest 'DUPLICATE_PLAN_API_IMAGE_ID_BLOCKED' { ConvertFrom-RotationStrictJson '{"apiImageId":"a","apiImageId":"b"}' 'ROTATION_PLAN_MALFORMED' | Out-Null } $false
+  Assert-RotationTest 'DUPLICATE_PLAN_WORKER_IMAGE_ID_BLOCKED' { ConvertFrom-RotationStrictJson '{"workerImageId":"a","workerImageId":"b"}' 'ROTATION_PLAN_MALFORMED' | Out-Null } $false
+  Assert-RotationTest 'DUPLICATE_PLAN_CANDIDATE_GENERATION_ID_BLOCKED' { ConvertFrom-RotationStrictJson '{"candidateGenerationId":"a","candidateGenerationId":"b"}' 'ROTATION_PLAN_MALFORMED' | Out-Null } $false
+  Assert-RotationTest 'DUPLICATE_ROLLBACK_API_IMAGE_ID_BLOCKED' { ConvertFrom-RotationStrictJson '{"rollback":{"ApiImageId":"a","ApiImageId":"b"}}' 'ROTATION_PLAN_MALFORMED' | Out-Null } $false
+  Assert-RotationTest 'DUPLICATE_ROLLBACK_WORKER_IMAGE_ID_BLOCKED' { ConvertFrom-RotationStrictJson '{"rollback":{"WorkerImageId":"a","WorkerImageId":"b"}}' 'ROTATION_PLAN_MALFORMED' | Out-Null } $false
+  Assert-RotationTest 'DUPLICATE_PRESERVATION_CONTAINER_BLOCKED' { ConvertFrom-RotationStrictJson '{"rollback":{"NonTargetContainerIds":{"autoops-postgres":"a","autoops-postgres":"b"}}}' 'ROTATION_PLAN_MALFORMED' | Out-Null } $false
+  Assert-RotationTest 'DUPLICATE_PRESERVATION_VOLUME_PROPERTY_BLOCKED' { ConvertFrom-RotationStrictJson '{"rollback":{"VolumeInventory":[],"VolumeInventory":[]}}' 'ROTATION_PLAN_MALFORMED' | Out-Null } $false
+  Assert-RotationTest 'MALFORMED_PLAN_JSON_BLOCKED' { ConvertFrom-RotationStrictJson '{"runtimeServices":' 'ROTATION_PLAN_MALFORMED' | Out-Null } $false
   Assert-RotationTest 'DUPLICATE_NESTED_JSON_KEYS_REJECTED' { ConvertFrom-RotationStrictJson '{"rollback":{"ApiImageId":"a","ApiImageId":"b"}}' 'ROTATION_PLAN_MALFORMED' | Out-Null } $false
   Assert-RotationTest 'JSON_STRING_VALUE_NOT_MISTAKEN_FOR_KEY' { ConvertFrom-RotationStrictJson '{"value":"transition\" still value","nested":{"unicode":"組織"}}' 'ROTATION_PLAN_MALFORMED' | Out-Null } $true
+  Assert-RotationTest 'JSON_COLON_BRACES_STRING_VALUE_ALLOWED' { ConvertFrom-RotationStrictJson '{"value":"{key:value}:still-a-string"}' 'ROTATION_PLAN_MALFORMED' | Out-Null } $true
   Assert-RotationTest 'WINDOWS_POWERSHELL_5_1_PROCESS_ARGUMENT_BOUNDARIES' {
     $child = Join-Path ([IO.Path]::GetTempPath()) ('autoops-rotation-args-' + [Guid]::NewGuid().ToString('N') + '.ps1')
     try {
       [IO.File]::WriteAllText($child, '$args | ForEach-Object { [Console]::WriteLine($_) }', [Text.UTF8Encoding]::new($false))
-      $arguments = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$child,'space value','quote"value','key=value','組織','&literal')
+      $arguments = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$child,'plain','space value','quote"value','key=value','組織','&literal',';literal','(literal)','$literal','`literal','C:\path with spaces\','C:\path with spaces\\','C:\path with spaces\\\')
       $process = Start-RotationProcess 'powershell' $arguments 'PS51_PROCESS_START_FAILED'
       $actual = @($process.StandardOutput.ReadToEnd() -split "`r?`n" | Where-Object { $_.Length -gt 0 }); $null=$process.StandardError.ReadToEnd(); $process.WaitForExit()
-      if ($process.ExitCode -ne 0 -or -not (Test-RotationExactStringArray $actual @('space value','quote"value','key=value','組織','&literal'))) { throw }
+      if ($process.ExitCode -ne 0 -or -not (Test-RotationExactStringArray $actual @('plain','space value','quote"value','key=value','組織','&literal',';literal','(literal)','$literal','`literal','C:\path with spaces\','C:\path with spaces\\','C:\path with spaces\\\'))) { throw }
     } finally { if (Test-Path -LiteralPath $child) { Remove-Item -LiteralPath $child -Force } }
   } $true
+  Assert-RotationTest 'PS51_MULTIPLE_TRAILING_BACKSLASH_ARGUMENTS' { $encoder = (Get-Command ConvertTo-RotationProcessArgument).ScriptBlock.ToString(); $encoder -match '\[char\]92' } $true
+  Assert-RotationTest 'PROCESS_ARGUMENT_INJECTION_BLOCKED' { $launcher = (Get-Command Start-RotationProcess).ScriptBlock.ToString(); $launcher -notmatch 'cmd\.exe|powershell\.exe.+-Command|UseShellExecute\s*=\s*\$true' } $true
   Assert-RotationTest 'SECRET_PRESENCE_ABSENT' { Test-RotationPresenceOnlyExitCode 3 } $true
   Assert-RotationTest 'SECRET_PRESENCE_PRESENT_BLOCKED' { Test-RotationPresenceOnlyExitCode 0 } $false
   Assert-RotationTest 'NEGATIVE_PATH_SECRET_MATERIALIZATION' { $probe = (Get-Command Test-RotationContainerSecretKeyAbsent).ScriptBlock.ToString(); -not ($probe -match 'printf|echo|ReadToEnd\(\).*StandardOutput') } $true
