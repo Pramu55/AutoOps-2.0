@@ -96,6 +96,19 @@ function Test-RotationPathOverlap([string]$Left, [string]$Right) {
   return [string]::Equals($fullLeft, $fullRight, $comparison) -or (Test-RotationPathInside $fullLeft $fullRight) -or (Test-RotationPathInside $fullRight $fullLeft)
 }
 
+function ConvertTo-RotationContainerPath([string]$Path) {
+  if ([string]::IsNullOrWhiteSpace($Path) -or -not $Path.StartsWith('/') -or $Path.Contains('\')) { Stop-Rotation 'MOUNT_DESTINATION_INVALID' }
+  $segments = @($Path.Split('/') | Where-Object { $_.Length -gt 0 })
+  if (@($segments | Where-Object { $_ -in @('.', '..') }).Count -ne 0) { Stop-Rotation 'MOUNT_DESTINATION_INVALID' }
+  return '/' + ($segments -join '/')
+}
+
+function Test-RotationContainerPathOverlap([string]$Left, [string]$Right) {
+  $canonicalLeft = ConvertTo-RotationContainerPath $Left
+  $canonicalRight = ConvertTo-RotationContainerPath $Right
+  return $canonicalLeft -ceq $canonicalRight -or $canonicalLeft.StartsWith($canonicalRight + '/') -or $canonicalRight.StartsWith($canonicalLeft + '/')
+}
+
 function Assert-RotationPlanDirectorySecurity([string]$Path) {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Stop-Rotation 'ROTATION_PLAN_PERMISSION_MODEL_UNSUPPORTED' }
   try {
@@ -382,6 +395,7 @@ function Test-RotationRuntimeAcceptanceData($Actual, $Expected) {
     API_HEALTH = ($Actual.ApiRunning -and $Actual.ApiHealthy -and $Actual.ApiHealth200 -and $Actual.ApiReady200)
     WORKER_HEALTH = ($Actual.WorkerRunning -and $Actual.WorkerHealthy -and $Actual.WorkerHealth200 -and $Actual.WorkerReady200)
     SECRET_PROVIDER = ($Actual.SecretProviderMode -eq 'file' -and $Actual.SecretProviderStatus -eq 'READY')
+    API_SECRET_PROVIDER_ROOT = $Actual.ApiSecretProviderRootBound
     API_MOUNTS = ($Actual.ApiRequiredFileMounts -and -not $Actual.ApiJenkinsMount)
     WORKER_MOUNTS = (-not $Actual.WorkerApplicationSecretMount)
     MIGRATED_ENVIRONMENT = ($Actual.ApiMigratedEnvironmentAbsent -and $Actual.WorkerMigratedEnvironmentAbsent)
@@ -487,11 +501,12 @@ function New-RotationPlanObject(
 ) {
   foreach ($id in @($OperationId, $CandidateGenerationId, $CurrentGoodGenerationId)) { if (-not (Test-RotationGenerationId $id)) { Stop-Rotation 'PLAN_GENERATION_ID_INVALID' } }
   if (-not [string]::IsNullOrWhiteSpace($PreviousGoodGenerationId) -and -not (Test-RotationGenerationId $PreviousGoodGenerationId)) { Stop-Rotation 'PLAN_GENERATION_ID_INVALID' }
-  if ($CandidateGenerationId -ceq $CurrentGoodGenerationId -or $CandidateGenerationId -ceq $PreviousGoodGenerationId) { Stop-Rotation 'PLAN_GENERATION_REUSE' }
+  $normalizedPreviousGoodGenerationId = if ([string]::IsNullOrWhiteSpace($PreviousGoodGenerationId)) { $null } else { $PreviousGoodGenerationId }
+  if ($CandidateGenerationId -ceq $CurrentGoodGenerationId -or $CandidateGenerationId -ceq $normalizedPreviousGoodGenerationId) { Stop-Rotation 'PLAN_GENERATION_REUSE' }
   if (-not (Test-RotationRevision $RepositoryRevision) -or -not (Test-RotationSha256 $ApiImageId) -or -not (Test-RotationSha256 $WorkerImageId) -or $ApiImageId -ceq $WorkerImageId) { Stop-Rotation 'PLAN_IDENTITY_INVALID' }
   if (-not (Test-RotationExactStringArray $Overlays $script:RotationRequiredOverlays)) { Stop-Rotation 'PLAN_OVERLAY_CONTRACT_INVALID' }
   if ($null -eq $RollbackContract -or -not (Test-RotationGenerationId $RollbackContract.TargetGenerationId) -or $RollbackContract.TargetGenerationId -cne $CurrentGoodGenerationId -or -not (Test-RotationSha256 $RollbackContract.ApiImageId) -or -not (Test-RotationSha256 $RollbackContract.WorkerImageId) -or $RollbackContract.ExpectedRuntimeMode -cne 'file' -or -not (Test-RotationExactStringArray $RollbackContract.ExpectedHealthEndpoints $script:RotationHealthEndpoints) -or $null -eq $RollbackContract.NonTargetContainerIds -or $null -eq $RollbackContract.VolumeInventory) { Stop-Rotation 'ROLLBACK_CONTRACT_INVALID' }
-  return [ordered]@{ schemaVersion = $script:RotationSchemaVersion; operationId = $OperationId; status = 'PREPARED'; createdAtUtc = [DateTime]::UtcNow.ToString('o'); candidateGenerationId = $CandidateGenerationId; currentGoodGenerationId = $CurrentGoodGenerationId; previousGoodGenerationId = $PreviousGoodGenerationId; repositoryRevision = $RepositoryRevision; apiImageId = $ApiImageId; workerImageId = $WorkerImageId; runtimeServices = $script:RotationRuntimeServices; requiredOverlays = @($script:RotationRequiredOverlays); requiredGates = @($script:RotationRequiredGates); activationAttemptLimit = 1; rollbackAttemptLimit = 1; activationAttempts = 0; rollbackAttempts = 0; rollback = $RollbackContract }
+  return [ordered]@{ schemaVersion = $script:RotationSchemaVersion; operationId = $OperationId; status = 'PREPARED'; createdAtUtc = [DateTime]::UtcNow.ToString('o'); candidateGenerationId = $CandidateGenerationId; currentGoodGenerationId = $CurrentGoodGenerationId; previousGoodGenerationId = $normalizedPreviousGoodGenerationId; repositoryRevision = $RepositoryRevision; apiImageId = $ApiImageId; workerImageId = $WorkerImageId; runtimeServices = $script:RotationRuntimeServices; requiredOverlays = @($script:RotationRequiredOverlays); requiredGates = @($script:RotationRequiredGates); activationAttemptLimit = 1; rollbackAttemptLimit = 1; activationAttempts = 0; rollbackAttempts = 0; rollback = $RollbackContract }
 }
 
 function Read-RotationPlan([string]$TargetRoot, [string]$OperationId) {
@@ -666,7 +681,8 @@ function Test-RotationMountBindingData($Records, [string]$TargetRoot, [string]$G
     # application-secret material: an exact file, a generation directory,
     # the sets root, or an ancestor bind containing the sets root.
     $generationSource = Test-RotationPathOverlap $actualSource $setsRoot
-    if (-not $IsApi -and $generationSource) { return $false }
+    try { $protectedDestination = Test-RotationContainerPathOverlap $record.Destination '/run/secrets/autoops' } catch { return $false }
+    if (-not $IsApi -and ($generationSource -or $protectedDestination)) { return $false }
     if ($generationSource) {
       if (-not $expectedBySource.ContainsKey($actualSource) -or $record.Destination -cne $expectedBySource[$actualSource] -or $record.ReadWrite) { return $false }
       if (-not $SkipSourceMetadata) { try { Assert-RotationNoReparse $actualSource 'MOUNT_SOURCE_REPARSE_PATH' } catch { return $false } }

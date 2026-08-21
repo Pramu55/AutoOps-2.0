@@ -37,13 +37,23 @@ function Get-RotationContainerVolumeNames([string]$Name) {
 
 function Get-RotationEnvironmentValue([string]$Container, [string]$Key) {
   Assert-RotationContainerName $Container
-  if ($Key -notin @($script:RotationProviderKeys + $script:RotationFlagKeys)) { Stop-Rotation 'ENVIRONMENT_KEY_INVALID' }
+  if ($Key -notin @($script:RotationProviderKeys + $script:RotationFlagKeys + @('SECRET_PROVIDER_ROOT'))) { Stop-Rotation 'ENVIRONMENT_KEY_INVALID' }
   $script = 'if [ "${' + $Key + '+x}" ]; then printf %s "${' + $Key + '}"; else exit 3; fi'
   $process = Start-RotationProcess 'docker' @('exec', $Container, 'sh', '-c', $script) 'ENVIRONMENT_INSPECTION_FAILED'
   $value = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -eq 3) { return [pscustomobject]@{ Present = $false; Value = $null } }
   if ($process.ExitCode -ne 0) { Stop-Rotation 'ENVIRONMENT_INSPECTION_FAILED' }
   return [pscustomobject]@{ Present = $true; Value = $value }
+}
+
+function Test-RotationApiSecretProviderRoot($Entry) {
+  # File-mode Compose explicitly sets this exact root. A missing, trailing-
+  # slash, or alternate value could direct the API to unverified mounts.
+  return $null -ne $Entry -and $Entry.Present -and $Entry.Value -ceq '/run/secrets/autoops'
+}
+
+function Test-RotationNonTargetPreservation($State, [string]$ExpectedContainerId) {
+  return $null -ne $State -and $State.ContainerId -is [string] -and $State.ContainerId -match '^[a-f0-9]{64}$' -and $State.ContainerId -ceq $ExpectedContainerId -and $State.Running -eq $true
 }
 
 function Get-RotationContainerProviderConfiguration([string]$Container) {
@@ -117,12 +127,19 @@ function Get-RotationContainerReadiness([string]$Container) {
 
 function Test-RotationRuntimeSelfTest {
   $expected = [pscustomobject]@{ ApiImageId = 'sha256:' + ('1' * 64); WorkerImageId = 'sha256:' + ('2' * 64) }
-  $actual = [pscustomobject]@{ ApiImageId = $expected.ApiImageId; WorkerImageId = $expected.WorkerImageId; ApiRunning = $true; ApiHealthy = $true; ApiHealth200 = $true; ApiReady200 = $true; WorkerRunning = $true; WorkerHealthy = $true; WorkerHealth200 = $true; WorkerReady200 = $true; SecretProviderMode = 'file'; SecretProviderStatus = 'READY'; ApiRequiredFileMounts = $true; ApiJenkinsMount = $false; WorkerApplicationSecretMount = $false; ApiMigratedEnvironmentAbsent = $true; WorkerMigratedEnvironmentAbsent = $true; GitHubActionsEnabled = $true; JenkinsIntegrationDisabled = $true; ApiProviderEquivalent = $true; WorkerProviderEquivalent = $true; NonTargetContainerIdsPreserved = $true; VolumeInventoryPreserved = $true }
+  $actual = [pscustomobject]@{ ApiImageId = $expected.ApiImageId; WorkerImageId = $expected.WorkerImageId; ApiRunning = $true; ApiHealthy = $true; ApiHealth200 = $true; ApiReady200 = $true; WorkerRunning = $true; WorkerHealthy = $true; WorkerHealth200 = $true; WorkerReady200 = $true; SecretProviderMode = 'file'; SecretProviderStatus = 'READY'; ApiSecretProviderRootBound = $true; ApiRequiredFileMounts = $true; ApiJenkinsMount = $false; WorkerApplicationSecretMount = $false; ApiMigratedEnvironmentAbsent = $true; WorkerMigratedEnvironmentAbsent = $true; GitHubActionsEnabled = $true; JenkinsIntegrationDisabled = $true; ApiProviderEquivalent = $true; WorkerProviderEquivalent = $true; NonTargetContainerIdsPreserved = $true; VolumeInventoryPreserved = $true }
   $pass = Test-RotationRuntimeAcceptanceData $actual $expected
   if (-not $pass.Passed) { Stop-Rotation 'RUNTIME_ACCEPTANCE_SELF_TEST_FAILED' }
   $actual.WorkerApplicationSecretMount = $true
   $fail = Test-RotationRuntimeAcceptanceData $actual $expected
   if ($fail.Passed -or $fail.Gate -ne 'WORKER_MOUNTS') { Stop-Rotation 'RUNTIME_ACCEPTANCE_FAIL_CLOSED_TEST_FAILED' }
+  $actual.WorkerApplicationSecretMount = $false; $actual.ApiSecretProviderRootBound = $false
+  $rootFail = Test-RotationRuntimeAcceptanceData $actual $expected
+  if ($rootFail.Passed -or $rootFail.Gate -ne 'API_SECRET_PROVIDER_ROOT') { Stop-Rotation 'SECRET_PROVIDER_ROOT_SELF_TEST_FAILED' }
+  $actual.ApiSecretProviderRootBound = $true
+  $containerId = 'a' * 64
+  if (-not (Test-RotationApiSecretProviderRoot ([pscustomobject]@{ Present = $true; Value = '/run/secrets/autoops' })) -or (Test-RotationApiSecretProviderRoot ([pscustomobject]@{ Present = $true; Value = '/tmp/autoops' })) -or (Test-RotationApiSecretProviderRoot ([pscustomobject]@{ Present = $true; Value = '/run/secrets/autoops/' })) -or (Test-RotationApiSecretProviderRoot ([pscustomobject]@{ Present = $false; Value = $null }))) { Stop-Rotation 'SECRET_PROVIDER_ROOT_SELF_TEST_FAILED' }
+  if (-not (Test-RotationNonTargetPreservation ([pscustomobject]@{ ContainerId = $containerId; Running = $true }) $containerId) -or (Test-RotationNonTargetPreservation ([pscustomobject]@{ ContainerId = $containerId; Running = $false }) $containerId) -or (Test-RotationNonTargetPreservation ([pscustomobject]@{ ContainerId = ('b' * 64); Running = $true }) $containerId)) { Stop-Rotation 'NON_TARGET_PRESERVATION_SELF_TEST_FAILED' }
   if (-not (Test-RotationPresenceOnlyExitCode 3) -or (Test-RotationPresenceOnlyExitCode 0)) { Stop-Rotation 'SECRET_PRESENCE_ONLY_SELF_TEST_FAILED' }
   $apiProbe = New-RotationContainerHttpProbeArguments 'autoops-api' 4000 '/ready' $true
   $workerProbe = New-RotationContainerHttpProbeArguments 'autoops-worker' 4001 '/readyz' $false
@@ -135,6 +152,11 @@ function Test-RotationRuntimeSelfTest {
   [Console]::WriteLine('MIGRATED_SECRET_PRESENCE_ONLY PASS')
   [Console]::WriteLine('HTTP_PROBES_PLAN_BOUND PASS')
   [Console]::WriteLine('HOST_PORT_DECOY_ACCEPTANCE_BLOCKED PASS')
+  [Console]::WriteLine('API_SECRET_PROVIDER_ROOT_BOUND PASS')
+  [Console]::WriteLine('ALTERNATE_SECRET_PROVIDER_ROOT_BLOCKED PASS')
+  [Console]::WriteLine('NON_TARGET_RUNNING_REQUIRED PASS')
+  [Console]::WriteLine('NON_TARGET_STOPPED_BLOCKED PASS')
+  [Console]::WriteLine('NON_TARGET_IDENTITY_PRESERVED PASS')
 }
 
 try {
@@ -150,18 +172,19 @@ try {
   $apiMountsBound = Test-RotationMountBindingData (Get-RotationContainerMountRecords $ApiContainer) $TargetRoot $expectedGeneration $true
   $workerMountsBound = Test-RotationMountBindingData (Get-RotationContainerMountRecords $WorkerContainer) $TargetRoot $expectedGeneration $false
   $apiConfig = Get-RotationContainerProviderConfiguration $ApiContainer; $workerConfig = Get-RotationContainerProviderConfiguration $WorkerContainer
+  $apiSecretProviderRootBound = Test-RotationApiSecretProviderRoot (Get-RotationEnvironmentValue $ApiContainer 'SECRET_PROVIDER_ROOT')
   $readiness = Get-RotationContainerReadiness $ApiContainer
   $nonTargetPreserved = $true
   $volumeSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
   foreach ($volume in @(Get-RotationContainerVolumeNames $ApiContainer) + @(Get-RotationContainerVolumeNames $WorkerContainer)) { $null = $volumeSet.Add($volume) }
   foreach ($property in @($plan.rollback.NonTargetContainerIds.PSObject.Properties)) {
-    $nonTargetPreserved = $nonTargetPreserved -and (Get-RotationContainerState $property.Name).ContainerId -eq $property.Value
+    $nonTargetPreserved = $nonTargetPreserved -and (Test-RotationNonTargetPreservation (Get-RotationContainerState $property.Name) $property.Value)
     foreach ($volume in Get-RotationContainerVolumeNames $property.Name) { $null = $volumeSet.Add($volume) }
   }
   $volumeNames = @($volumeSet | Sort-Object)
   $volumesPreserved = (($volumeNames -join [char]0) -ceq ((@($plan.rollback.VolumeInventory | Sort-Object)) -join [char]0))
   $actual = [pscustomobject]@{
-    ApiImageId = $apiState.ImageId; WorkerImageId = $workerState.ImageId; ApiRunning = $apiState.Running; ApiHealthy = $apiState.Healthy; ApiHealth200 = (Get-RotationContainerHttpStatus $ApiContainer 4000 '/health') -eq 200; ApiReady200 = (Get-RotationContainerHttpStatus $ApiContainer 4000 '/ready') -eq 200; WorkerRunning = $workerState.Running; WorkerHealthy = $workerState.Healthy; WorkerHealth200 = (Get-RotationContainerHttpStatus $WorkerContainer 4001 '/healthz') -eq 200; WorkerReady200 = (Get-RotationContainerHttpStatus $WorkerContainer 4001 '/readyz') -eq 200; SecretProviderMode = $readiness.Mode; SecretProviderStatus = $readiness.Status; ApiRequiredFileMounts = $apiMountsBound; ApiJenkinsMount = $false; WorkerApplicationSecretMount = -not $workerMountsBound; ApiMigratedEnvironmentAbsent = Test-RotationMigratedEnvironmentAbsent $ApiContainer; WorkerMigratedEnvironmentAbsent = Test-RotationMigratedEnvironmentAbsent $WorkerContainer; GitHubActionsEnabled = ($apiConfig.GITHUB_ACTIONS_ENABLED -ceq 'true' -and $workerConfig.GITHUB_ACTIONS_ENABLED -ceq 'true'); JenkinsIntegrationDisabled = ($apiConfig.JENKINS_INTEGRATION_ENABLED -ceq 'false' -and $workerConfig.JENKINS_INTEGRATION_ENABLED -ceq 'false'); ApiProviderEquivalent = Test-RotationProviderSemanticEquivalence $baseline $apiConfig; WorkerProviderEquivalent = Test-RotationProviderSemanticEquivalence $baseline $workerConfig; NonTargetContainerIdsPreserved = $nonTargetPreserved; VolumeInventoryPreserved = $volumesPreserved
+    ApiImageId = $apiState.ImageId; WorkerImageId = $workerState.ImageId; ApiRunning = $apiState.Running; ApiHealthy = $apiState.Healthy; ApiHealth200 = (Get-RotationContainerHttpStatus $ApiContainer 4000 '/health') -eq 200; ApiReady200 = (Get-RotationContainerHttpStatus $ApiContainer 4000 '/ready') -eq 200; WorkerRunning = $workerState.Running; WorkerHealthy = $workerState.Healthy; WorkerHealth200 = (Get-RotationContainerHttpStatus $WorkerContainer 4001 '/healthz') -eq 200; WorkerReady200 = (Get-RotationContainerHttpStatus $WorkerContainer 4001 '/readyz') -eq 200; SecretProviderMode = $readiness.Mode; SecretProviderStatus = $readiness.Status; ApiSecretProviderRootBound = $apiSecretProviderRootBound; ApiRequiredFileMounts = $apiMountsBound; ApiJenkinsMount = $false; WorkerApplicationSecretMount = -not $workerMountsBound; ApiMigratedEnvironmentAbsent = Test-RotationMigratedEnvironmentAbsent $ApiContainer; WorkerMigratedEnvironmentAbsent = Test-RotationMigratedEnvironmentAbsent $WorkerContainer; GitHubActionsEnabled = ($apiConfig.GITHUB_ACTIONS_ENABLED -ceq 'true' -and $workerConfig.GITHUB_ACTIONS_ENABLED -ceq 'true'); JenkinsIntegrationDisabled = ($apiConfig.JENKINS_INTEGRATION_ENABLED -ceq 'false' -and $workerConfig.JENKINS_INTEGRATION_ENABLED -ceq 'false'); ApiProviderEquivalent = Test-RotationProviderSemanticEquivalence $baseline $apiConfig; WorkerProviderEquivalent = Test-RotationProviderSemanticEquivalence $baseline $workerConfig; NonTargetContainerIdsPreserved = $nonTargetPreserved; VolumeInventoryPreserved = $volumesPreserved
   }
   $result = Test-RotationRuntimeAcceptanceData $actual ([pscustomobject]@{ ApiImageId = $expectedApiImage; WorkerImageId = $expectedWorkerImage })
   if (-not $result.Passed) { Stop-Rotation ('RUNTIME_ACCEPTANCE_' + $result.Gate) }
