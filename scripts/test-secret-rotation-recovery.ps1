@@ -143,6 +143,7 @@ try {
   Assert-RotationTest 'PLAN_ONLY_INITIALIZATION_INTERRUPTION_RECOGNIZED' { if ((Get-RotationOperationState $secureRoot $planOnlyOperation).State -ne 'OPERATION_INITIALIZATION_INTERRUPTED') { throw } } $true
   Assert-RotationTest 'PLAN_ONLY_INITIALIZATION_NOT_ACCEPTED' { if ((Get-RotationRecoveryClassification (Get-RotationOperationState $secureRoot $planOnlyOperation) (New-RotationSyntheticObservation)) -ne 'MANUAL_INTERVENTION_REQUIRED') { throw } } $true
   Assert-RotationTest 'PLAN_ONLY_MANUAL_INTERVENTION_SUPPORTED' { Consume-RotationOperationTransition $secureRoot $planOnlyOperation 'MANUAL_INTERVENTION' } $true
+  Assert-RotationTest 'PLAN_ONLY_MANUAL_INTERVENTION_STATE_READABLE' { $state = Get-RotationOperationState $secureRoot $planOnlyOperation; if ($state.State -ne 'MANUAL_INTERVENTION_REQUIRED' -or (Test-RotationRecoveryRequiresRuntimeObservation $state)) { throw } } $true
   $directoryOnlyOperation = ('03' * 16)
   $directoryOnlyPlan = New-RotationPlanObject $directoryOnlyOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
   $null = Write-RotationPlanAtomically $secureRoot $directoryOnlyPlan
@@ -151,6 +152,7 @@ try {
   [IO.Directory]::CreateDirectory($directoryOnlyPath) | Out-Null; Set-RotationOperationDirectorySecurity $directoryOnlyPath
   Assert-RotationTest 'DIRECTORY_ONLY_INITIALIZATION_INTERRUPTION_RECOGNIZED' { if ((Get-RotationOperationState $secureRoot $directoryOnlyOperation).State -ne 'OPERATION_INITIALIZATION_INTERRUPTED') { throw } } $true
   Assert-RotationTest 'DIRECTORY_ONLY_MANUAL_INTERVENTION_SUPPORTED' { Consume-RotationOperationTransition $secureRoot $directoryOnlyOperation 'MANUAL_INTERVENTION' } $true
+  Assert-RotationTest 'DIRECTORY_ONLY_MANUAL_INTERVENTION_STATE_READABLE' { $state = Get-RotationOperationState $secureRoot $directoryOnlyOperation; if ($state.State -ne 'MANUAL_INTERVENTION_REQUIRED' -or (Test-RotationRecoveryRequiresRuntimeObservation $state)) { throw } } $true
   $planIdentityBefore = Get-RotationPlanIdentity $secureRoot $secureOperation
   Assert-RotationTest 'ACTIVATION_FIRST_CONSUME' { Initialize-RotationOperation $secureRoot $secureOperation; Consume-RotationOperationTransition $secureRoot $secureOperation 'ACTIVATION_ATTEMPT' } $true
   Assert-RotationTest 'ACTIVATION_REPLAY_BLOCKED' { Consume-RotationOperationTransition $secureRoot $secureOperation 'ACTIVATION_ATTEMPT' } $false
@@ -239,6 +241,7 @@ try {
   Assert-RotationTest 'CANDIDATE_EVIDENCE_ONLY_STATE_RECOGNIZED' { if ((Get-RotationOperationState $secureRoot $candidateEvidenceOperation).State -ne 'CANDIDATE_ACCEPTANCE_INTERRUPTED') { throw } } $true
   Assert-RotationTest 'EVIDENCE_ONLY_NOT_ACCEPTED' { if ((Get-RotationRecoveryClassification (Get-RotationOperationState $secureRoot $candidateEvidenceOperation) (New-RotationSyntheticObservation)) -ne 'MANUAL_INTERVENTION_REQUIRED') { throw } } $true
   Assert-RotationTest 'EVIDENCE_ONLY_MANUAL_PATH_SUPPORTED' { Consume-RotationOperationTransition $secureRoot $candidateEvidenceOperation 'MANUAL_INTERVENTION' } $true
+  Assert-RotationTest 'CANDIDATE_EVIDENCE_ONLY_NO_DOCKER_OBSERVATION_REQUIRED' { if (Test-RotationRecoveryRequiresRuntimeObservation (Get-RotationOperationState $secureRoot $candidateEvidenceOperation)) { throw } } $true
   $rollbackEvidenceOperation = '2' * 32
   $rollbackEvidencePlan = New-RotationPlanObject $rollbackEvidenceOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
   $null = Write-RotationPlanAtomically $secureRoot $rollbackEvidencePlan; Initialize-RotationOperation $secureRoot $rollbackEvidenceOperation; Consume-RotationOperationTransition $secureRoot $rollbackEvidenceOperation 'ACTIVATION_ATTEMPT'; Consume-RotationOperationTransition $secureRoot $rollbackEvidenceOperation 'ACTIVATION_FAILED'; Consume-RotationOperationTransition $secureRoot $rollbackEvidenceOperation 'ROLLBACK_ATTEMPT'
@@ -247,6 +250,7 @@ try {
   [IO.File]::WriteAllText((Join-Path $rollbackEvidenceState.OperationRoot 'rollback-acceptance.json'), ($rollbackEvidence | ConvertTo-Json -Compress))
   Assert-RotationTest 'ROLLBACK_EVIDENCE_ONLY_STATE_RECOGNIZED' { if ((Get-RotationOperationState $secureRoot $rollbackEvidenceOperation).State -ne 'ROLLBACK_ACCEPTANCE_INTERRUPTED') { throw } } $true
   Assert-RotationTest 'EVIDENCE_ONLY_RECOVERY_SUPPORTED' { if ((Get-RotationRecoveryClassification (Get-RotationOperationState $secureRoot $rollbackEvidenceOperation) (New-RotationSyntheticObservation)) -ne 'MANUAL_INTERVENTION_REQUIRED') { throw } } $true
+  Assert-RotationTest 'ROLLBACK_EVIDENCE_ONLY_NO_DOCKER_OBSERVATION_REQUIRED' { if (Test-RotationRecoveryRequiresRuntimeObservation (Get-RotationOperationState $secureRoot $rollbackEvidenceOperation)) { throw } } $true
   $mountRecords = @(
     [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-access'; Destination = '/run/secrets/autoops/jwt-access'; ReadWrite = $false },
     [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-refresh'; Destination = '/run/secrets/autoops/jwt-refresh'; ReadWrite = $false },

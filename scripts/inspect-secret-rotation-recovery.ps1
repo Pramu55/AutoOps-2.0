@@ -25,12 +25,29 @@ function Get-RotationObservedRuntime([string]$TargetRoot, $Plan) {
   return [pscustomobject]@{ ApiCandidate = $api.ImageId -ceq $Plan.apiImageId; WorkerCandidate = $worker.ImageId -ceq $Plan.workerImageId; ApiRollback = $api.ImageId -ceq $Plan.rollback.ApiImageId; WorkerRollback = $worker.ImageId -ceq $Plan.rollback.WorkerImageId; CandidateApiMountsBound = $candidateApiMounts; RollbackApiMountsBound = $rollbackApiMounts; WorkerMountsIsolated = ($candidateWorkerMounts -and $rollbackWorkerMounts); CandidateAcceptancePassed = $candidateAcceptance; RollbackAcceptancePassed = $rollbackAcceptance }
 }
 
+function Get-RotationRecoveryInspectionClassification([string]$TargetRoot, $State) {
+  # States with an unconditional fail-closed manual result must remain
+  # inspectable when Docker is down or the planned services no longer exist.
+  # No runtime probe can change their classification.
+  $observation = $null
+  if (Test-RotationRecoveryRequiresRuntimeObservation $State) {
+    $observation = Get-RotationObservedRuntime $TargetRoot $State.Plan
+  }
+  return Get-RotationRecoveryClassification $State $observation
+}
+
 try {
   if ($RunSelfTest) {
     $state = [pscustomobject]@{ State = 'PREPARED' }
     if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $false $false $false $true)) -ne 'SAFE_TO_RESUME_PREFLIGHT') { Stop-Rotation 'RECOVERY_SELF_TEST_PREPARED' }
     $state.State = 'OPERATION_INITIALIZATION_INTERRUPTED'
     if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $false $false $false $false)) -ne 'MANUAL_INTERVENTION_REQUIRED') { Stop-Rotation 'RECOVERY_SELF_TEST_INITIALIZATION_INTERRUPTED' }
+    if (Test-RotationRecoveryRequiresRuntimeObservation $state) { Stop-Rotation 'RECOVERY_SELF_TEST_INITIALIZATION_OBSERVATION' }
+    $state.State = 'CANDIDATE_ACCEPTANCE_INTERRUPTED'
+    if ((Get-RotationRecoveryClassification $state $null) -ne 'MANUAL_INTERVENTION_REQUIRED' -or (Test-RotationRecoveryRequiresRuntimeObservation $state)) { Stop-Rotation 'RECOVERY_SELF_TEST_CANDIDATE_EVIDENCE_OBSERVATION' }
+    $state.State = 'ROLLBACK_ACCEPTANCE_INTERRUPTED'
+    if ((Get-RotationRecoveryClassification $state $null) -ne 'MANUAL_INTERVENTION_REQUIRED' -or (Test-RotationRecoveryRequiresRuntimeObservation $state)) { Stop-Rotation 'RECOVERY_SELF_TEST_ROLLBACK_EVIDENCE_OBSERVATION' }
+    if ((Get-RotationRecoveryInspectionClassification 'unused-in-self-test' $state) -ne 'MANUAL_INTERVENTION_REQUIRED') { Stop-Rotation 'RECOVERY_SELF_TEST_UNCONDITIONAL_MANUAL_NO_DOCKER' }
     $state.State = 'ACTIVATION_ATTEMPT_CONSUMED'
     if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $true $false $false $false)) -ne 'ROLLBACK_REQUIRED') { Stop-Rotation 'RECOVERY_SELF_TEST_PARTIAL' }
     if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $true $true $true $false)) -ne 'ACTIVATION_IN_PROGRESS') { Stop-Rotation 'RECOVERY_SELF_TEST_ACTIVE' }
@@ -42,8 +59,7 @@ try {
     exit 0
   }
   $state = Get-RotationOperationState $TargetRoot $OperationId
-  $observation = Get-RotationObservedRuntime $TargetRoot $state.Plan
-  $classification = Get-RotationRecoveryClassification $state $observation
+  $classification = Get-RotationRecoveryInspectionClassification $TargetRoot $state
   [Console]::WriteLine(('RECOVERY_CLASSIFICATION ' + $classification))
   exit 0
 } catch {

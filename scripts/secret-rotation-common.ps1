@@ -598,6 +598,11 @@ function Get-RotationOperationState([string]$TargetRoot, [string]$OperationId, [
   $baseNames = @($names | Where-Object { $_ -cne 'manual-intervention.json' } | Sort-Object)
   $baseSignature = [string]::Join('|', $baseNames)
   $stateBySignature = @{
+    # A durable manual marker may be the only operation record after a
+    # plan-only or directory-only initialization interruption.  It is still
+    # non-accepted and cannot resume preflight, but must remain readable so
+    # recovery does not strand the immutable plan.
+    '' = 'OPERATION_INITIALIZATION_INTERRUPTED'
     'operation-created.json' = 'PREPARED'
     'activation-attempt.json|operation-created.json' = 'ACTIVATION_ATTEMPT_CONSUMED'
     'activation-attempt.json|candidate-acceptance.json|operation-created.json' = 'CANDIDATE_ACCEPTANCE_INTERRUPTED'
@@ -781,4 +786,17 @@ function Get-RotationRecoveryClassification($OperationState, $Observation) {
     'ROLLBACK_ACCEPTANCE_INTERRUPTED' { return 'MANUAL_INTERVENTION_REQUIRED' }
     default { return 'MANUAL_INTERVENTION_REQUIRED' }
   }
+}
+
+function Test-RotationRecoveryRequiresRuntimeObservation($OperationState) {
+  # These states are durably fail-closed before an observation exists.  Do not
+  # make recovery depend on Docker availability when no observation can alter
+  # the only permitted result: manual intervention.
+  return $OperationState.State -notin @(
+    'OPERATION_INITIALIZATION_INTERRUPTED',
+    'CANDIDATE_ACCEPTANCE_INTERRUPTED',
+    'ROLLBACK_ATTEMPT_CONSUMED',
+    'ROLLBACK_ACCEPTANCE_INTERRUPTED',
+    'MANUAL_INTERVENTION_REQUIRED'
+  )
 }
