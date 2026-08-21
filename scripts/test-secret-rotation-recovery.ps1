@@ -216,6 +216,23 @@ try {
   $badAccepted = [ordered]@{ schemaVersion = 1; operationId = $badEvidenceOperation; planIdentity = $badEvidenceState.PlanIdentity; transition = 'ACTIVATION_ACCEPTED'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
   [IO.File]::WriteAllText((Join-Path $badEvidenceState.OperationRoot 'activation-accepted.json'), ($badAccepted | ConvertTo-Json -Compress))
   Assert-RotationTest 'MALFORMED_ACCEPTANCE_EVIDENCE_TIMESTAMP_BLOCKED' { Get-RotationOperationState $secureRoot $badEvidenceOperation | Out-Null } $false
+  $candidateEvidenceOperation = 'd' * 32
+  $candidateEvidencePlan = New-RotationPlanObject $candidateEvidenceOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $candidateEvidencePlan; Initialize-RotationOperation $secureRoot $candidateEvidenceOperation; Consume-RotationOperationTransition $secureRoot $candidateEvidenceOperation 'ACTIVATION_ATTEMPT'
+  $candidateEvidenceState = Get-RotationOperationState $secureRoot $candidateEvidenceOperation
+  $candidateEvidence = [ordered]@{ schemaVersion = 1; operationId = $candidateEvidenceOperation; planIdentity = $candidateEvidenceState.PlanIdentity; transition = 'ACCEPTANCE_EVIDENCE'; mode = 'Candidate'; repositoryRevision = ('b' * 40); expectedApiImageId = 'sha256:' + ('7' * 64); expectedWorkerImageId = 'sha256:' + ('8' * 64); acceptanceResult = 'PASS'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
+  [IO.File]::WriteAllText((Join-Path $candidateEvidenceState.OperationRoot 'candidate-acceptance.json'), ($candidateEvidence | ConvertTo-Json -Compress))
+  Assert-RotationTest 'CANDIDATE_EVIDENCE_ONLY_STATE_RECOGNIZED' { if ((Get-RotationOperationState $secureRoot $candidateEvidenceOperation).State -ne 'CANDIDATE_ACCEPTANCE_INTERRUPTED') { throw } } $true
+  Assert-RotationTest 'EVIDENCE_ONLY_NOT_ACCEPTED' { if ((Get-RotationRecoveryClassification (Get-RotationOperationState $secureRoot $candidateEvidenceOperation) (New-RotationSyntheticObservation)) -ne 'MANUAL_INTERVENTION_REQUIRED') { throw } } $true
+  Assert-RotationTest 'EVIDENCE_ONLY_MANUAL_PATH_SUPPORTED' { Consume-RotationOperationTransition $secureRoot $candidateEvidenceOperation 'MANUAL_INTERVENTION' } $true
+  $rollbackEvidenceOperation = '2' * 32
+  $rollbackEvidencePlan = New-RotationPlanObject $rollbackEvidenceOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $rollbackEvidencePlan; Initialize-RotationOperation $secureRoot $rollbackEvidenceOperation; Consume-RotationOperationTransition $secureRoot $rollbackEvidenceOperation 'ACTIVATION_ATTEMPT'; Consume-RotationOperationTransition $secureRoot $rollbackEvidenceOperation 'ACTIVATION_FAILED'; Consume-RotationOperationTransition $secureRoot $rollbackEvidenceOperation 'ROLLBACK_ATTEMPT'
+  $rollbackEvidenceState = Get-RotationOperationState $secureRoot $rollbackEvidenceOperation
+  $rollbackEvidence = [ordered]@{ schemaVersion = 1; operationId = $rollbackEvidenceOperation; planIdentity = $rollbackEvidenceState.PlanIdentity; transition = 'ACCEPTANCE_EVIDENCE'; mode = 'Rollback'; repositoryRevision = ('b' * 40); expectedApiImageId = 'sha256:' + ('5' * 64); expectedWorkerImageId = 'sha256:' + ('6' * 64); acceptanceResult = 'PASS'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
+  [IO.File]::WriteAllText((Join-Path $rollbackEvidenceState.OperationRoot 'rollback-acceptance.json'), ($rollbackEvidence | ConvertTo-Json -Compress))
+  Assert-RotationTest 'ROLLBACK_EVIDENCE_ONLY_STATE_RECOGNIZED' { if ((Get-RotationOperationState $secureRoot $rollbackEvidenceOperation).State -ne 'ROLLBACK_ACCEPTANCE_INTERRUPTED') { throw } } $true
+  Assert-RotationTest 'EVIDENCE_ONLY_RECOVERY_SUPPORTED' { if ((Get-RotationRecoveryClassification (Get-RotationOperationState $secureRoot $rollbackEvidenceOperation) (New-RotationSyntheticObservation)) -ne 'MANUAL_INTERVENTION_REQUIRED') { throw } } $true
   $mountRecords = @(
     [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-access'; Destination = '/run/secrets/autoops/jwt-access'; ReadWrite = $false },
     [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-refresh'; Destination = '/run/secrets/autoops/jwt-refresh'; ReadWrite = $false },
@@ -261,6 +278,15 @@ try {
   Assert-RotationTest 'WORKER_PROTECTED_SOURCE_AND_DESTINATION_BLOCKED' {
     Test-RotationMountBindingData @([pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-access'; Destination = '/run/secrets/autoops/jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata
   } $false
+  $normalSource = Join-Path $root 'normal-bind'; [IO.File]::WriteAllText($normalSource, 'synthetic')
+  Assert-RotationTest 'ORDINARY_NON_REPARSE_BIND_ALLOWED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = $normalSource; Destination = '/tmp/data'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $true
+  Assert-RotationTest 'EXACT_PLANNED_NON_REPARSE_SOURCES_PASS' { Test-RotationMountBindingData $mountRecords $secureRoot $secureCandidate $true } $true
+  $candidateAlias = Join-Path $root 'candidate-alias'; New-Item -ItemType Junction -Path $candidateAlias -Target $secureCandidatePath | Out-Null
+  Assert-RotationTest 'REPARSE_ALIAS_INTO_SETS_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = $candidateAlias; Destination = '/tmp/data'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $false
+  Assert-RotationTest 'REPARSE_ALIAS_TO_SECRET_FILE_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = Join-Path $candidateAlias 'jwt-access'; Destination = '/tmp/data'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $false
+  $intermediateAlias = Join-Path $root 'intermediate-alias'; New-Item -ItemType Junction -Path $intermediateAlias -Target $secureCandidatePath | Out-Null
+  Assert-RotationTest 'INTERMEDIATE_REPARSE_COMPONENT_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = Join-Path $intermediateAlias 'jwt-access'; Destination = '/tmp/data'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $false
+  Assert-RotationTest 'BROKEN_REPARSE_SOURCE_FAILS_CLOSED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = (Join-Path $root 'missing-reparse-target'); Destination = '/tmp/data'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $false
   $wrongGenerationMounts = @($mountRecords); $wrongGenerationMounts[0] = [pscustomobject]@{ Source = Join-Path $secureCurrentPath 'jwt-access'; Destination = '/run/secrets/autoops/jwt-access'; ReadWrite = $false }
   Assert-RotationTest 'CANDIDATE_MOUNT_CURRENT_GOOD_BLOCKED' { Test-RotationMountBindingData $wrongGenerationMounts $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
   Assert-RotationTest 'API_OTHER_GENERATION_SECRET_SOURCE_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = Join-Path $secureCurrentPath 'jwt-access'; Destination = '/tmp/current-good-jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false

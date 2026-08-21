@@ -593,9 +593,11 @@ function Get-RotationOperationState([string]$TargetRoot, [string]$OperationId, [
   $stateBySignature = @{
     'operation-created.json' = 'PREPARED'
     'activation-attempt.json|operation-created.json' = 'ACTIVATION_ATTEMPT_CONSUMED'
+    'activation-attempt.json|candidate-acceptance.json|operation-created.json' = 'CANDIDATE_ACCEPTANCE_INTERRUPTED'
     'activation-accepted.json|activation-attempt.json|candidate-acceptance.json|operation-created.json' = 'ACTIVE_ACCEPTED'
     'activation-attempt.json|activation-failed.json|operation-created.json' = 'ACTIVATION_FAILED'
     'activation-attempt.json|activation-failed.json|operation-created.json|rollback-attempt.json' = 'ROLLBACK_ATTEMPT_CONSUMED'
+    'activation-attempt.json|activation-failed.json|operation-created.json|rollback-acceptance.json|rollback-attempt.json' = 'ROLLBACK_ACCEPTANCE_INTERRUPTED'
     'activation-attempt.json|activation-failed.json|operation-created.json|rollback-acceptance.json|rollback-accepted.json|rollback-attempt.json' = 'ROLLED_BACK'
   }
   if (-not $stateBySignature.ContainsKey($baseSignature)) { Stop-Rotation 'ROTATION_OPERATION_TRANSITION_INVALID' }
@@ -677,6 +679,9 @@ function Test-RotationMountBindingData($Records, [string]$TargetRoot, [string]$G
   foreach ($target in $expected.Keys) { $expectedBySource[(Get-RotationFullPath $expected[$target] 'MOUNT_SOURCE_INVALID')] = $target }
   foreach ($record in @($Records)) {
     try { $actualSource = Get-RotationFullPath $record.Source 'MOUNT_SOURCE_INVALID' } catch { return $false }
+    # Never classify a lexical alias as unrelated. A reparse component can
+    # redirect a source outside setsRoot into the protected generation tree.
+    if (-not $SkipSourceMetadata) { try { Assert-RotationNoReparse $actualSource 'MOUNT_SOURCE_REPARSE_PATH' } catch { return $false } }
     # Any source that overlaps the published-generation tree can expose
     # application-secret material: an exact file, a generation directory,
     # the sets root, or an ancestor bind containing the sets root.
@@ -685,7 +690,6 @@ function Test-RotationMountBindingData($Records, [string]$TargetRoot, [string]$G
     if (-not $IsApi -and ($generationSource -or $protectedDestination)) { return $false }
     if ($generationSource) {
       if (-not $expectedBySource.ContainsKey($actualSource) -or $record.Destination -cne $expectedBySource[$actualSource] -or $record.ReadWrite) { return $false }
-      if (-not $SkipSourceMetadata) { try { Assert-RotationNoReparse $actualSource 'MOUNT_SOURCE_REPARSE_PATH' } catch { return $false } }
     }
   }
   if (-not $IsApi) { return $true }
@@ -733,6 +737,7 @@ function Get-RotationRecoveryClassification($OperationState, $Observation) {
     'PREPARED' { if ($Observation.RollbackAcceptancePassed -and -not $Observation.CandidateAcceptancePassed) { return 'SAFE_TO_RESUME_PREFLIGHT' }; return 'MANUAL_INTERVENTION_REQUIRED' }
     'ACTIVATION_ATTEMPT_CONSUMED' { if ($Observation.CandidateAcceptancePassed) { return 'ACTIVATION_IN_PROGRESS' }; if ($Observation.ApiCandidate -or $Observation.WorkerCandidate) { return 'ROLLBACK_REQUIRED' }; return 'MANUAL_INTERVENTION_REQUIRED' }
     'ACTIVE_ACCEPTED' { if ($Observation.CandidateAcceptancePassed) { return 'NO_ACTION_REQUIRED' }; return 'MANUAL_INTERVENTION_REQUIRED' }
+    'CANDIDATE_ACCEPTANCE_INTERRUPTED' { return 'MANUAL_INTERVENTION_REQUIRED' }
     'ACTIVATION_FAILED' {
       if ($Observation.RollbackAcceptancePassed -and -not $Observation.CandidateAcceptancePassed) { return 'NO_ACTION_REQUIRED' }
       $apiKnown = $Observation.ApiCandidate -or $Observation.ApiRollback
@@ -742,6 +747,7 @@ function Get-RotationRecoveryClassification($OperationState, $Observation) {
     }
     'ROLLBACK_ATTEMPT_CONSUMED' { return 'MANUAL_INTERVENTION_REQUIRED' }
     'ROLLED_BACK' { if ($Observation.RollbackAcceptancePassed) { return 'NO_ACTION_REQUIRED' }; return 'MANUAL_INTERVENTION_REQUIRED' }
+    'ROLLBACK_ACCEPTANCE_INTERRUPTED' { return 'MANUAL_INTERVENTION_REQUIRED' }
     default { return 'MANUAL_INTERVENTION_REQUIRED' }
   }
 }
