@@ -68,7 +68,7 @@ function Invoke-RotationEvidenceCommand([string]$File, [string[]]$Arguments, [ha
 
 function Get-RotationLocalImageId([string]$ImageReference) {
   if ([string]::IsNullOrWhiteSpace($ImageReference) -or $ImageReference -match '[\s"'']') { Stop-Rotation 'IMAGE_REFERENCE_INVALID' }
-  $process = Start-RotationProcess 'docker' @('image', 'inspect', '--format', '{{.Id}}', $ImageReference) 'IMAGE_INSPECTION_FAILED'
+  $process = Start-RotationProcess (Get-RotationDockerExecutable) @('image', 'inspect', '--format', '{{.Id}}', $ImageReference) 'IMAGE_INSPECTION_FAILED'
   $value = $process.StandardOutput.ReadToEnd().Trim(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -ne 0 -or -not (Test-RotationSha256 $value)) { Stop-Rotation 'IMAGE_INSPECTION_FAILED' }
   return $value
@@ -76,7 +76,7 @@ function Get-RotationLocalImageId([string]$ImageReference) {
 
 function Get-RotationContainerMetadata([string]$Container) {
   if ($Container -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*$') { Stop-Rotation 'ROLLBACK_CONTAINER_INVALID' }
-  $process = Start-RotationProcess 'docker' @('inspect', '--format', '{{.Id}}|{{.Image}}|{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}},{{end}}{{end}}', $Container) 'ROLLBACK_CONTAINER_INSPECTION_FAILED'
+  $process = Start-RotationProcess (Get-RotationDockerExecutable) @('inspect', '--format', '{{.Id}}|{{.Image}}|{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}},{{end}}{{end}}', $Container) 'ROLLBACK_CONTAINER_INSPECTION_FAILED'
   $line = $process.StandardOutput.ReadToEnd().Trim(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -ne 0) { Stop-Rotation 'ROLLBACK_CONTAINER_INSPECTION_FAILED' }
   $parts = $line.Split('|', 3)

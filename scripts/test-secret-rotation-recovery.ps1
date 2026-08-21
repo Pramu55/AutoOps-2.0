@@ -380,6 +380,28 @@ try {
   $normalSource = Join-Path $root 'normal-bind'; [IO.File]::WriteAllText($normalSource, 'synthetic')
   Assert-RotationTest 'UNPLANNED_WINDOWS_HOST_BIND_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = $normalSource; Destination = '/tmp/data'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $false
   Assert-RotationTest 'EXACT_PLANNED_NON_REPARSE_SOURCES_PASS' { Test-RotationMountBindingData @($mountRecords + $engineSocketMount + $infraMount) $secureRoot $secureCandidate $true } $true
+  Assert-RotationTest 'CALLER_PATH_DOCKER_SUBSTITUTION_BLOCKED' {
+    $originalPath = $env:PATH; $originalWindir = $env:WINDIR
+    try {
+      $fakeRoot = Join-Path $root 'caller-controlled-tools'; New-Item -ItemType Directory -Path $fakeRoot | Out-Null
+      $env:PATH = $fakeRoot
+      $env:WINDIR = $fakeRoot
+      $dockerPath = Get-RotationDockerExecutable
+      $systemPath = Get-RotationWindowsSystemExecutable 'fsutil.exe'
+      if ($dockerPath.StartsWith($fakeRoot, [StringComparison]::OrdinalIgnoreCase) -or $systemPath.StartsWith($fakeRoot, [StringComparison]::OrdinalIgnoreCase)) { throw }
+      if (-not (Test-Path -LiteralPath $dockerPath -PathType Leaf) -or -not (Test-Path -LiteralPath $systemPath -PathType Leaf)) { throw }
+    } finally {
+      $env:PATH = $originalPath; $env:WINDIR = $originalWindir
+    }
+  } $true
+  Assert-RotationTest 'CALLER_WINDIR_FSUTIL_SUBSTITUTION_BLOCKED' {
+    $common = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'secret-rotation-common.ps1') -Raw
+    $common -notmatch '\$env:WINDIR' -and $common.Contains('GetFolderPath([Environment+SpecialFolder]::System)')
+  } $true
+  Assert-RotationTest 'VALIDATION_DOCKER_PATH_NOT_PATH_RESOLVED' {
+    $sources = @('secret-rotation-common.ps1','prepare-secret-rotation.ps1','validate-secret-rotation-runtime.ps1') | ForEach-Object { Get-Content -LiteralPath (Join-Path $PSScriptRoot $_) -Raw }
+    -not (@($sources | Where-Object { $_ -match "Start-RotationProcess\s+'docker'" }).Count) -and (@($sources | Where-Object { $_.Contains('Get-RotationDockerExecutable') }).Count -eq 3)
+  } $true
   Assert-RotationTest 'PROTECTED_FILE_SINGLE_LINK_ALLOWED' { Test-RotationProtectedFileLinkIntegrity $secureRoot } $true
   $hardLinkDirectory = Join-Path $root 'hardlink-outside'; New-Item -ItemType Directory -Path $hardLinkDirectory | Out-Null
   $hardLinkAlias = Join-Path $hardLinkDirectory 'fixture-alias'

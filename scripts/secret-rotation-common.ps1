@@ -57,6 +57,28 @@ function Start-RotationProcess([string]$FileName, [string[]]$Arguments, [string]
   return $process
 }
 
+function Get-RotationWindowsSystemExecutable([string]$Name) {
+  if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or $Name -notmatch '^[A-Za-z0-9.-]+\.exe$') { Stop-Rotation 'TRUSTED_EXECUTABLE_UNAVAILABLE' }
+  # Use the OS known-folder API rather than an inherited WINDIR value.
+  $systemDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
+  if ([string]::IsNullOrWhiteSpace($systemDirectory)) { Stop-Rotation 'TRUSTED_EXECUTABLE_UNAVAILABLE' }
+  $path = Join-Path $systemDirectory $Name
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Stop-Rotation 'TRUSTED_EXECUTABLE_UNAVAILABLE' }
+  return Get-RotationFullPath $path 'TRUSTED_EXECUTABLE_UNAVAILABLE'
+}
+
+function Get-RotationDockerExecutable() {
+  if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Stop-Rotation 'TRUSTED_DOCKER_UNAVAILABLE' }
+  # The maintained Windows Docker Desktop CLI location comes from an OS
+  # known-folder API; PATH and caller-provided executable names are not trust
+  # inputs to the runtime acceptance boundary.
+  $programFiles = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+  if ([string]::IsNullOrWhiteSpace($programFiles)) { Stop-Rotation 'TRUSTED_DOCKER_UNAVAILABLE' }
+  $path = Join-Path $programFiles 'Docker\Docker\resources\bin\docker.exe'
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Stop-Rotation 'TRUSTED_DOCKER_UNAVAILABLE' }
+  return Get-RotationFullPath $path 'TRUSTED_DOCKER_UNAVAILABLE'
+}
+
 function Test-RotationGenerationId([string]$Value) {
   return -not [string]::IsNullOrWhiteSpace($Value) -and $Value -cmatch '^[a-f0-9]{32}$'
 }
@@ -646,7 +668,7 @@ function Assert-RotationContainerName([string]$Name) {
 }
 
 function Invoke-RotationDockerMetadata([string[]]$Arguments, [string]$FailureCode) {
-  $process = Start-RotationProcess 'docker' $Arguments $FailureCode
+  $process = Start-RotationProcess (Get-RotationDockerExecutable) $Arguments $FailureCode
   $stdout = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -ne 0) { Stop-Rotation $FailureCode }
   return $stdout
@@ -687,7 +709,7 @@ function Test-RotationProtectedFileLinkIntegrity([string]$TargetRoot) {
       # Pin the metadata utility to the Windows system directory.  This is
       # deliberately metadata-only: stdout is counted internally and never
       # surfaced, so neither protected paths nor file content leave this gate.
-      $fsutil = Join-Path $env:WINDIR 'System32\fsutil.exe'
+      $fsutil = Get-RotationWindowsSystemExecutable 'fsutil.exe'
       $process = Start-RotationProcess $fsutil @('hardlink','list',$file.FullName) 'PROTECTED_FILE_LINK_METADATA_UNAVAILABLE'
       $output = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
       if ($process.ExitCode -ne 0 -or @($output -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 }).Count -ne 1) { return $false }
@@ -786,7 +808,7 @@ function Test-RotationContainerSecretKeyAbsent([string]$Container, [string]$Key)
   # The shell emits no bytes. Exit code is the complete presence result; secret
   # material never crosses the container-process boundary.
   $script = 'if [ "${' + $Key + '+x}" ]; then exit 0; else exit 3; fi'
-  $process = Start-RotationProcess 'docker' @('exec',$Container,'sh','-c',$script) 'SECRET_PRESENCE_PROBE_FAILED'
+  $process = Start-RotationProcess (Get-RotationDockerExecutable) @('exec',$Container,'sh','-c',$script) 'SECRET_PRESENCE_PROBE_FAILED'
   $process.WaitForExit()
   if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3) { Stop-Rotation 'SECRET_PRESENCE_PROBE_FAILED' }
   return Test-RotationPresenceOnlyExitCode $process.ExitCode

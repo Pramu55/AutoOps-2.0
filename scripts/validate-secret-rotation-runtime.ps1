@@ -11,7 +11,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'secret-rotation-common.ps1')
 
 function Invoke-RotationDocker([string[]]$Arguments, [string]$FailureCode) {
-  $process = Start-RotationProcess 'docker' $Arguments $FailureCode
+  $process = Start-RotationProcess (Get-RotationDockerExecutable) $Arguments $FailureCode
   $stdout = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -ne 0) { Stop-Rotation $FailureCode }
   return $stdout
@@ -39,7 +39,7 @@ function Get-RotationEnvironmentValue([string]$Container, [string]$Key) {
   Assert-RotationContainerName $Container
   if ($Key -notin @($script:RotationProviderKeys + $script:RotationFlagKeys + @('SECRET_PROVIDER_ROOT'))) { Stop-Rotation 'ENVIRONMENT_KEY_INVALID' }
   $script = 'if [ "${' + $Key + '+x}" ]; then printf %s "${' + $Key + '}"; else exit 3; fi'
-  $process = Start-RotationProcess 'docker' @('exec', $Container, 'sh', '-c', $script) 'ENVIRONMENT_INSPECTION_FAILED'
+  $process = Start-RotationProcess (Get-RotationDockerExecutable) @('exec', $Container, 'sh', '-c', $script) 'ENVIRONMENT_INSPECTION_FAILED'
   $value = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -eq 3) { return [pscustomobject]@{ Present = $false; Value = $null } }
   if ($process.ExitCode -ne 0) { Stop-Rotation 'ENVIRONMENT_INSPECTION_FAILED' }
@@ -104,7 +104,7 @@ request.on("error", fail);
 
 function Get-RotationContainerHttpProbe([string]$Container, [int]$Port, [string]$Path, [bool]$Readiness) {
   try {
-    $process = Start-RotationProcess 'docker' (New-RotationContainerHttpProbeArguments $Container $Port $Path $Readiness) 'CONTAINER_HTTP_PROBE_FAILED'
+    $process = Start-RotationProcess (Get-RotationDockerExecutable) (New-RotationContainerHttpProbeArguments $Container $Port $Path $Readiness) 'CONTAINER_HTTP_PROBE_FAILED'
     $stdout = $process.StandardOutput.ReadToEnd().Trim(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
     if ($process.ExitCode -ne 0) { Stop-Rotation 'CONTAINER_HTTP_PROBE_FAILED' }
     return $stdout
