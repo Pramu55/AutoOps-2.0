@@ -548,22 +548,6 @@ function Ensure-RotationOperationsRoot([string]$TargetRoot) {
   return $operationsRoot
 }
 
-function Initialize-RotationOperation([string]$TargetRoot, [string]$OperationId, [switch]$AllowSyntheticTestPermissions) {
-  $plan = Read-RotationPlan $TargetRoot $OperationId
-  # The immutable plan must be bound to a complete, current rollback
-  # acceptance before any mutable operation state can authorize activation.
-  # This guard belongs here because the common initializer is callable without
-  # the preflight wrapper; AllowSyntheticTestPermissions only relaxes test ACL
-  # mechanics and never bypasses this security boundary.
-  if (-not (Invoke-RotationRuntimeAcceptanceValidator $TargetRoot $OperationId 'Rollback')) { Stop-Rotation 'ROLLBACK_RUNTIME_BASELINE_REJECTED' }
-  if (-not $AllowSyntheticTestPermissions) { $null = Ensure-RotationOperationsRoot $TargetRoot }
-  $operationRoot = Get-RotationOperationRoot $TargetRoot $OperationId
-  if (Test-Path -LiteralPath $operationRoot) { Stop-Rotation 'ROTATION_OPERATION_EXISTS' }
-  try { [IO.Directory]::CreateDirectory($operationRoot) | Out-Null; if (-not $AllowSyntheticTestPermissions) { Set-RotationOperationDirectorySecurity $operationRoot; Assert-RotationOperationDirectorySecurity $operationRoot } } catch { Stop-Rotation 'ROTATION_OPERATION_CREATE_FAILED' }
-  $record = [ordered]@{ schemaVersion = $script:RotationSchemaVersion; operationId = $OperationId; planIdentity = Get-RotationPlanIdentity $TargetRoot $OperationId; transition = 'OPERATION_CREATED'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
-  Write-RotationOperationRecord $operationRoot 'operation-created.json' $record
-}
-
 function Write-RotationOperationRecord([string]$OperationRoot, [string]$Name, $Record) {
   if ($Name -in @('candidate-acceptance.json','activation-accepted.json','rollback-acceptance.json','rollback-accepted.json')) { Stop-Rotation 'ROTATION_ACCEPTANCE_WRITER_PRIVATE' }
   $path = Join-Path $OperationRoot $Name
@@ -693,6 +677,25 @@ function Test-RotationWindowsHostBindSource([string]$Source) {
   return -not [string]::IsNullOrWhiteSpace($Source) -and ($Source -match '^[A-Za-z]:[\\/]' -or $Source.StartsWith('\\'))
 }
 
+function Test-RotationProtectedFileLinkIntegrity([string]$TargetRoot) {
+  if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return $false }
+  $setsRoot = Get-RotationFullPath (Join-Path (Get-RotationFullPath $TargetRoot 'ROTATION_ROOT_INVALID') 'sets') 'MOUNT_SOURCE_INVALID'
+  try { $files = @(Get-ChildItem -Force -File -Recurse -LiteralPath $setsRoot -ErrorAction Stop) } catch { return $false }
+  foreach ($file in $files) {
+    if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+    try {
+      # Pin the metadata utility to the Windows system directory.  This is
+      # deliberately metadata-only: stdout is counted internally and never
+      # surfaced, so neither protected paths nor file content leave this gate.
+      $fsutil = Join-Path $env:WINDIR 'System32\fsutil.exe'
+      $process = Start-RotationProcess $fsutil @('hardlink','list',$file.FullName) 'PROTECTED_FILE_LINK_METADATA_UNAVAILABLE'
+      $output = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
+      if ($process.ExitCode -ne 0 -or @($output -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 }).Count -ne 1) { return $false }
+    } catch { return $false }
+  }
+  return $true
+}
+
 function Get-RotationMountSourceDomain($Record) {
   $type = if ($Record.PSObject.Properties.Name -contains 'Type') { [string]$Record.Type } else { 'bind' }
   if ($type -eq 'bind' -and (Test-RotationWindowsHostBindSource $Record.Source)) { return 'WINDOWS_HOST_BIND' }
@@ -713,6 +716,8 @@ function Test-RotationMountBindingData($Records, [string]$TargetRoot, [string]$G
   $comparison = Get-RotationPathComparison
   $expectedBySource = @{}
   foreach ($target in $expected.Keys) { $expectedBySource[(Get-RotationFullPath $expected[$target] 'MOUNT_SOURCE_INVALID')] = $target }
+  $infraSource = Get-RotationFullPath (Join-Path (Split-Path -Parent $script:RotationModuleRoot) 'infra') 'MOUNT_SOURCE_INVALID'
+  if (-not $SkipSourceMetadata -and -not (Test-RotationProtectedFileLinkIntegrity $TargetRoot)) { return $false }
   foreach ($record in @($Records)) {
     $sourceDomain = Get-RotationMountSourceDomain $record
     if ($sourceDomain -eq 'UNSUPPORTED') { return $false }
@@ -730,6 +735,9 @@ function Test-RotationMountBindingData($Records, [string]$TargetRoot, [string]$G
     try { $protectedDestination = Test-RotationContainerPathOverlap $record.Destination '/run/secrets/autoops' } catch { return $false }
     if (-not $IsApi -and ($generationSource -or $protectedDestination)) { return $false }
     $approvedApiSecretBinding = $IsApi -and $generationSource -and $expectedBySource.ContainsKey($actualSource) -and $record.Destination -ceq $expectedBySource[$actualSource] -and -not $record.ReadWrite
+    $approvedInfraBinding = $sourceDomain -eq 'WINDOWS_HOST_BIND' -and [string]::Equals($actualSource, $infraSource, $comparison) -and $record.Destination -ceq '/app/infra' -and -not $record.ReadWrite
+    $approvedEngineSocket = $sourceDomain -eq 'ENGINE_SOCKET_BIND' -and $record.Destination -ceq '/var/run/docker.sock' -and $record.ReadWrite
+    if (-not ($approvedApiSecretBinding -or $approvedInfraBinding -or $approvedEngineSocket)) { return $false }
     # API file-mode exposure is an allowlist, not merely a required-mount
     # checklist.  A volume or unrelated bind overlapping the protected
     # destination tree could otherwise coexist with the three planned files.
@@ -737,6 +745,23 @@ function Test-RotationMountBindingData($Records, [string]$TargetRoot, [string]$G
     if ($generationSource) {
       if (-not $approvedApiSecretBinding) { return $false }
     }
+  }
+  if (-not $SkipSourceMetadata) {
+    # The repository-owned topology has exactly one engine socket and one
+    # read-only infra bind for each controlled service.  Counting them makes
+    # the allowlist a contract rather than a set of individually valid rows.
+    $engineSocketCount = @($Records | Where-Object {
+      (Get-RotationMountSourceDomain $_) -eq 'ENGINE_SOCKET_BIND' -and
+      $_.Destination -ceq '/var/run/docker.sock' -and $_.ReadWrite
+    }).Count
+    $infraBindCount = @($Records | Where-Object {
+      if ((Get-RotationMountSourceDomain $_) -ne 'WINDOWS_HOST_BIND') { return $false }
+      try {
+        $candidate = Get-RotationFullPath $_.Source 'MOUNT_SOURCE_INVALID'
+        return [string]::Equals($candidate, $infraSource, $comparison) -and $_.Destination -ceq '/app/infra' -and -not $_.ReadWrite
+      } catch { return $false }
+    }).Count
+    if ($engineSocketCount -ne 1 -or $infraBindCount -ne 1) { return $false }
   }
   if (-not $IsApi) { return $true }
   foreach ($target in $script:RotationApplicationSecretTargets) {
@@ -771,7 +796,8 @@ function Invoke-RotationRuntimeAcceptanceValidator([string]$TargetRoot, [string]
   $plan = Read-RotationPlan $TargetRoot $OperationId
   $ApiContainer = $plan.runtimeServices.api; $WorkerContainer = $plan.runtimeServices.worker
   $validator = Join-Path $script:RotationModuleRoot 'validate-secret-rotation-runtime.ps1'
-  try { $process = Start-RotationProcess 'powershell' @('-NoProfile','-ExecutionPolicy','Bypass','-File',$validator,'-TargetRoot',$TargetRoot,'-OperationId',$OperationId,'-Mode',$Mode) 'ROTATION_ACCEPTANCE_VALIDATOR_START_FAILED' } catch { return $false }
+  $powershellExe = Join-Path $PSHOME 'powershell.exe'
+  try { $process = Start-RotationProcess $powershellExe @('-NoProfile','-ExecutionPolicy','Bypass','-File',$validator,'-TargetRoot',$TargetRoot,'-OperationId',$OperationId,'-Mode',$Mode) 'ROTATION_ACCEPTANCE_VALIDATOR_START_FAILED' } catch { return $false }
   # Validation is a named gate only. Its output is intentionally discarded so
   # recovery classification never relays container or secret-adjacent details.
   $null = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()

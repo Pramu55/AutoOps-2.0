@@ -15,6 +15,19 @@ function Invoke-RotationRuntimeAcceptanceValidator([string]$TargetRoot, [string]
   return $script:RotationSyntheticRollbackValidatorPass
 }
 
+# Synthetic state constructor only: production PREPARED authority lives in the
+# dedicated child initializer and this helper is never shipped as common code.
+function Initialize-RotationOperation([string]$TargetRoot, [string]$OperationId, [switch]$AllowSyntheticTestPermissions) {
+  if (-not (Invoke-RotationRuntimeAcceptanceValidator $TargetRoot $OperationId 'Rollback')) { Stop-Rotation 'ROLLBACK_RUNTIME_BASELINE_REJECTED' }
+  if (-not $AllowSyntheticTestPermissions) { $null = Ensure-RotationOperationsRoot $TargetRoot }
+  $operationRoot = Get-RotationOperationRoot $TargetRoot $OperationId
+  if (Test-Path -LiteralPath $operationRoot) { Stop-Rotation 'ROTATION_OPERATION_EXISTS' }
+  [IO.Directory]::CreateDirectory($operationRoot) | Out-Null
+  if (-not $AllowSyntheticTestPermissions) { Set-RotationOperationDirectorySecurity $operationRoot; Assert-RotationOperationDirectorySecurity $operationRoot }
+  $record = [ordered]@{ schemaVersion = $script:RotationSchemaVersion; operationId = $OperationId; planIdentity = Get-RotationPlanIdentity $TargetRoot $OperationId; transition = 'OPERATION_CREATED'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
+  Write-RotationOperationRecord $operationRoot 'operation-created.json' $record
+}
+
 function Assert-RotationTest([string]$Name, [scriptblock]$Action, [bool]$ExpectedPass) {
   $passed = $false
   try {
@@ -153,6 +166,31 @@ try {
   $unvalidatedOperation = ('0123456789abcdef' * 2)
   $unvalidatedPlan = New-RotationPlanObject $unvalidatedOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
   $null = Write-RotationPlanAtomically $secureRoot $unvalidatedPlan
+  # The maintained initializer is an external PowerShell process. Parent
+  # functions cannot manufacture its validator result or its process result.
+  # The stopped synthetic runtime makes the child's real rollback validation
+  # fail, which must leave this plan-only operation incapable of PREPARED.
+  $childInitializer = Join-Path $PSScriptRoot 'initialize-secret-rotation-operation.ps1'
+  $shadowedValidatorOperation = ('a1' * 16)
+  $null = Write-RotationPlanAtomically $secureRoot (New-RotationPlanObject $shadowedValidatorOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback)
+  Assert-RotationTest 'CALLER_FUNCTION_SHADOWING_BLOCKED' {
+    & {
+      function Invoke-RotationRuntimeAcceptanceValidator { return $true }
+      & (Join-Path $PSHOME 'powershell.exe') -NoProfile -ExecutionPolicy Bypass -File $childInitializer -TargetRoot $secureRoot -OperationId $shadowedValidatorOperation 2>$null
+      if ($LASTEXITCODE -eq 0) { throw }
+    }
+    -not (Test-Path -LiteralPath (Get-RotationOperationRoot $secureRoot $shadowedValidatorOperation))
+  } $true
+  $shadowedProcessOperation = ('b1' * 16)
+  $null = Write-RotationPlanAtomically $secureRoot (New-RotationPlanObject $shadowedProcessOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback)
+  Assert-RotationTest 'CALLER_PROCESS_HELPER_SHADOWING_BLOCKED' {
+    & {
+      function Start-RotationProcess { return $null }
+      & (Join-Path $PSHOME 'powershell.exe') -NoProfile -ExecutionPolicy Bypass -File $childInitializer -TargetRoot $secureRoot -OperationId $shadowedProcessOperation 2>$null
+      if ($LASTEXITCODE -eq 0) { throw }
+    }
+    -not (Test-Path -LiteralPath (Get-RotationOperationRoot $secureRoot $shadowedProcessOperation))
+  } $true
   $script:RotationSyntheticRollbackValidatorExpectedOperationId = $unvalidatedOperation
   $script:RotationSyntheticRollbackValidatorPass = $false
   Assert-RotationTest 'DIRECT_INITIALIZER_ROLLBACK_VALIDATION_BYPASS_BLOCKED' { Initialize-RotationOperation $secureRoot $unvalidatedOperation -AllowSyntheticTestPermissions } $false
@@ -322,22 +360,36 @@ try {
   Assert-RotationTest 'WORKER_PROTECTED_DESTINATION_ANCESTOR_BLOCKED' {
     Test-RotationMountBindingData @([pscustomobject]@{ Source = (Join-Path $root 'normal-bind'); Destination = '/run/secrets'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata
   } $false
-  Assert-RotationTest 'WORKER_SECRET_DESTINATION_PREFIX_COLLISION_SAFE' {
+  Assert-RotationTest 'PREFIX_COLLISION_NOT_APPROVED' {
     Test-RotationMountBindingData @([pscustomobject]@{ Source = (Join-Path $root 'normal-bind'); Destination = '/run/secrets/autoops-old'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata
-  } $true
-  Assert-RotationTest 'WORKER_UNRELATED_NORMAL_BIND_ALLOWED' {
+  } $false
+  Assert-RotationTest 'WORKER_UNPLANNED_HOST_BIND_BLOCKED' {
     Test-RotationMountBindingData @([pscustomobject]@{ Source = (Join-Path $root 'normal-bind'); Destination = '/tmp/data'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata
-  } $true
+  } $false
   Assert-RotationTest 'WORKER_PROTECTED_SOURCE_AND_DESTINATION_BLOCKED' {
     Test-RotationMountBindingData @([pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-access'; Destination = '/run/secrets/autoops/jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata
   } $false
-  $engineSocketMount = [pscustomobject]@{ Type = 'bind'; Source = '/var/run/docker.sock'; Destination = '/var/run/docker.sock'; ReadWrite = $false }
-  Assert-RotationTest 'ENGINE_SOCKET_BIND_ALLOWED' { Test-RotationMountBindingData @($mountRecords + $engineSocketMount) $secureRoot $secureCandidate $true } $true
-  Assert-RotationTest 'WORKER_ENGINE_SOCKET_BIND_ALLOWED' { Test-RotationMountBindingData @($engineSocketMount) $secureRoot $secureCandidate $false } $true
+  $engineSocketMount = [pscustomobject]@{ Type = 'bind'; Source = '/var/run/docker.sock'; Destination = '/var/run/docker.sock'; ReadWrite = $true }
+  $infraMount = [pscustomobject]@{ Type = 'bind'; Source = (Join-Path (Split-Path -Parent $PSScriptRoot) 'infra'); Destination = '/app/infra'; ReadWrite = $false }
+  Assert-RotationTest 'ENGINE_SOCKET_BIND_ALLOWED' { Test-RotationMountBindingData @($mountRecords + $engineSocketMount + $infraMount) $secureRoot $secureCandidate $true } $true
+  Assert-RotationTest 'WORKER_ENGINE_SOCKET_BIND_ALLOWED' { Test-RotationMountBindingData @($engineSocketMount, $infraMount) $secureRoot $secureCandidate $false } $true
+  Assert-RotationTest 'API_EXACT_MOUNT_CONTRACT_PASS' { Test-RotationMountBindingData @($mountRecords + $engineSocketMount + $infraMount) $secureRoot $secureCandidate $true } $true
+  Assert-RotationTest 'WORKER_EXACT_MOUNT_CONTRACT_PASS' { Test-RotationMountBindingData @($engineSocketMount, $infraMount) $secureRoot $secureCandidate $false } $true
+  Assert-RotationTest 'INFRA_BIND_ONLY_ON_MAINTAINED_SERVICE' { Test-RotationMountBindingData @($mountRecords + $engineSocketMount + $infraMount) $secureRoot $secureCandidate $true } $true
   Assert-RotationTest 'UNSUPPORTED_NON_WINDOWS_BIND_SOURCE_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Type = 'bind'; Source = '/var/run/untrusted.sock'; Destination = '/tmp/untrusted'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $false
   $normalSource = Join-Path $root 'normal-bind'; [IO.File]::WriteAllText($normalSource, 'synthetic')
-  Assert-RotationTest 'ORDINARY_NON_REPARSE_BIND_ALLOWED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = $normalSource; Destination = '/tmp/data'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $true
-  Assert-RotationTest 'EXACT_PLANNED_NON_REPARSE_SOURCES_PASS' { Test-RotationMountBindingData $mountRecords $secureRoot $secureCandidate $true } $true
+  Assert-RotationTest 'UNPLANNED_WINDOWS_HOST_BIND_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = $normalSource; Destination = '/tmp/data'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $false
+  Assert-RotationTest 'EXACT_PLANNED_NON_REPARSE_SOURCES_PASS' { Test-RotationMountBindingData @($mountRecords + $engineSocketMount + $infraMount) $secureRoot $secureCandidate $true } $true
+  Assert-RotationTest 'PROTECTED_FILE_SINGLE_LINK_ALLOWED' { Test-RotationProtectedFileLinkIntegrity $secureRoot } $true
+  $hardLinkDirectory = Join-Path $root 'hardlink-outside'; New-Item -ItemType Directory -Path $hardLinkDirectory | Out-Null
+  $hardLinkAlias = Join-Path $hardLinkDirectory 'fixture-alias'
+  New-Item -ItemType HardLink -Path $hardLinkAlias -Target (Join-Path $secureCandidatePath 'jwt-access') | Out-Null
+  Assert-RotationTest 'HARDLINK_TEST_USES_SYNTHETIC_DATA' { -not (Test-RotationPathOverlap $hardLinkAlias $setsRoot) -and ((Get-Item -LiteralPath $hardLinkAlias).Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0 } $true
+  Assert-RotationTest 'PROTECTED_FILE_MULTI_LINK_BLOCKED' { Test-RotationProtectedFileLinkIntegrity $secureRoot } $false
+  Assert-RotationTest 'NTFS_HARDLINK_SECRET_ALIAS_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = $hardLinkAlias; Destination = '/tmp/jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $false
+  Assert-RotationTest 'WORKER_HARDLINK_SECRET_ALIAS_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = $hardLinkAlias; Destination = '/tmp/anything'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $false
+  Assert-RotationTest 'API_EXTRA_HARDLINK_SECRET_ALIAS_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = $hardLinkAlias; Destination = '/tmp/anything'; ReadWrite = $false }) $secureRoot $secureCandidate $true } $false
+  Remove-Item -LiteralPath $hardLinkAlias -Force
   $candidateAlias = Join-Path $root 'candidate-alias'; New-Item -ItemType Junction -Path $candidateAlias -Target $secureCandidatePath | Out-Null
   Assert-RotationTest 'REPARSE_ALIAS_INTO_SETS_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = $candidateAlias; Destination = '/tmp/data'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $false
   Assert-RotationTest 'REPARSE_ALIAS_TO_SECRET_FILE_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = Join-Path $candidateAlias 'jwt-access'; Destination = '/tmp/data'; ReadWrite = $false }) $secureRoot $secureCandidate $false } $false
@@ -369,16 +421,15 @@ try {
   Assert-RotationTest 'UNEXPECTED_SECRET_DESTINATION_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-access'; Destination = '/tmp/jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
   Assert-RotationTest 'WORKER_SECRET_SOURCE_ANY_DESTINATION_BLOCKED' { Test-RotationMountBindingData @([pscustomobject]@{ Source = Join-Path $secureCandidatePath 'jwt-access'; Destination = '/tmp/jwt-access'; ReadWrite = $false }) $secureRoot $secureCandidate $false -SkipSourceMetadata } $false
   Assert-RotationTest 'UNKNOWN_GENERATION_SOURCE_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'unknown'; Destination = '/tmp/unknown'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
-  Assert-RotationTest 'UNRELATED_NORMAL_BIND_ALLOWED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = (Join-Path $root 'normal-bind'); Destination = '/srv/normal'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $true
-  Assert-RotationTest 'SETS_PREFIX_COLLISION_OUTSIDE_ROOT_ALLOWED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = (Join-Path $secureRoot 'sets-old\jwt-access'); Destination = '/srv/normal'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $true
-  Assert-RotationTest 'INITIALIZER_OWNS_ROLLBACK_VALIDATION_AUTHORITY' {
+  Assert-RotationTest 'UNPLANNED_WINDOWS_HOST_BIND_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = (Join-Path $root 'normal-bind'); Destination = '/srv/normal'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
+  Assert-RotationTest 'SETS_PREFIX_COLLISION_NOT_APPROVED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = (Join-Path $secureRoot 'sets-old\jwt-access'); Destination = '/srv/normal'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
+  Assert-RotationTest 'COMMON_MODULE_INITIALIZATION_AUTHORITY_NO' {
     $common = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'secret-rotation-common.ps1') -Raw
-    $initializerAt = $common.LastIndexOf('function Initialize-RotationOperation')
-    $validatorAt = $common.IndexOf('Invoke-RotationRuntimeAcceptanceValidator', $initializerAt)
-    $createAt = $common.IndexOf('[IO.Directory]::CreateDirectory($operationRoot)', $initializerAt)
-    if ($initializerAt -lt 0 -or $validatorAt -le $initializerAt -or $createAt -le $validatorAt) { throw }
+    if ($common.Contains('function Initialize-RotationOperation')) { throw }
+    $initializer = Join-Path $PSScriptRoot 'initialize-secret-rotation-operation.ps1'
+    if (-not (Test-Path -LiteralPath $initializer)) { throw }
     $preflight = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'prepare-secret-rotation.ps1') -Raw
-    if ($preflight.Contains('Assert-RotationRollbackRuntimeBaseline')) { throw }
+    if (-not $preflight.Contains('initialize-secret-rotation-operation.ps1')) { throw }
   } $true
   Assert-RotationTest 'DUPLICATE_JSON_KEYS_REJECTED_PRE_DESERIALIZATION' { ConvertFrom-RotationStrictJson '{"transition":"ACTIVATION_ATTEMPT","transition":"ACTIVATION_ACCEPTED"}' 'ROTATION_OPERATION_RECORD_INVALID' | Out-Null } $false
   Assert-RotationTest 'DUPLICATE_PLAN_KEYS_REJECTED_PRE_DESERIALIZATION' {

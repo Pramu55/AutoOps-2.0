@@ -58,7 +58,8 @@ function Test-RotationSelfTest {
 }
 
 function Invoke-RotationEvidenceCommand([string]$File, [string[]]$Arguments, [hashtable]$Environment, [string]$FailureCode) {
-  $process = Start-RotationProcess 'powershell' (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $File) + $Arguments) $FailureCode $Environment
+  $powershellExe = Join-Path $PSHOME 'powershell.exe'
+  $process = Start-RotationProcess $powershellExe (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $File) + $Arguments) $FailureCode $Environment
   # Maintained validators may handle sensitive material internally. Their
   # diagnostics remain redirected and are never surfaced by rotation preflight.
   $null = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
@@ -130,7 +131,11 @@ try {
   $rollback = @{ TargetGenerationId = $CurrentGoodGenerationId; ApiImageId = $RollbackApiImageId; WorkerImageId = $RollbackWorkerImageId; ExpectedRuntimeMode = 'file'; ExpectedHealthEndpoints = @('/health', '/ready', '/healthz', '/readyz'); NonTargetContainerIds = $nonTargetIds; VolumeInventory = @($volumes | Sort-Object) }
   $plan = New-RotationPlanObject $OperationId $CandidateGenerationId $CurrentGoodGenerationId $PreviousGoodGenerationId $RepositoryRevision $CandidateApiImageId $CandidateWorkerImageId $overlays $rollback
   $null = Write-RotationPlanAtomically $TargetRoot $plan
-  Initialize-RotationOperation $TargetRoot $OperationId
+  $initializer = Join-Path $PSScriptRoot 'initialize-secret-rotation-operation.ps1'
+  $powershellExe = Join-Path $PSHOME 'powershell.exe'
+  $process = Start-RotationProcess $powershellExe @('-NoProfile','-ExecutionPolicy','Bypass','-File',$initializer,'-TargetRoot',$TargetRoot,'-OperationId',$OperationId) 'ROTATION_INITIALIZER_START_FAILED'
+  $null = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
+  if ($process.ExitCode -ne 0) { Stop-Rotation 'ROLLBACK_RUNTIME_BASELINE_REJECTED' }
   [Console]::WriteLine('ROTATION_PREFLIGHT PASS')
   [Console]::WriteLine('ROTATION_PLAN_STATUS PREPARED')
   [Console]::WriteLine('ROTATION_PLAN_CREATED YES')

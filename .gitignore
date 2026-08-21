@@ -26,6 +26,7 @@ credentials
 *.credentials
 *token*
 *secret*
+!scripts/initialize-secret-rotation-operation.ps1
 !.env.example
 !scripts/scan-secrets.ps1
 !scripts/scan-secrets.sh
