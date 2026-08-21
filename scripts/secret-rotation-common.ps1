@@ -550,6 +550,12 @@ function Ensure-RotationOperationsRoot([string]$TargetRoot) {
 
 function Initialize-RotationOperation([string]$TargetRoot, [string]$OperationId, [switch]$AllowSyntheticTestPermissions) {
   $plan = Read-RotationPlan $TargetRoot $OperationId
+  # The immutable plan must be bound to a complete, current rollback
+  # acceptance before any mutable operation state can authorize activation.
+  # This guard belongs here because the common initializer is callable without
+  # the preflight wrapper; AllowSyntheticTestPermissions only relaxes test ACL
+  # mechanics and never bypasses this security boundary.
+  if (-not (Invoke-RotationRuntimeAcceptanceValidator $TargetRoot $OperationId 'Rollback')) { Stop-Rotation 'ROLLBACK_RUNTIME_BASELINE_REJECTED' }
   if (-not $AllowSyntheticTestPermissions) { $null = Ensure-RotationOperationsRoot $TargetRoot }
   $operationRoot = Get-RotationOperationRoot $TargetRoot $OperationId
   if (Test-Path -LiteralPath $operationRoot) { Stop-Rotation 'ROTATION_OPERATION_EXISTS' }

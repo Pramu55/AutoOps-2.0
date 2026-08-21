@@ -2,6 +2,19 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'secret-rotation-common.ps1')
 
+# Test-local seam for operation-initialization authority. This shadows the
+# production process launcher only in this synthetic test process; it has no
+# production parameter or caller-controlled bypass.
+$script:RotationSyntheticRollbackValidatorPass = $true
+$script:RotationSyntheticRollbackValidatorExpectedOperationId = $null
+$script:RotationSyntheticRollbackValidatorCalls = @()
+function Invoke-RotationRuntimeAcceptanceValidator([string]$TargetRoot, [string]$OperationId, [ValidateSet('Candidate','Rollback')][string]$Mode) {
+  $script:RotationSyntheticRollbackValidatorCalls += [pscustomobject]@{ TargetRoot = $TargetRoot; OperationId = $OperationId; Mode = $Mode }
+  if ($Mode -cne 'Rollback') { return $false }
+  if ($null -ne $script:RotationSyntheticRollbackValidatorExpectedOperationId -and $OperationId -cne $script:RotationSyntheticRollbackValidatorExpectedOperationId) { return $false }
+  return $script:RotationSyntheticRollbackValidatorPass
+}
+
 function Assert-RotationTest([string]$Name, [scriptblock]$Action, [bool]$ExpectedPass) {
   $passed = $false
   try {
@@ -137,6 +150,26 @@ try {
   $emptyPreviousJson = Get-Content -LiteralPath $emptyPreviousPath -Raw
   [IO.File]::WriteAllText($emptyPreviousPath, ($emptyPreviousJson -replace '"previousGoodGenerationId"\s*:\s*"[a-f0-9]{32}"', '"previousGoodGenerationId":""'), [Text.UTF8Encoding]::new($false))
   Assert-RotationTest 'PREVIOUS_GOOD_EMPTY_STRING_REJECTED' { Read-RotationPlan $secureRoot $emptyPreviousOperation | Out-Null } $false
+  $unvalidatedOperation = ('0123456789abcdef' * 2)
+  $unvalidatedPlan = New-RotationPlanObject $unvalidatedOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $unvalidatedPlan
+  $script:RotationSyntheticRollbackValidatorExpectedOperationId = $unvalidatedOperation
+  $script:RotationSyntheticRollbackValidatorPass = $false
+  Assert-RotationTest 'DIRECT_INITIALIZER_ROLLBACK_VALIDATION_BYPASS_BLOCKED' { Initialize-RotationOperation $secureRoot $unvalidatedOperation -AllowSyntheticTestPermissions } $false
+  Assert-RotationTest 'ROLLBACK_VALIDATOR_FAILURE_BLOCKS_INITIALIZATION' { -not (Test-Path -LiteralPath (Join-Path (Get-RotationOperationRoot $secureRoot $unvalidatedOperation) 'operation-created.json')) } $true
+  Assert-RotationTest 'ROLLBACK_VALIDATION_PRECEDES_OPERATION_CREATED' { -not (Test-Path -LiteralPath (Get-RotationOperationRoot $secureRoot $unvalidatedOperation)) } $true
+  Assert-RotationTest 'UNVALIDATED_BASELINE_ACTIVATION_BLOCKED' { Consume-RotationOperationTransition $secureRoot $unvalidatedOperation 'ACTIVATION_ATTEMPT' } $false
+  Assert-RotationTest 'SYNTHETIC_PERMISSION_SWITCH_NOT_SECURITY_BYPASS' { Initialize-RotationOperation $secureRoot $unvalidatedOperation -AllowSyntheticTestPermissions } $false
+  Assert-RotationTest 'UNVALIDATED_PLAN_ONLY_STATE_RECOVERABLE' { if ((Get-RotationOperationState $secureRoot $unvalidatedOperation).State -ne 'OPERATION_INITIALIZATION_INTERRUPTED') { throw } } $true
+  $validatedOperation = ('fedcba9876543210' * 2)
+  $validatedPlan = New-RotationPlanObject $validatedOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $validatedPlan
+  $script:RotationSyntheticRollbackValidatorExpectedOperationId = $validatedOperation
+  $script:RotationSyntheticRollbackValidatorPass = $true
+  Assert-RotationTest 'VALIDATED_ROLLBACK_BASELINE_ALLOWS_INITIALIZATION' { Initialize-RotationOperation $secureRoot $validatedOperation } $true
+  Assert-RotationTest 'INITIALIZATION_REQUIRES_ROLLBACK_BASELINE' { $state = Get-RotationOperationState $secureRoot $validatedOperation; $state.State -eq 'PREPARED' -and (Test-Path -LiteralPath (Join-Path $state.OperationRoot 'operation-created.json')) } $true
+  Assert-RotationTest 'ROLLBACK_VALIDATION_PLAN_BOUND' { $call = $script:RotationSyntheticRollbackValidatorCalls[-1]; $call.OperationId -ceq $validatedOperation -and $call.Mode -ceq 'Rollback' } $true
+  $script:RotationSyntheticRollbackValidatorExpectedOperationId = $null
   $planOnlyOperation = ('01' * 16)
   $planOnlyPlan = New-RotationPlanObject $planOnlyOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
   $null = Write-RotationPlanAtomically $secureRoot $planOnlyPlan
@@ -338,12 +371,14 @@ try {
   Assert-RotationTest 'UNKNOWN_GENERATION_SOURCE_BLOCKED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = Join-Path $secureCandidatePath 'unknown'; Destination = '/tmp/unknown'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $false
   Assert-RotationTest 'UNRELATED_NORMAL_BIND_ALLOWED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = (Join-Path $root 'normal-bind'); Destination = '/srv/normal'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $true
   Assert-RotationTest 'SETS_PREFIX_COLLISION_OUTSIDE_ROOT_ALLOWED' { Test-RotationMountBindingData @($mountRecords + [pscustomobject]@{ Source = (Join-Path $secureRoot 'sets-old\jwt-access'); Destination = '/srv/normal'; ReadWrite = $false }) $secureRoot $secureCandidate $true -SkipSourceMetadata } $true
-  Assert-RotationTest 'ROLLBACK_BASELINE_VALIDATOR_PRECEDES_INITIALIZATION' {
+  Assert-RotationTest 'INITIALIZER_OWNS_ROLLBACK_VALIDATION_AUTHORITY' {
+    $common = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'secret-rotation-common.ps1') -Raw
+    $initializerAt = $common.LastIndexOf('function Initialize-RotationOperation')
+    $validatorAt = $common.IndexOf('Invoke-RotationRuntimeAcceptanceValidator', $initializerAt)
+    $createAt = $common.IndexOf('[IO.Directory]::CreateDirectory($operationRoot)', $initializerAt)
+    if ($initializerAt -lt 0 -or $validatorAt -le $initializerAt -or $createAt -le $validatorAt) { throw }
     $preflight = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'prepare-secret-rotation.ps1') -Raw
-    $writeAt = $preflight.LastIndexOf('Write-RotationPlanAtomically')
-    $validatorAt = $preflight.LastIndexOf('Assert-RotationRollbackRuntimeBaseline')
-    $initializeAt = $preflight.LastIndexOf('Initialize-RotationOperation')
-    if ($writeAt -lt 0 -or $validatorAt -le $writeAt -or $initializeAt -le $validatorAt) { throw }
+    if ($preflight.Contains('Assert-RotationRollbackRuntimeBaseline')) { throw }
   } $true
   Assert-RotationTest 'DUPLICATE_JSON_KEYS_REJECTED_PRE_DESERIALIZATION' { ConvertFrom-RotationStrictJson '{"transition":"ACTIVATION_ATTEMPT","transition":"ACTIVATION_ACCEPTED"}' 'ROTATION_OPERATION_RECORD_INVALID' | Out-Null } $false
   Assert-RotationTest 'DUPLICATE_PLAN_KEYS_REJECTED_PRE_DESERIALIZATION' {
