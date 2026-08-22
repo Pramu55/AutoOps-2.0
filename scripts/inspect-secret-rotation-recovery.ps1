@@ -43,6 +43,8 @@ try {
     $state.State = 'OPERATION_INITIALIZATION_INTERRUPTED'
     if ((Get-RotationRecoveryClassification $state (Get-RotationSyntheticObservation $false $false $false $false)) -ne 'MANUAL_INTERVENTION_REQUIRED') { Stop-Rotation 'RECOVERY_SELF_TEST_INITIALIZATION_INTERRUPTED' }
     if (Test-RotationRecoveryRequiresRuntimeObservation $state) { Stop-Rotation 'RECOVERY_SELF_TEST_INITIALIZATION_OBSERVATION' }
+    $state.State = 'NEVER_INITIALIZED'
+    if ((Get-RotationRecoveryClassification $state $null) -ne 'MANUAL_INTERVENTION_REQUIRED' -or (Test-RotationRecoveryRequiresRuntimeObservation $state)) { Stop-Rotation 'RECOVERY_SELF_TEST_NEVER_INITIALIZED' }
     $state.State = 'CANDIDATE_ACCEPTANCE_INTERRUPTED'
     if ((Get-RotationRecoveryClassification $state $null) -ne 'MANUAL_INTERVENTION_REQUIRED' -or (Test-RotationRecoveryRequiresRuntimeObservation $state)) { Stop-Rotation 'RECOVERY_SELF_TEST_CANDIDATE_EVIDENCE_OBSERVATION' }
     $state.State = 'ROLLBACK_ACCEPTANCE_INTERRUPTED'

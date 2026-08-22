@@ -19,12 +19,16 @@ function Invoke-RotationRuntimeAcceptanceValidator([string]$TargetRoot, [string]
 # dedicated child initializer and this helper is never shipped as common code.
 function Initialize-RotationOperation([string]$TargetRoot, [string]$OperationId, [switch]$AllowSyntheticTestPermissions) {
   if (-not (Invoke-RotationRuntimeAcceptanceValidator $TargetRoot $OperationId 'Rollback')) { Stop-Rotation 'ROLLBACK_RUNTIME_BASELINE_REJECTED' }
+  $planIdentity = Get-RotationPlanIdentity $TargetRoot $OperationId
+  $operationRoot = Get-RotationOperationRoot $TargetRoot $OperationId -AllowMissingOperationsRoot
+  if ($null -ne (Read-RotationInitializationClaim $TargetRoot $OperationId $planIdentity) -or (Test-Path -LiteralPath $operationRoot)) { Stop-Rotation 'ROTATION_INITIALIZATION_ALREADY_CLAIMED' }
+  Write-RotationInitializationClaim $TargetRoot $OperationId $planIdentity
   if (-not $AllowSyntheticTestPermissions) { $null = Ensure-RotationOperationsRoot $TargetRoot }
   $operationRoot = Get-RotationOperationRoot $TargetRoot $OperationId
   if (Test-Path -LiteralPath $operationRoot) { Stop-Rotation 'ROTATION_OPERATION_EXISTS' }
   [IO.Directory]::CreateDirectory($operationRoot) | Out-Null
   if (-not $AllowSyntheticTestPermissions) { Set-RotationOperationDirectorySecurity $operationRoot; Assert-RotationOperationDirectorySecurity $operationRoot }
-  $record = [ordered]@{ schemaVersion = $script:RotationSchemaVersion; operationId = $OperationId; planIdentity = Get-RotationPlanIdentity $TargetRoot $OperationId; transition = 'OPERATION_CREATED'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
+  $record = [ordered]@{ schemaVersion = $script:RotationSchemaVersion; operationId = $OperationId; planIdentity = $planIdentity; transition = 'OPERATION_CREATED'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
   Write-RotationOperationRecord $operationRoot 'operation-created.json' $record
 }
 
@@ -198,7 +202,7 @@ try {
   Assert-RotationTest 'ROLLBACK_VALIDATION_PRECEDES_OPERATION_CREATED' { -not (Test-Path -LiteralPath (Get-RotationOperationRoot $secureRoot $unvalidatedOperation)) } $true
   Assert-RotationTest 'UNVALIDATED_BASELINE_ACTIVATION_BLOCKED' { Consume-RotationOperationTransition $secureRoot $unvalidatedOperation 'ACTIVATION_ATTEMPT' } $false
   Assert-RotationTest 'SYNTHETIC_PERMISSION_SWITCH_NOT_SECURITY_BYPASS' { Initialize-RotationOperation $secureRoot $unvalidatedOperation -AllowSyntheticTestPermissions } $false
-  Assert-RotationTest 'UNVALIDATED_PLAN_ONLY_STATE_RECOVERABLE' { if ((Get-RotationOperationState $secureRoot $unvalidatedOperation).State -ne 'OPERATION_INITIALIZATION_INTERRUPTED') { throw } } $true
+  Assert-RotationTest 'UNVALIDATED_PLAN_ONLY_STATE_RECOVERABLE' { if ((Get-RotationOperationState $secureRoot $unvalidatedOperation).State -ne 'NEVER_INITIALIZED') { throw } } $true
   $validatedOperation = ('fedcba9876543210' * 2)
   $validatedPlan = New-RotationPlanObject $validatedOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
   $null = Write-RotationPlanAtomically $secureRoot $validatedPlan
@@ -208,22 +212,61 @@ try {
   Assert-RotationTest 'INITIALIZATION_REQUIRES_ROLLBACK_BASELINE' { $state = Get-RotationOperationState $secureRoot $validatedOperation; $state.State -eq 'PREPARED' -and (Test-Path -LiteralPath (Join-Path $state.OperationRoot 'operation-created.json')) } $true
   Assert-RotationTest 'ROLLBACK_VALIDATION_PLAN_BOUND' { $call = $script:RotationSyntheticRollbackValidatorCalls[-1]; $call.OperationId -ceq $validatedOperation -and $call.Mode -ceq 'Rollback' } $true
   $script:RotationSyntheticRollbackValidatorExpectedOperationId = $null
+  Assert-RotationTest 'FIRST_INITIALIZATION_ALLOWED_ONCE' { $null -ne (Read-RotationInitializationClaim $secureRoot $validatedOperation (Get-RotationPlanIdentity $secureRoot $validatedOperation)) } $true
+  Assert-RotationTest 'REPEATED_INITIALIZATION_BLOCKED' { Initialize-RotationOperation $secureRoot $validatedOperation } $false
+  Assert-RotationTest 'OPERATION_INITIALIZATION_SINGLE_USE' { (Get-RotationOperationState $secureRoot $validatedOperation).State -eq 'PREPARED' } $true
+  $lostStateOperation = ('89abcdef01234567' * 2)
+  $lostStatePlan = New-RotationPlanObject $lostStateOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $lostStatePlan
+  Assert-RotationTest 'PREPARED_STATE_RECREATION_BLOCKED' {
+    Initialize-RotationOperation $secureRoot $lostStateOperation
+    Consume-RotationOperationTransition $secureRoot $lostStateOperation 'ACTIVATION_ATTEMPT'
+    $lostRoot = Get-RotationOperationRoot $secureRoot $lostStateOperation
+    Remove-Item -LiteralPath $lostRoot -Recurse -Force
+    if ((Get-RotationOperationState $secureRoot $lostStateOperation).State -ne 'OPERATION_INITIALIZATION_INTERRUPTED') { throw }
+    Initialize-RotationOperation $secureRoot $lostStateOperation
+  } $false
+  Assert-RotationTest 'ACTIVATION_ATTEMPT_RESET_BLOCKED' { Consume-RotationOperationTransition $secureRoot $lostStateOperation 'ACTIVATION_ATTEMPT' } $false
+  Assert-RotationTest 'MISSING_OPERATION_STATE_NOT_RECREATED' { -not (Test-Path -LiteralPath (Get-RotationOperationRoot $secureRoot $lostStateOperation -AllowMissingOperationsRoot)) } $true
+  Assert-RotationTest 'LOST_OPERATION_STATE_REQUIRES_MANUAL_INTERVENTION' { (Get-RotationRecoveryClassification (Get-RotationOperationState $secureRoot $lostStateOperation) (New-RotationSyntheticObservation)) -eq 'MANUAL_INTERVENTION_REQUIRED' } $true
+  $claimOnlyOperation = ('23' * 16)
+  $claimOnlyPlan = New-RotationPlanObject $claimOnlyOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $claimOnlyPlan
+  $claimOnlyIdentity = Get-RotationPlanIdentity $secureRoot $claimOnlyOperation
+  Write-RotationInitializationClaim $secureRoot $claimOnlyOperation $claimOnlyIdentity
+  Assert-RotationTest 'INITIALIZATION_CLAIM_ONLY_STATE_RECOVERABLE' { if ((Get-RotationOperationState $secureRoot $claimOnlyOperation).State -ne 'OPERATION_INITIALIZATION_INTERRUPTED') { throw } } $true
+  Assert-RotationTest 'INITIALIZATION_CLAIM_ONLY_MANUAL_INTERVENTION_SUPPORTED' { Consume-RotationOperationTransition $secureRoot $claimOnlyOperation 'MANUAL_INTERVENTION' } $true
+  $malformedClaimOperation = ('45' * 16)
+  $malformedClaimPlan = New-RotationPlanObject $malformedClaimOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $malformedClaimPlan
+  $null = Ensure-RotationInitializationClaimsRoot $secureRoot
+  [IO.File]::WriteAllText((Get-RotationInitializationClaimPath $secureRoot $malformedClaimOperation), '{malformed', [Text.UTF8Encoding]::new($false))
+  Assert-RotationTest 'MALFORMED_INITIALIZATION_CLAIM_BLOCKED' { Get-RotationOperationState $secureRoot $malformedClaimOperation | Out-Null } $false
+  $wrongOperationClaimOperation = ('67' * 16)
+  $wrongOperationClaimPlan = New-RotationPlanObject $wrongOperationClaimOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $wrongOperationClaimPlan
+  $wrongOperationClaim = [ordered]@{ schemaVersion = $script:RotationSchemaVersion; operationId = ('76' * 16); planIdentity = Get-RotationPlanIdentity $secureRoot $wrongOperationClaimOperation; transition = 'INITIALIZATION_CLAIMED'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
+  [IO.File]::WriteAllText((Get-RotationInitializationClaimPath $secureRoot $wrongOperationClaimOperation), ($wrongOperationClaim | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+  Assert-RotationTest 'WRONG_OPERATION_INITIALIZATION_CLAIM_BLOCKED' { Get-RotationOperationState $secureRoot $wrongOperationClaimOperation | Out-Null } $false
+  $wrongPlanClaimOperation = ('78' * 16)
+  $wrongPlanClaimPlan = New-RotationPlanObject $wrongPlanClaimOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
+  $null = Write-RotationPlanAtomically $secureRoot $wrongPlanClaimPlan
+  $wrongPlanClaim = [ordered]@{ schemaVersion = $script:RotationSchemaVersion; operationId = $wrongPlanClaimOperation; planIdentity = ('sha256:' + ('f' * 64)); transition = 'INITIALIZATION_CLAIMED'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
+  [IO.File]::WriteAllText((Get-RotationInitializationClaimPath $secureRoot $wrongPlanClaimOperation), ($wrongPlanClaim | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+  Assert-RotationTest 'WRONG_PLAN_INITIALIZATION_CLAIM_BLOCKED' { Get-RotationOperationState $secureRoot $wrongPlanClaimOperation | Out-Null } $false
   $planOnlyOperation = ('01' * 16)
   $planOnlyPlan = New-RotationPlanObject $planOnlyOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
   $null = Write-RotationPlanAtomically $secureRoot $planOnlyPlan
-  Assert-RotationTest 'PLAN_ONLY_INITIALIZATION_INTERRUPTION_RECOGNIZED' { if ((Get-RotationOperationState $secureRoot $planOnlyOperation).State -ne 'OPERATION_INITIALIZATION_INTERRUPTED') { throw } } $true
+  Assert-RotationTest 'PLAN_ONLY_NEVER_INITIALIZED_RECOGNIZED' { if ((Get-RotationOperationState $secureRoot $planOnlyOperation).State -ne 'NEVER_INITIALIZED') { throw } } $true
   Assert-RotationTest 'PLAN_ONLY_INITIALIZATION_NOT_ACCEPTED' { if ((Get-RotationRecoveryClassification (Get-RotationOperationState $secureRoot $planOnlyOperation) (New-RotationSyntheticObservation)) -ne 'MANUAL_INTERVENTION_REQUIRED') { throw } } $true
-  Assert-RotationTest 'PLAN_ONLY_MANUAL_INTERVENTION_SUPPORTED' { Consume-RotationOperationTransition $secureRoot $planOnlyOperation 'MANUAL_INTERVENTION' } $true
-  Assert-RotationTest 'PLAN_ONLY_MANUAL_INTERVENTION_STATE_READABLE' { $state = Get-RotationOperationState $secureRoot $planOnlyOperation; if ($state.State -ne 'MANUAL_INTERVENTION_REQUIRED' -or (Test-RotationRecoveryRequiresRuntimeObservation $state)) { throw } } $true
+  Assert-RotationTest 'PLAN_ONLY_MANUAL_INTERVENTION_BLOCKED' { Consume-RotationOperationTransition $secureRoot $planOnlyOperation 'MANUAL_INTERVENTION' } $false
   $directoryOnlyOperation = ('03' * 16)
   $directoryOnlyPlan = New-RotationPlanObject $directoryOnlyOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
   $null = Write-RotationPlanAtomically $secureRoot $directoryOnlyPlan
   $null = Ensure-RotationOperationsRoot $secureRoot
   $directoryOnlyPath = Get-RotationOperationRoot $secureRoot $directoryOnlyOperation
   [IO.Directory]::CreateDirectory($directoryOnlyPath) | Out-Null; Set-RotationOperationDirectorySecurity $directoryOnlyPath
-  Assert-RotationTest 'DIRECTORY_ONLY_INITIALIZATION_INTERRUPTION_RECOGNIZED' { if ((Get-RotationOperationState $secureRoot $directoryOnlyOperation).State -ne 'OPERATION_INITIALIZATION_INTERRUPTED') { throw } } $true
-  Assert-RotationTest 'DIRECTORY_ONLY_MANUAL_INTERVENTION_SUPPORTED' { Consume-RotationOperationTransition $secureRoot $directoryOnlyOperation 'MANUAL_INTERVENTION' } $true
-  Assert-RotationTest 'DIRECTORY_ONLY_MANUAL_INTERVENTION_STATE_READABLE' { $state = Get-RotationOperationState $secureRoot $directoryOnlyOperation; if ($state.State -ne 'MANUAL_INTERVENTION_REQUIRED' -or (Test-RotationRecoveryRequiresRuntimeObservation $state)) { throw } } $true
+  Assert-RotationTest 'OPERATION_WITHOUT_INITIALIZATION_CLAIM_BLOCKED' { Get-RotationOperationState $secureRoot $directoryOnlyOperation | Out-Null } $false
   $planIdentityBefore = Get-RotationPlanIdentity $secureRoot $secureOperation
   Assert-RotationTest 'ACTIVATION_FIRST_CONSUME' { Initialize-RotationOperation $secureRoot $secureOperation; Consume-RotationOperationTransition $secureRoot $secureOperation 'ACTIVATION_ATTEMPT' } $true
   Assert-RotationTest 'ACTIVATION_REPLAY_BLOCKED' { Consume-RotationOperationTransition $secureRoot $secureOperation 'ACTIVATION_ATTEMPT' } $false

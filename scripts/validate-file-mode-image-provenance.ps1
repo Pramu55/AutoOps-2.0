@@ -89,6 +89,50 @@ function Get-NormalizedPath([string]$Path) {
   return [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
 }
 
+function Test-TrustedExecutableFile([string]$Path) {
+  if ([string]::IsNullOrWhiteSpace($Path) -or -not [IO.File]::Exists($Path)) { return $false }
+  try { return (([IO.File]::GetAttributes($Path) -band [IO.FileAttributes]::ReparsePoint) -eq 0) } catch { return $false }
+}
+
+function Get-TrustedProgramFilesRoots() {
+  if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return @() }
+  $roots = [Collections.Generic.List[string]]::new()
+  foreach ($folder in @([Environment+SpecialFolder]::ProgramFiles, [Environment+SpecialFolder]::ProgramFilesX86)) {
+    try {
+      $root = [Environment]::GetFolderPath($folder)
+      if (-not [string]::IsNullOrWhiteSpace($root) -and -not $roots.Contains($root)) { $roots.Add($root) }
+    } catch { }
+  }
+  return @($roots)
+}
+
+function Get-TrustedDockerExecutable() {
+  foreach ($root in Get-TrustedProgramFilesRoots) {
+    $candidate = Join-Path $root 'Docker\Docker\resources\bin\docker.exe'
+    if (Test-TrustedExecutableFile $candidate) { return $candidate }
+  }
+  return $null
+}
+
+function Get-TrustedGitExecutable() {
+  $installationRoots = [Collections.Generic.List[string]]::new()
+  foreach ($root in Get-TrustedProgramFilesRoots) { if (-not $installationRoots.Contains($root)) { $installationRoots.Add($root) } }
+  # Git for Windows also documents the conventional system-drive installation
+  # root used by managed/local installations. Derive the drive from the OS
+  # system directory rather than an environment variable or caller PATH.
+  try {
+    $systemDrive = [IO.Path]::GetPathRoot([Environment]::GetFolderPath([Environment+SpecialFolder]::System))
+    if (-not [string]::IsNullOrWhiteSpace($systemDrive) -and -not $installationRoots.Contains($systemDrive)) { $installationRoots.Add($systemDrive) }
+  } catch { }
+  foreach ($root in $installationRoots) {
+    foreach ($relativePath in @('Git\cmd\git.exe', 'Git\bin\git.exe')) {
+      $candidate = Join-Path $root $relativePath
+      if (Test-TrustedExecutableFile $candidate) { return $candidate }
+    }
+  }
+  return $null
+}
+
 function ConvertTo-PathRegex([string]$Pattern) {
   $escaped = [Regex]::Escape($Pattern.Replace('\', '/'))
   $escaped = $escaped.Replace('\*\*/', '(?:.*/)?').Replace('\*\*', '.*').Replace('\*', '[^/]*').Replace('\?', '[^/]')
@@ -156,8 +200,10 @@ function Test-IgnoredPathAffectsBuild([string]$Path, [string]$RepositoryRoot, [s
 }
 
 function Get-RepositoryGitOutput([string]$Arguments, [string]$RepositoryRoot = $repositoryRoot, [switch]$DisablePerformanceCaches) {
+  $gitExecutable = Get-TrustedGitExecutable
+  if ($null -eq $gitExecutable) { return [pscustomobject]@{ Succeeded = $false; Output = $null } }
   $psi = [Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = 'git'
+  $psi.FileName = $gitExecutable
   # Command-scoped cache disables are used for the status proof only. Applying
   # them to ls-files can normalize hidden index tags, so that command must read
   # the raw index metadata instead.
@@ -275,8 +321,10 @@ function Test-CheckoutBinding([string]$Expected, [object]$Inspection) {
 
 function Get-ImageRevision([string]$Image) {
   if (-not (Test-ImageReference $Image)) { return $null }
+  $dockerExecutable = Get-TrustedDockerExecutable
+  if ($null -eq $dockerExecutable) { return $null }
   $psi = [Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = 'docker'
+  $psi.FileName = $dockerExecutable
   # Request the complete label map as JSON so the child-process argument does
   # not need to embed a quoted label key.  Read only the non-secret revision.
   $psi.Arguments = 'image inspect --format "{{json .Config.Labels}}" "' + $Image.Replace('"', '\"') + '"'
@@ -306,8 +354,10 @@ function Test-ImageRevision([string]$Revision, [string]$Expected) {
 
 function Get-LoadedImageMetadata([string]$Image) {
   if (-not (Test-ImageReference $Image)) { return $null }
+  $dockerExecutable = Get-TrustedDockerExecutable
+  if ($null -eq $dockerExecutable) { return $null }
   $psi = [Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = 'docker'
+  $psi.FileName = $dockerExecutable
   $psi.Arguments = 'image inspect --format "{{.Id}}|{{.Os}}|{{.Architecture}}" "' + $Image.Replace('"', '\"') + '"'
   $psi.UseShellExecute = $false
   $psi.RedirectStandardOutput = $true
@@ -350,8 +400,10 @@ function Get-BuildRecordInspection([string]$Builder, [string]$RecordRef, [string
   }
 
   function Invoke-BuildxJson([string]$Arguments) {
+    $dockerExecutable = Get-TrustedDockerExecutable
+    if ($null -eq $dockerExecutable) { return $null }
     $psi = [Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName = 'docker'
+    $psi.FileName = $dockerExecutable
     $psi.Arguments = $Arguments
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
@@ -408,15 +460,31 @@ function Test-ManifestMetadataConfigBinding([string]$ManifestConfigDigest, [stri
 }
 
 function Invoke-TestGit([string]$RepositoryRoot, [string[]]$Arguments) {
+  $gitExecutable = Get-TrustedGitExecutable
+  if ($null -eq $gitExecutable) { throw 'Trusted Git executable unavailable' }
   $previousErrorActionPreference = $ErrorActionPreference
   try {
     $ErrorActionPreference = 'Continue'
-    & git -c core.safecrlf=false -C $RepositoryRoot @Arguments 1>$null 2>$null
+    & $gitExecutable -c core.safecrlf=false -C $RepositoryRoot @Arguments 1>$null 2>$null
     $exitCode = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $previousErrorActionPreference
   }
   if ($exitCode -ne 0) { throw "Synthetic Git command failed: $($Arguments -join ' ')" }
+}
+
+function Get-TestGitOutput([string]$RepositoryRoot, [string[]]$Arguments) {
+  $gitExecutable = Get-TrustedGitExecutable
+  if ($null -eq $gitExecutable) { throw 'Trusted Git executable unavailable' }
+  $psi = [Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $gitExecutable
+  $psi.Arguments = '-C "' + (Get-NormalizedPath $RepositoryRoot).Replace('"', '\"') + '" ' + (($Arguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
+  if (-not $process.Start()) { throw 'Trusted Git process failed to start' }
+  $stdout = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
+  if ($process.ExitCode -ne 0) { throw 'Synthetic Git command failed' }
+  return $stdout
 }
 
 function New-SyntheticRepository([string]$Root, [string]$Name) {
@@ -449,8 +517,19 @@ function Invoke-SelfTest {
   $root = Join-Path ([IO.Path]::GetTempPath()) ('autoops-provenance-' + [Guid]::NewGuid().ToString('N'))
   $originalEnvironment = @{}
   foreach ($name in $gitRepositorySelectionVariables) { $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+  $originalPath = [Environment]::GetEnvironmentVariable('PATH', 'Process')
   $passed = $true
   try {
+    # Place plausible attacker-named executables first in PATH.  Resolution
+    # below must either use an OS-known trusted location or fail closed.
+    $attackerDirectory = Join-Path $root 'attacker'
+    New-Item -ItemType Directory -Path $attackerDirectory -Force | Out-Null
+    $systemExecutable = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::System)) 'cmd.exe'
+    $fakeDocker = Join-Path $attackerDirectory 'docker.exe'; $fakeGit = Join-Path $attackerDirectory 'git.exe'
+    Copy-Item -LiteralPath $systemExecutable -Destination $fakeDocker -Force
+    Copy-Item -LiteralPath $systemExecutable -Destination $fakeGit -Force
+    [Environment]::SetEnvironmentVariable('PATH', $attackerDirectory + [IO.Path]::PathSeparator + $originalPath, 'Process')
+    $trustedDocker = Get-TrustedDockerExecutable; $trustedGit = Get-TrustedGitExecutable
     $primary = New-SyntheticRepository $root 'primary'
     $redirect = New-SyntheticRepository $root 'redirect'
     $expected = (Get-RepositoryGitOutput 'rev-parse HEAD' $primary).Output.Trim()
@@ -463,7 +542,13 @@ function Invoke-SelfTest {
       @{ Name = 'IMAGE_PROVENANCE_MALFORMED_BLOCKED'; Passed = -not (Test-ImageRevision 'not-a-revision' $expected) },
       @{ Name = 'IMAGE_PROVENANCE_INVALID_IMAGE_REFERENCE_BLOCKED'; Passed = -not (Test-ImageReference 'invalid image reference') },
       @{ Name = 'IMAGE_PROVENANCE_GIT_STATUS_FAILURE_BLOCKED'; Passed = -not (Get-RepositoryGitOutput 'not-a-git-command' $primary).Succeeded },
-      @{ Name = 'IMAGE_PROVENANCE_API_WORKER_MISMATCH_BLOCKED'; Passed = -not ((Test-ImageRevision $expected $expected) -and (Test-ImageRevision $stale $expected)) }
+      @{ Name = 'IMAGE_PROVENANCE_API_WORKER_MISMATCH_BLOCKED'; Passed = -not ((Test-ImageRevision $expected $expected) -and (Test-ImageRevision $stale $expected)) },
+      @{ Name = 'PROVENANCE_FAKE_DOCKER_PATH_BLOCKED'; Passed = $null -eq $trustedDocker -or -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase) },
+      @{ Name = 'PROVENANCE_FAKE_GIT_PATH_BLOCKED'; Passed = $null -eq $trustedGit -or -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase) },
+      @{ Name = 'PROVENANCE_CALLER_PATH_IGNORED'; Passed = ($null -eq $trustedDocker -or -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase)) -and ($null -eq $trustedGit -or -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase)) },
+      @{ Name = 'PROVENANCE_DOCKER_PATH_PINNED'; Passed = $null -eq $trustedDocker -or ((Test-TrustedExecutableFile $trustedDocker) -and -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase)) },
+      @{ Name = 'PROVENANCE_GIT_PATH_PINNED'; Passed = $null -eq $trustedGit -or ((Test-TrustedExecutableFile $trustedGit) -and -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase)) },
+      @{ Name = 'PROVENANCE_PATH_FALLBACK_NO'; Passed = ($null -eq $trustedDocker -or -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase)) -and ($null -eq $trustedGit -or -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase)) }
     )
     $builderTokens = $null
     $builderParseErrors = $null
@@ -626,9 +711,9 @@ function Invoke-SelfTest {
     $fsmonitorHook = Join-Path $primary '.git/fsmonitor-empty.sh'
     Set-Content -LiteralPath $fsmonitorHook -Value "#!/bin/sh`necho 'version 2'`necho 'token'" -Encoding ascii
     Invoke-TestGit $primary @('config','core.fsmonitor','sh .git/fsmonitor-empty.sh')
-    & git -C $primary status --porcelain=v1 1>$null 2>$null
+    $null = Get-TestGitOutput $primary @('status','--porcelain=v1')
     Add-Content -LiteralPath (Join-Path $primary $trackedBuildInput) -Value '// stale fsmonitor change' -Encoding utf8
-    $misledStatus = @(& git -C $primary status --porcelain=v1 2>$null) -join "`n"
+    $misledStatus = Get-TestGitOutput $primary @('status','--porcelain=v1')
     $fsmonitorInspection = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
     $cases += @{ Name = 'FSMONITOR_STALE_BUILD_INPUT_BLOCKED'; Passed = [string]::IsNullOrWhiteSpace($misledStatus) -and $fsmonitorInspection.HasOrdinaryChanges -and -not (Test-CheckoutBinding $expected $fsmonitorInspection) }
     Invoke-TestGit $primary @('config','--unset','core.fsmonitor')
@@ -658,6 +743,7 @@ function Invoke-SelfTest {
     }
   } finally {
     foreach ($name in $gitRepositorySelectionVariables) { [Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], 'Process') }
+    [Environment]::SetEnvironmentVariable('PATH', $originalPath, 'Process')
     if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
   }
   exit $(if ($passed) { 0 } else { 1 })
