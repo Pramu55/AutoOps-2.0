@@ -2,6 +2,46 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'secret-rotation-common.ps1')
 
+# Test-only synthetic record writers. Production common helpers intentionally
+# throw ROTATION_AUTHORITY_REQUIRED; this fixture is never imported by an
+# operational script and exists solely to exercise legacy state grammar.
+function Write-RotationPlanAtomically([string]$TargetRoot, $Plan, [switch]$AllowSyntheticTestPermissions) {
+  $planRoot = Join-Path $TargetRoot 'rotation-plans'
+  if (-not $AllowSyntheticTestPermissions -and (Test-Path -LiteralPath $planRoot)) { Assert-RotationOperationDirectorySecurity $planRoot }
+  if (-not (Test-Path -LiteralPath $planRoot)) {
+    if (-not $AllowSyntheticTestPermissions) { Assert-RotationOperationDirectorySecurity $TargetRoot }
+    [IO.Directory]::CreateDirectory($planRoot) | Out-Null
+    if (-not $AllowSyntheticTestPermissions) { Set-RotationOperationDirectorySecurity $planRoot }
+  }
+  $path = Join-Path $planRoot ($Plan.operationId + '.json')
+  $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Plan | ConvertTo-Json -Depth 8))
+  $stream = [IO.FileStream]::new($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+  try { $stream.Write($bytes,0,$bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+  return $path
+}
+function Ensure-RotationInitializationClaimsRoot([string]$TargetRoot) { $path=Join-Path $TargetRoot 'rotation-initialization-claims';$created=-not(Test-Path -LiteralPath $path);[IO.Directory]::CreateDirectory($path)|Out-Null;if($created){Set-RotationOperationDirectorySecurity $path};return $path }
+function Write-RotationInitializationClaim([string]$TargetRoot,[string]$OperationId,[string]$PlanIdentity) {
+  $path=Join-Path (Ensure-RotationInitializationClaimsRoot $TargetRoot) ($OperationId+'.json')
+  $record=[ordered]@{schemaVersion=$script:RotationSchemaVersion;operationId=$OperationId;planIdentity=$PlanIdentity;transition='INITIALIZATION_CLAIMED';createdAtUtc=[DateTime]::UtcNow.ToString('o')}
+  $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($record|ConvertTo-Json -Compress));$stream=[IO.FileStream]::new($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+  try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+}
+function Ensure-RotationOperationsRoot([string]$TargetRoot) { $path=Join-Path $TargetRoot 'rotation-operations';$created=-not(Test-Path -LiteralPath $path);[IO.Directory]::CreateDirectory($path)|Out-Null;if($created){Set-RotationOperationDirectorySecurity $path};return $path }
+function Write-RotationOperationRecord([string]$OperationRoot,[string]$Name,$Record) {
+  $path=Join-Path $OperationRoot $Name;$bytes=[Text.UTF8Encoding]::new($false).GetBytes(($Record|ConvertTo-Json -Depth 5 -Compress));$stream=[IO.FileStream]::new($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+  try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+}
+function Consume-RotationOperationTransition([string]$TargetRoot,[string]$OperationId,[string]$Transition) {
+  $state=Get-RotationOperationState $TargetRoot $OperationId -AllowSyntheticTestPermissions
+  $expected=@{ACTIVATION_ATTEMPT='PREPARED';ACTIVATION_FAILED='ACTIVATION_ATTEMPT_CONSUMED';ROLLBACK_ATTEMPT='ACTIVATION_FAILED'}
+  if($Transition -ne 'MANUAL_INTERVENTION' -and $state.State -cne $expected[$Transition]){throw 'ROTATION_OPERATION_TRANSITION_INVALID'}
+  if($Transition -eq 'MANUAL_INTERVENTION' -and $state.State -in @('NEVER_INITIALIZED','ACTIVE_ACCEPTED','ROLLED_BACK','MANUAL_INTERVENTION_REQUIRED')){throw 'ROTATION_OPERATION_TRANSITION_INVALID'}
+  if($Transition -eq 'MANUAL_INTERVENTION' -and $state.State -eq 'OPERATION_INITIALIZATION_INTERRUPTED' -and -not(Test-Path -LiteralPath $state.OperationRoot)){[IO.Directory]::CreateDirectory($state.OperationRoot)|Out-Null}
+  $names=@{ACTIVATION_ATTEMPT='activation-attempt.json';ACTIVATION_FAILED='activation-failed.json';ROLLBACK_ATTEMPT='rollback-attempt.json';MANUAL_INTERVENTION='manual-intervention.json'}
+  $record=[ordered]@{schemaVersion=$script:RotationSchemaVersion;operationId=$OperationId;planIdentity=$state.PlanIdentity;transition=$Transition;createdAtUtc=[DateTime]::UtcNow.ToString('o')}
+  Write-RotationOperationRecord $state.OperationRoot $names[$Transition] $record
+}
+
 # Test-local seam for operation-initialization authority. This shadows the
 # production process launcher only in this synthetic test process; it has no
 # production parameter or caller-controlled bypass.
@@ -334,7 +374,7 @@ try {
   $directAcceptedRecord = [ordered]@{ schemaVersion = 1; operationId = $missingEvidenceOperation; planIdentity = $missingEvidenceState.PlanIdentity; transition = 'ACTIVATION_ACCEPTED'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
   [IO.File]::WriteAllText((Join-Path $missingEvidenceState.OperationRoot 'activation-accepted.json'), ($directAcceptedRecord | ConvertTo-Json -Compress))
   Assert-RotationTest 'ACCEPTED_MARKER_WITHOUT_VALIDATOR_EVIDENCE_BLOCKED' { Get-RotationOperationState $secureRoot $missingEvidenceOperation | Out-Null } $false
-  Assert-RotationTest 'VALIDATOR_ONLY_ACCEPTANCE_AUTHORITY' { $finalizer = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'confirm-secret-rotation-runtime.ps1') -Raw; $validatorAt = $finalizer.LastIndexOf('Invoke-RotationRuntimeAcceptanceValidator'); $writerAt = $finalizer.LastIndexOf('Write-RotationAcceptanceRecordPrivate'); $validatorAt -ge 0 -and $writerAt -gt $validatorAt } $true
+  Assert-RotationTest 'VALIDATOR_ONLY_ACCEPTANCE_AUTHORITY' { $finalizer = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'confirm-secret-rotation-runtime.ps1') -Raw; $finalizer -match 'rotation-authority-client' -and $finalizer -match 'CONFIRM_CANDIDATE' -and $finalizer -match 'CONFIRM_ROLLBACK' -and $finalizer -notmatch 'Write-RotationAcceptanceRecordPrivate' } $true
   $badEvidenceOperation = '7' * 32
   $badEvidencePlan = New-RotationPlanObject $badEvidenceOperation $secureCandidate $secureCurrent $securePrevious ('b' * 40) ('sha256:' + ('7' * 64)) ('sha256:' + ('8' * 64)) @('core','sensitive-env','github') $secureRollback
   $null = Write-RotationPlanAtomically $secureRoot $badEvidencePlan
@@ -449,7 +489,9 @@ try {
   } $true
   Assert-RotationTest 'VALIDATION_DOCKER_PATH_NOT_PATH_RESOLVED' {
     $sources = @('secret-rotation-common.ps1','prepare-secret-rotation.ps1','validate-secret-rotation-runtime.ps1') | ForEach-Object { Get-Content -LiteralPath (Join-Path $PSScriptRoot $_) -Raw }
-    -not (@($sources | Where-Object { $_ -match "Start-RotationProcess\s+'docker'" }).Count) -and (@($sources | Where-Object { $_.Contains('Get-RotationDockerExecutable') }).Count -eq 3)
+    -not (@($sources | Where-Object { $_ -match "Start-RotationProcess\s+'docker'" }).Count) -and
+      (@($sources | Where-Object { $_.Contains('Start-RotationTrustedDockerProcess') }).Count -ge 2) -and
+      $sources[0].Contains('Get-RotationDockerExecutable')
   } $true
   Assert-RotationTest 'PROTECTED_FILE_SINGLE_LINK_ALLOWED' { Test-RotationProtectedFileLinkIntegrity $secureRoot } $true
   $hardLinkDirectory = Join-Path $root 'hardlink-outside'; New-Item -ItemType Directory -Path $hardLinkDirectory | Out-Null
@@ -497,10 +539,8 @@ try {
   Assert-RotationTest 'COMMON_MODULE_INITIALIZATION_AUTHORITY_NO' {
     $common = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'secret-rotation-common.ps1') -Raw
     if ($common.Contains('function Initialize-RotationOperation')) { throw }
-    $initializer = Join-Path $PSScriptRoot 'initialize-secret-rotation-operation.ps1'
-    if (-not (Test-Path -LiteralPath $initializer)) { throw }
     $preflight = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'prepare-secret-rotation.ps1') -Raw
-    if (-not $preflight.Contains('initialize-secret-rotation-operation.ps1')) { throw }
+    if (-not $preflight.Contains('rotation-authority-client.ps1') -or -not $preflight.Contains("Invoke-RotationAuthorityRequest 'INITIALIZE_OPERATION'")) { throw }
   } $true
   Assert-RotationTest 'DUPLICATE_JSON_KEYS_REJECTED_PRE_DESERIALIZATION' { ConvertFrom-RotationStrictJson '{"transition":"ACTIVATION_ATTEMPT","transition":"ACTIVATION_ACCEPTED"}' 'ROTATION_OPERATION_RECORD_INVALID' | Out-Null } $false
   Assert-RotationTest 'DUPLICATE_PLAN_KEYS_REJECTED_PRE_DESERIALIZATION' {

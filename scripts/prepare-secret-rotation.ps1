@@ -23,6 +23,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'secret-rotation-common.ps1')
+. (Join-Path $PSScriptRoot 'rotation-authority-client.ps1')
 
 function Write-RotationResult([string]$Name, [bool]$Passed) {
   [Console]::WriteLine("$Name $(if ($Passed) { 'PASS' } else { 'FAIL' })")
@@ -68,7 +69,7 @@ function Invoke-RotationEvidenceCommand([string]$File, [string[]]$Arguments, [ha
 
 function Get-RotationLocalImageId([string]$ImageReference) {
   if ([string]::IsNullOrWhiteSpace($ImageReference) -or $ImageReference -match '[\s"'']') { Stop-Rotation 'IMAGE_REFERENCE_INVALID' }
-  $process = Start-RotationProcess (Get-RotationDockerExecutable) @('image', 'inspect', '--format', '{{.Id}}', $ImageReference) 'IMAGE_INSPECTION_FAILED'
+  $process = Start-RotationTrustedDockerProcess @('image', 'inspect', '--format', '{{.Id}}', $ImageReference) 'IMAGE_INSPECTION_FAILED'
   $value = $process.StandardOutput.ReadToEnd().Trim(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -ne 0 -or -not (Test-RotationSha256 $value)) { Stop-Rotation 'IMAGE_INSPECTION_FAILED' }
   return $value
@@ -76,7 +77,7 @@ function Get-RotationLocalImageId([string]$ImageReference) {
 
 function Get-RotationContainerMetadata([string]$Container) {
   if ($Container -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*$') { Stop-Rotation 'ROLLBACK_CONTAINER_INVALID' }
-  $process = Start-RotationProcess (Get-RotationDockerExecutable) @('inspect', '--format', '{{.Id}}|{{.Image}}|{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}},{{end}}{{end}}', $Container) 'ROLLBACK_CONTAINER_INSPECTION_FAILED'
+  $process = Start-RotationTrustedDockerProcess @('inspect', '--format', '{{.Id}}|{{.Image}}|{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}},{{end}}{{end}}', $Container) 'ROLLBACK_CONTAINER_INSPECTION_FAILED'
   $line = $process.StandardOutput.ReadToEnd().Trim(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -ne 0) { Stop-Rotation 'ROLLBACK_CONTAINER_INSPECTION_FAILED' }
   $parts = $line.Split('|', 3)
@@ -129,13 +130,21 @@ try {
     foreach ($volume in $metadata.Volumes) { $null = $volumes.Add($volume) }
   }
   $rollback = @{ TargetGenerationId = $CurrentGoodGenerationId; ApiImageId = $RollbackApiImageId; WorkerImageId = $RollbackWorkerImageId; ExpectedRuntimeMode = 'file'; ExpectedHealthEndpoints = @('/health', '/ready', '/healthz', '/readyz'); NonTargetContainerIds = $nonTargetIds; VolumeInventory = @($volumes | Sort-Object) }
-  $plan = New-RotationPlanObject $OperationId $CandidateGenerationId $CurrentGoodGenerationId $PreviousGoodGenerationId $RepositoryRevision $CandidateApiImageId $CandidateWorkerImageId $overlays $rollback
-  $null = Write-RotationPlanAtomically $TargetRoot $plan
-  $initializer = Join-Path $PSScriptRoot 'initialize-secret-rotation-operation.ps1'
-  $powershellExe = Join-Path $PSHOME 'powershell.exe'
-  $process = Start-RotationProcess $powershellExe @('-NoProfile','-ExecutionPolicy','Bypass','-File',$initializer,'-TargetRoot',$TargetRoot,'-OperationId',$OperationId) 'ROTATION_INITIALIZER_START_FAILED'
-  $null = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
-  if ($process.ExitCode -ne 0) { Stop-Rotation 'ROLLBACK_RUNTIME_BASELINE_REJECTED' }
+  # This is a requester-side proposal only. The authority validates and writes
+  # the canonical immutable plan in its ProgramData store, then independently
+  # performs rollback validation before it creates PREPARED.
+  $proposal = [ordered]@{
+    candidateGenerationId = $CandidateGenerationId
+    currentGoodGenerationId = $CurrentGoodGenerationId
+    previousGoodGenerationId = if ([string]::IsNullOrWhiteSpace($PreviousGoodGenerationId)) { $null } else { $PreviousGoodGenerationId }
+    repositoryRevision = $RepositoryRevision
+    apiImageId = $CandidateApiImageId
+    workerImageId = $CandidateWorkerImageId
+    requiredOverlays = @($overlays)
+    rollback = $rollback
+  }
+  $null = Invoke-RotationAuthorityRequest 'CREATE_CANONICAL_PLAN' $OperationId ($proposal | ConvertTo-Json -Depth 8 -Compress)
+  $null = Invoke-RotationAuthorityRequest 'INITIALIZE_OPERATION' $OperationId
   [Console]::WriteLine('ROTATION_PREFLIGHT PASS')
   [Console]::WriteLine('ROTATION_PLAN_STATUS PREPARED')
   [Console]::WriteLine('ROTATION_PLAN_CREATED YES')

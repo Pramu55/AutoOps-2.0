@@ -52,6 +52,8 @@ $gitRepositorySelectionVariables = @(
   'GIT_CEILING_DIRECTORIES',
   'GIT_DISCOVERY_ACROSS_FILESYSTEM'
 )
+$trustedDockerEndpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine'
+$trustedDockerConfigRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)) 'AutoOps\rotation-authority\docker-cli'
 
 function Write-Result([string]$Name, [bool]$Passed) {
   Write-Host "$Name $(if ($Passed) { 'PASS' } else { 'FAIL' })"
@@ -112,6 +114,50 @@ function Get-TrustedDockerExecutable() {
     if (Test-TrustedExecutableFile $candidate) { return $candidate }
   }
   return $null
+}
+
+function Get-TrustedBuildxExecutable() {
+  foreach ($root in Get-TrustedProgramFilesRoots) {
+    $candidate = Join-Path $root 'Docker\Docker\resources\cli-plugins\docker-buildx.exe'
+    if (Test-TrustedExecutableFile $candidate) { return $candidate }
+  }
+  return $null
+}
+
+function Set-TrustedDockerChildEnvironment($ProcessStartInfo, [switch]$Buildx) {
+  $ProcessStartInfo.EnvironmentVariables.Clear()
+  $systemDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
+  if ([string]::IsNullOrWhiteSpace($systemDirectory)) { throw 'Trusted Windows system directory unavailable' }
+  $windowsDirectory = Split-Path -Parent $systemDirectory
+  foreach ($entry in @{
+    SystemRoot = $windowsDirectory; WINDIR = $windowsDirectory; ComSpec = (Join-Path $systemDirectory 'cmd.exe'); TEMP = [IO.Path]::GetTempPath(); TMP = [IO.Path]::GetTempPath()
+  }.GetEnumerator()) { $ProcessStartInfo.EnvironmentVariables[$entry.Key] = $entry.Value }
+  if ($Buildx) {
+    $ProcessStartInfo.EnvironmentVariables['DOCKER_HOST'] = $trustedDockerEndpoint
+    $ProcessStartInfo.EnvironmentVariables['DOCKER_CONFIG'] = $trustedDockerConfigRoot
+    $ProcessStartInfo.EnvironmentVariables['BUILDX_CONFIG'] = (Join-Path $trustedDockerConfigRoot 'buildx')
+  }
+}
+
+function New-TrustedDockerProcessStartInfo([string]$Arguments) {
+  $dockerExecutable = Get-TrustedDockerExecutable
+  if ($null -eq $dockerExecutable) { return $null }
+  $psi = [Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $dockerExecutable
+  $psi.Arguments = '--host "' + $trustedDockerEndpoint + '" --config "' + $trustedDockerConfigRoot + '" ' + $Arguments
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  Set-TrustedDockerChildEnvironment $psi
+  return $psi
+}
+
+function New-TrustedBuildxProcessStartInfo([string]$Arguments) {
+  $buildxExecutable = Get-TrustedBuildxExecutable
+  if ($null -eq $buildxExecutable) { return $null }
+  $psi = [Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $buildxExecutable; $psi.Arguments = $Arguments
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  Set-TrustedDockerChildEnvironment $psi -Buildx
+  return $psi
 }
 
 function Get-TrustedGitExecutable() {
@@ -321,16 +367,10 @@ function Test-CheckoutBinding([string]$Expected, [object]$Inspection) {
 
 function Get-ImageRevision([string]$Image) {
   if (-not (Test-ImageReference $Image)) { return $null }
-  $dockerExecutable = Get-TrustedDockerExecutable
-  if ($null -eq $dockerExecutable) { return $null }
-  $psi = [Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = $dockerExecutable
+  $psi = New-TrustedDockerProcessStartInfo ('image inspect --format "{{json .Config.Labels}}" "' + $Image.Replace('"', '\"') + '"')
+  if ($null -eq $psi) { return $null }
   # Request the complete label map as JSON so the child-process argument does
   # not need to embed a quoted label key.  Read only the non-secret revision.
-  $psi.Arguments = 'image inspect --format "{{json .Config.Labels}}" "' + $Image.Replace('"', '\"') + '"'
-  $psi.UseShellExecute = $false
-  $psi.RedirectStandardOutput = $true
-  $psi.RedirectStandardError = $true
   $process = [Diagnostics.Process]::new()
   $process.StartInfo = $psi
   if (-not $process.Start()) { return $null }
@@ -354,14 +394,8 @@ function Test-ImageRevision([string]$Revision, [string]$Expected) {
 
 function Get-LoadedImageMetadata([string]$Image) {
   if (-not (Test-ImageReference $Image)) { return $null }
-  $dockerExecutable = Get-TrustedDockerExecutable
-  if ($null -eq $dockerExecutable) { return $null }
-  $psi = [Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = $dockerExecutable
-  $psi.Arguments = 'image inspect --format "{{.Id}}|{{.Os}}|{{.Architecture}}" "' + $Image.Replace('"', '\"') + '"'
-  $psi.UseShellExecute = $false
-  $psi.RedirectStandardOutput = $true
-  $psi.RedirectStandardError = $true
+  $psi = New-TrustedDockerProcessStartInfo ('image inspect --format "{{.Id}}|{{.Os}}|{{.Architecture}}" "' + $Image.Replace('"', '\"') + '"')
+  if ($null -eq $psi) { return $null }
   $process = [Diagnostics.Process]::new()
   $process.StartInfo = $psi
   if (-not $process.Start()) { return $null }
@@ -400,14 +434,8 @@ function Get-BuildRecordInspection([string]$Builder, [string]$RecordRef, [string
   }
 
   function Invoke-BuildxJson([string]$Arguments) {
-    $dockerExecutable = Get-TrustedDockerExecutable
-    if ($null -eq $dockerExecutable) { return $null }
-    $psi = [Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName = $dockerExecutable
-    $psi.Arguments = $Arguments
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
+    $psi = New-TrustedBuildxProcessStartInfo $Arguments
+    if ($null -eq $psi) { return $null }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $psi
     if (-not $process.Start()) { return $null }
@@ -418,10 +446,10 @@ function Get-BuildRecordInspection([string]$Builder, [string]$RecordRef, [string
     try { return $stdout | ConvertFrom-Json -ErrorAction Stop } catch { return $null }
   }
 
-  $record = Invoke-BuildxJson ('buildx history inspect --builder "' + $Builder + '" "' + $RecordRef + '" --format json')
-  $provenance = Invoke-BuildxJson ('buildx history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "https://slsa.dev/provenance/v1"')
-  $index = Invoke-BuildxJson ('buildx history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "application/vnd.oci.image.index.v1+json"')
-  $manifest = Invoke-BuildxJson ('buildx history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "application/vnd.oci.image.manifest.v1+json"')
+  $record = Invoke-BuildxJson ('history inspect --builder "' + $Builder + '" "' + $RecordRef + '" --format json')
+  $provenance = Invoke-BuildxJson ('history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "https://slsa.dev/provenance/v1"')
+  $index = Invoke-BuildxJson ('history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "application/vnd.oci.image.index.v1+json"')
+  $manifest = Invoke-BuildxJson ('history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "application/vnd.oci.image.manifest.v1+json"')
   if ($null -eq $record -or $null -eq $provenance -or $null -eq $index -or $null -eq $manifest) { return [pscustomobject]@{ Succeeded = $false } }
 
   $indexAttachments = @($record.Attachments | Where-Object { $_.Type -eq 'application/vnd.oci.image.index.v1+json' })
@@ -516,7 +544,8 @@ function New-SyntheticRepository([string]$Root, [string]$Name) {
 function Invoke-SelfTest {
   $root = Join-Path ([IO.Path]::GetTempPath()) ('autoops-provenance-' + [Guid]::NewGuid().ToString('N'))
   $originalEnvironment = @{}
-  foreach ($name in $gitRepositorySelectionVariables) { $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+  $authoritySelectionVariables = @('DOCKER_HOST','DOCKER_CONTEXT','DOCKER_CONFIG','DOCKER_CERT_PATH','DOCKER_TLS_VERIFY','DOCKER_TLS','DOCKER_API_VERSION','BUILDX_CONFIG','BUILDX_BUILDER','BUILDKIT_HOST')
+  foreach ($name in @($gitRepositorySelectionVariables + $authoritySelectionVariables)) { $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
   $originalPath = [Environment]::GetEnvironmentVariable('PATH', 'Process')
   $passed = $true
   try {
@@ -529,7 +558,10 @@ function Invoke-SelfTest {
     Copy-Item -LiteralPath $systemExecutable -Destination $fakeDocker -Force
     Copy-Item -LiteralPath $systemExecutable -Destination $fakeGit -Force
     [Environment]::SetEnvironmentVariable('PATH', $attackerDirectory + [IO.Path]::PathSeparator + $originalPath, 'Process')
-    $trustedDocker = Get-TrustedDockerExecutable; $trustedGit = Get-TrustedGitExecutable
+    foreach ($name in $authoritySelectionVariables) { [Environment]::SetEnvironmentVariable($name, ('attacker-' + $name), 'Process') }
+    $trustedDocker = Get-TrustedDockerExecutable; $trustedGit = Get-TrustedGitExecutable; $trustedBuildx = Get-TrustedBuildxExecutable
+    $dockerPsi = New-TrustedDockerProcessStartInfo 'version'
+    $buildxPsi = New-TrustedBuildxProcessStartInfo 'version'
     $primary = New-SyntheticRepository $root 'primary'
     $redirect = New-SyntheticRepository $root 'redirect'
     $expected = (Get-RepositoryGitOutput 'rev-parse HEAD' $primary).Output.Trim()
@@ -548,7 +580,19 @@ function Invoke-SelfTest {
       @{ Name = 'PROVENANCE_CALLER_PATH_IGNORED'; Passed = ($null -eq $trustedDocker -or -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase)) -and ($null -eq $trustedGit -or -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase)) },
       @{ Name = 'PROVENANCE_DOCKER_PATH_PINNED'; Passed = $null -eq $trustedDocker -or ((Test-TrustedExecutableFile $trustedDocker) -and -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase)) },
       @{ Name = 'PROVENANCE_GIT_PATH_PINNED'; Passed = $null -eq $trustedGit -or ((Test-TrustedExecutableFile $trustedGit) -and -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase)) },
-      @{ Name = 'PROVENANCE_PATH_FALLBACK_NO'; Passed = ($null -eq $trustedDocker -or -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase)) -and ($null -eq $trustedGit -or -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase)) }
+      @{ Name = 'PROVENANCE_PATH_FALLBACK_NO'; Passed = ($null -eq $trustedDocker -or -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase)) -and ($null -eq $trustedGit -or -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase)) },
+      @{ Name = 'CALLER_DOCKER_HOST_IGNORED'; Passed = $null -ne $dockerPsi -and -not $dockerPsi.EnvironmentVariables.ContainsKey('DOCKER_HOST') },
+      @{ Name = 'CALLER_DOCKER_CONTEXT_IGNORED'; Passed = $null -ne $dockerPsi -and -not $dockerPsi.EnvironmentVariables.ContainsKey('DOCKER_CONTEXT') },
+      @{ Name = 'CALLER_DOCKER_CONFIG_IGNORED'; Passed = $null -ne $dockerPsi -and -not $dockerPsi.EnvironmentVariables.ContainsKey('DOCKER_CONFIG') },
+      @{ Name = 'CALLER_DOCKER_CERT_PATH_IGNORED'; Passed = $null -ne $dockerPsi -and -not $dockerPsi.EnvironmentVariables.ContainsKey('DOCKER_CERT_PATH') },
+      @{ Name = 'CALLER_DOCKER_TLS_VERIFY_IGNORED'; Passed = $null -ne $dockerPsi -and -not $dockerPsi.EnvironmentVariables.ContainsKey('DOCKER_TLS_VERIFY') },
+      @{ Name = 'TRUSTED_DOCKER_ENDPOINT_EXPLICIT'; Passed = $null -ne $dockerPsi -and $dockerPsi.Arguments -match [regex]::Escape($trustedDockerEndpoint) },
+      @{ Name = 'TRUSTED_DOCKER_EXECUTABLE_ABSOLUTE'; Passed = $null -ne $dockerPsi -and $dockerPsi.FileName -ceq $trustedDocker },
+      @{ Name = 'TRUSTED_BUILDX_EXECUTABLE_DIRECT'; Passed = $null -ne $buildxPsi -and $buildxPsi.FileName -ceq $trustedBuildx -and $buildxPsi.Arguments -notmatch 'buildx' },
+      @{ Name = 'CALLER_BUILDX_CONFIG_IGNORED'; Passed = $null -ne $buildxPsi -and $buildxPsi.EnvironmentVariables['BUILDX_CONFIG'] -ceq (Join-Path $trustedDockerConfigRoot 'buildx') },
+      @{ Name = 'CALLER_BUILDX_BUILDER_IGNORED'; Passed = $null -ne $buildxPsi -and -not $buildxPsi.EnvironmentVariables.ContainsKey('BUILDX_BUILDER') },
+      @{ Name = 'CALLER_BUILDKIT_HOST_IGNORED'; Passed = $null -ne $buildxPsi -and -not $buildxPsi.EnvironmentVariables.ContainsKey('BUILDKIT_HOST') },
+      @{ Name = 'DOCKER_PLUGIN_DISCOVERY_NOT_AUTHORITY'; Passed = $null -ne $buildxPsi -and $buildxPsi.FileName -ceq $trustedBuildx }
     )
     $builderTokens = $null
     $builderParseErrors = $null
@@ -742,7 +786,7 @@ function Invoke-SelfTest {
       if (-not $case.Passed) { $passed = $false }
     }
   } finally {
-    foreach ($name in $gitRepositorySelectionVariables) { [Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], 'Process') }
+    foreach ($name in $originalEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], 'Process') }
     [Environment]::SetEnvironmentVariable('PATH', $originalPath, 'Process')
     if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
   }

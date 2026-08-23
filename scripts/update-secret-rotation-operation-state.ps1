@@ -8,7 +8,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-. (Join-Path $PSScriptRoot 'secret-rotation-common.ps1')
+. (Join-Path $PSScriptRoot 'rotation-authority-client.ps1')
 
 try {
   if ($RunSelfTest) {
@@ -19,7 +19,13 @@ try {
     [Console]::WriteLine('OPERATION_STATE_SELF_TEST PASS')
     exit 0
   }
-  Consume-RotationOperationTransition $TargetRoot $OperationId $Transition
+  $authorityOperation = @{
+    ACTIVATION_ATTEMPT = 'CONSUME_ACTIVATION_ATTEMPT'
+    ACTIVATION_FAILED = 'RECORD_ACTIVATION_FAILURE'
+    ROLLBACK_ATTEMPT = 'CONSUME_ROLLBACK_ATTEMPT'
+    MANUAL_INTERVENTION = 'RECORD_MANUAL_INTERVENTION'
+  }[$Transition]
+  $null = Invoke-RotationAuthorityRequest $authorityOperation $OperationId
   [Console]::WriteLine(('ROTATION_TRANSITION_' + $Transition + ' PASS'))
   exit 0
 } catch {

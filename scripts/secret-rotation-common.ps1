@@ -47,10 +47,11 @@ function ConvertTo-RotationProcessArgument([string]$Value) {
   $null = $builder.Append('"'); return $builder.ToString()
 }
 
-function Start-RotationProcess([string]$FileName, [string[]]$Arguments, [string]$FailureCode, [hashtable]$Environment = @{}) {
+function Start-RotationProcess([string]$FileName, [string[]]$Arguments, [string]$FailureCode, [hashtable]$Environment = @{}, [switch]$ClearInheritedEnvironment) {
   if ([string]::IsNullOrWhiteSpace($FileName)) { Stop-Rotation $FailureCode }
   $psi = [Diagnostics.ProcessStartInfo]::new(); $psi.FileName = $FileName; $psi.Arguments = (($Arguments | ForEach-Object { ConvertTo-RotationProcessArgument $_ }) -join ' ')
   $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  if ($ClearInheritedEnvironment) { $psi.EnvironmentVariables.Clear() }
   foreach ($entry in $Environment.GetEnumerator()) { $psi.EnvironmentVariables[$entry.Key] = [string]$entry.Value }
   $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
   if (-not $process.Start()) { Stop-Rotation $FailureCode }
@@ -76,7 +77,33 @@ function Get-RotationDockerExecutable() {
   if ([string]::IsNullOrWhiteSpace($programFiles)) { Stop-Rotation 'TRUSTED_DOCKER_UNAVAILABLE' }
   $path = Join-Path $programFiles 'Docker\Docker\resources\bin\docker.exe'
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Stop-Rotation 'TRUSTED_DOCKER_UNAVAILABLE' }
+  Assert-RotationNoReparse $path 'TRUSTED_DOCKER_UNAVAILABLE'
   return Get-RotationFullPath $path 'TRUSTED_DOCKER_UNAVAILABLE'
+}
+
+$script:RotationDockerEndpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine'
+$script:RotationAuthorityDockerConfig = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)) 'AutoOps\rotation-authority\docker-cli'
+
+function Get-RotationAuthorityChildEnvironment {
+  $systemDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
+  if ([string]::IsNullOrWhiteSpace($systemDirectory)) { Stop-Rotation 'TRUSTED_EXECUTABLE_UNAVAILABLE' }
+  $windowsDirectory = Split-Path -Parent $systemDirectory
+  return @{
+    SystemRoot = $windowsDirectory
+    WINDIR = $windowsDirectory
+    ComSpec = (Join-Path $systemDirectory 'cmd.exe')
+    TEMP = [IO.Path]::GetTempPath()
+    TMP = [IO.Path]::GetTempPath()
+  }
+}
+
+function Start-RotationTrustedDockerProcess([string[]]$Arguments, [string]$FailureCode) {
+  # Every security-authoritative Docker command binds the maintained Docker
+  # Desktop Linux endpoint and an authority-owned CLI config. The child starts
+  # from a minimal environment, so caller DOCKER_*/BUILDX_* selectors cannot
+  # redirect endpoint, context, TLS, configuration, or plugin state.
+  $fullArguments = @('--host', $script:RotationDockerEndpoint, '--config', $script:RotationAuthorityDockerConfig) + $Arguments
+  return Start-RotationProcess (Get-RotationDockerExecutable) $fullArguments $FailureCode (Get-RotationAuthorityChildEnvironment) -ClearInheritedEnvironment
 }
 
 function Test-RotationGenerationId([string]$Value) {
@@ -345,6 +372,9 @@ function New-RotationPlanObject(
 }
 
 function Write-RotationPlanAtomically([string]$TargetRoot, $Plan, [switch]$AllowSyntheticTestPermissions) {
+  throw [System.InvalidOperationException]::new('ROTATION_AUTHORITY_REQUIRED')
+  # Legacy local writer retained below only as unreachable reference for the
+  # test-local fixture override. Canonical plans are authority-service owned.
   $root = Get-RotationFullPath $TargetRoot 'ROTATION_ROOT_INVALID'
   $planRoot = if ($AllowSyntheticTestPermissions) { Join-Path $root 'rotation-plans' } else { Ensure-RotationPlanRoot $TargetRoot }
   if (-not (Test-Path -LiteralPath $planRoot -PathType Container)) { Stop-Rotation 'ROTATION_PLAN_ROOT_MISSING' }
@@ -563,6 +593,7 @@ function Get-RotationInitializationClaimsRoot([string]$TargetRoot, [switch]$Allo
 }
 
 function Ensure-RotationInitializationClaimsRoot([string]$TargetRoot) {
+  throw [System.InvalidOperationException]::new('ROTATION_AUTHORITY_REQUIRED')
   $root = Get-RotationFullPath $TargetRoot 'ROTATION_ROOT_INVALID'
   Assert-RotationNoReparse $root 'ROTATION_ROOT_REPARSE_PATH'; Assert-RotationPlanDirectorySecurity $root
   $claimsRoot = Join-Path $root 'rotation-initialization-claims'
@@ -596,6 +627,7 @@ function Read-RotationInitializationClaim([string]$TargetRoot, [string]$Operatio
 }
 
 function Write-RotationInitializationClaim([string]$TargetRoot, [string]$OperationId, [string]$PlanIdentity) {
+  throw [System.InvalidOperationException]::new('ROTATION_AUTHORITY_REQUIRED')
   if (-not (Test-RotationSha256 $PlanIdentity)) { Stop-Rotation 'ROTATION_INITIALIZATION_CLAIM_INVALID' }
   $null = Ensure-RotationInitializationClaimsRoot $TargetRoot
   $path = Get-RotationInitializationClaimPath $TargetRoot $OperationId
@@ -621,6 +653,7 @@ function Get-RotationOperationRoot([string]$TargetRoot, [string]$OperationId, [s
 }
 
 function Ensure-RotationOperationsRoot([string]$TargetRoot) {
+  throw [System.InvalidOperationException]::new('ROTATION_AUTHORITY_REQUIRED')
   $root = Get-RotationFullPath $TargetRoot 'ROTATION_ROOT_INVALID'
   Assert-RotationNoReparse $root 'ROTATION_ROOT_REPARSE_PATH'; Assert-RotationPlanDirectorySecurity $root
   $operationsRoot = Join-Path $root 'rotation-operations'
@@ -629,6 +662,7 @@ function Ensure-RotationOperationsRoot([string]$TargetRoot) {
 }
 
 function Write-RotationOperationRecord([string]$OperationRoot, [string]$Name, $Record) {
+  throw [System.InvalidOperationException]::new('ROTATION_AUTHORITY_REQUIRED')
   if ($Name -in @('candidate-acceptance.json','activation-accepted.json','rollback-acceptance.json','rollback-accepted.json')) { Stop-Rotation 'ROTATION_ACCEPTANCE_WRITER_PRIVATE' }
   $path = Join-Path $OperationRoot $Name
   if (-not (Test-RotationPathInside $path $OperationRoot)) { Stop-Rotation 'ROTATION_OPERATION_PATH_ESCAPE' }
@@ -695,6 +729,7 @@ function Get-RotationOperationState([string]$TargetRoot, [string]$OperationId, [
 }
 
 function Consume-RotationOperationTransition([string]$TargetRoot, [string]$OperationId, [ValidateSet('ACTIVATION_ATTEMPT','ACTIVATION_FAILED','ROLLBACK_ATTEMPT','MANUAL_INTERVENTION')][string]$Transition) {
+  throw [System.InvalidOperationException]::new('ROTATION_AUTHORITY_REQUIRED')
   $state = Get-RotationOperationState $TargetRoot $OperationId
   $expectations = @{ ACTIVATION_ATTEMPT = 'PREPARED'; ACTIVATION_FAILED = 'ACTIVATION_ATTEMPT_CONSUMED'; ROLLBACK_ATTEMPT = 'ACTIVATION_FAILED' }
   if ($Transition -ne 'MANUAL_INTERVENTION' -and $state.State -cne $expectations[$Transition]) { Stop-Rotation 'ROTATION_OPERATION_TRANSITION_INVALID' }
@@ -729,7 +764,7 @@ function Assert-RotationContainerName([string]$Name) {
 }
 
 function Invoke-RotationDockerMetadata([string[]]$Arguments, [string]$FailureCode) {
-  $process = Start-RotationProcess (Get-RotationDockerExecutable) $Arguments $FailureCode
+  $process = Start-RotationTrustedDockerProcess $Arguments $FailureCode
   $stdout = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -ne 0) { Stop-Rotation $FailureCode }
   return $stdout
@@ -869,7 +904,7 @@ function Test-RotationContainerSecretKeyAbsent([string]$Container, [string]$Key)
   # The shell emits no bytes. Exit code is the complete presence result; secret
   # material never crosses the container-process boundary.
   $script = 'if [ "${' + $Key + '+x}" ]; then exit 0; else exit 3; fi'
-  $process = Start-RotationProcess (Get-RotationDockerExecutable) @('exec',$Container,'sh','-c',$script) 'SECRET_PRESENCE_PROBE_FAILED'
+  $process = Start-RotationTrustedDockerProcess @('exec',$Container,'sh','-c',$script) 'SECRET_PRESENCE_PROBE_FAILED'
   $process.WaitForExit()
   if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3) { Stop-Rotation 'SECRET_PRESENCE_PROBE_FAILED' }
   return Test-RotationPresenceOnlyExitCode $process.ExitCode

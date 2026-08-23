@@ -6,26 +6,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-. (Join-Path $PSScriptRoot 'secret-rotation-common.ps1')
+. (Join-Path $PSScriptRoot 'rotation-authority-client.ps1')
 
 try {
-  # This maintained child-process boundary owns the only supported creation of
-  # PREPARED operation state. The validator path and process are fixed by the
-  # repository; parent-session functions cannot supply its PASS decision.
-  $null = Read-RotationPlan $TargetRoot $OperationId
-  if (-not (Invoke-RotationRuntimeAcceptanceValidator $TargetRoot $OperationId 'Rollback')) { Stop-Rotation 'ROLLBACK_RUNTIME_BASELINE_REJECTED' }
-  $planIdentity = Get-RotationPlanIdentity $TargetRoot $OperationId
-  $operationRoot = Get-RotationOperationRoot $TargetRoot $OperationId -AllowMissingOperationsRoot
-  # The immutable create-new claim is the one-time initialization authority.
-  # A lost operation directory must never reset the attempt budget by making
-  # the same plan appear PREPARED again.
-  if ($null -ne (Read-RotationInitializationClaim $TargetRoot $OperationId $planIdentity)) { Stop-Rotation 'ROTATION_INITIALIZATION_ALREADY_CLAIMED' }
-  if (Test-Path -LiteralPath $operationRoot) { Stop-Rotation 'ROTATION_OPERATION_EXISTS' }
-  Write-RotationInitializationClaim $TargetRoot $OperationId $planIdentity
-  $null = Ensure-RotationOperationsRoot $TargetRoot
-  if (Test-Path -LiteralPath $operationRoot) { Stop-Rotation 'ROTATION_OPERATION_EXISTS' }
-  try { [IO.Directory]::CreateDirectory($operationRoot) | Out-Null; Set-RotationOperationDirectorySecurity $operationRoot; Assert-RotationOperationDirectorySecurity $operationRoot } catch { Stop-Rotation 'ROTATION_OPERATION_CREATE_FAILED' }
-  $record = [ordered]@{ schemaVersion = $script:RotationSchemaVersion; operationId = $OperationId; planIdentity = $planIdentity; transition = 'OPERATION_CREATED'; createdAtUtc = [DateTime]::UtcNow.ToString('o') }
-  Write-RotationOperationRecord $operationRoot 'operation-created.json' $record
+  # The authority service, running as NT SERVICE\AutoOpsRotationAuthority,
+  # owns rollback validation, the canonical plan, claim creation, and PREPARED.
+  # TargetRoot is retained only for client compatibility and is never sent as
+  # authorization input to the service.
+  $null = Invoke-RotationAuthorityRequest 'INITIALIZE_OPERATION' $OperationId
   exit 0
 } catch { exit 1 }

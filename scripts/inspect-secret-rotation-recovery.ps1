@@ -8,6 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'secret-rotation-common.ps1')
+. (Join-Path $PSScriptRoot 'rotation-authority-client.ps1')
 
 function Get-RotationSyntheticObservation([bool]$ApiCandidate, [bool]$WorkerCandidate, [bool]$CandidateAcceptancePassed, [bool]$RollbackAcceptancePassed) {
   return [pscustomobject]@{ ApiCandidate = $ApiCandidate; WorkerCandidate = $WorkerCandidate; CandidateAcceptancePassed = $CandidateAcceptancePassed; RollbackAcceptancePassed = $RollbackAcceptancePassed }
@@ -60,9 +61,11 @@ try {
     [Console]::WriteLine('RECOVERY_SELF_TEST PASS')
     exit 0
   }
-  $state = Get-RotationOperationState $TargetRoot $OperationId
-  $classification = Get-RotationRecoveryInspectionClassification $TargetRoot $state
-  [Console]::WriteLine(('RECOVERY_CLASSIFICATION ' + $classification))
+  $state = Invoke-RotationAuthorityRequest 'GET_OPERATION_STATE' $OperationId
+  # Full runtime observation and any recovery transition remain service-owned.
+  # A requester-side inspector cannot turn authority state into an action.
+  [Console]::WriteLine(('RECOVERY_AUTHORITY_STATE ' + $state.state))
+  [Console]::WriteLine('RECOVERY_CLASSIFICATION MANUAL_INTERVENTION_REQUIRED')
   exit 0
 } catch {
   $code = if ($_.Exception.Message -match '^[A-Z0-9_]+$') { $_.Exception.Message } else { 'RECOVERY_INSPECTION_FAILED' }
