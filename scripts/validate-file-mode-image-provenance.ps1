@@ -5,11 +5,14 @@ param(
   [string]$ApiBuildRecordRef,
   [string]$WorkerBuildRecordRef,
   [string]$BuildxBuilder = 'desktop-linux',
+  [string]$ExpectedApiImageId,
+  [string]$ExpectedWorkerImageId,
+  [string]$RepositoryRoot,
   [switch]$RunSelfTest
 )
 
 $ErrorActionPreference = 'Stop'
-$repositoryRoot = Split-Path -Parent $PSScriptRoot
+$repositoryRoot = if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) { Split-Path -Parent $PSScriptRoot } else { $RepositoryRoot }
 $gitContextRepository = 'https://github.com/Pramu55/AutoOps-2.0.git'
 
 # These are the only source paths copied from the checkout by the API and worker
@@ -811,6 +814,11 @@ if (-not (Test-Revision $ExpectedRevision)) {
   Write-Result 'EXPECTED_IMAGE_REVISION' $false
   exit 1
 }
+if ((-not [string]::IsNullOrWhiteSpace($ExpectedApiImageId) -and -not (Test-Digest $ExpectedApiImageId)) -or
+    (-not [string]::IsNullOrWhiteSpace($ExpectedWorkerImageId) -and -not (Test-Digest $ExpectedWorkerImageId))) {
+  Write-Result 'EXPECTED_IMAGE_IDENTITY' $false
+  exit 1
+}
 
 $inspection = Get-RepositoryInspection $repositoryRoot $apiAndWorkerBuildInputPrefixes
 $checkoutPassed = Test-CheckoutBinding $ExpectedRevision $inspection
@@ -834,10 +842,14 @@ $workerRecordPassed = Test-BuildRecordBinding $workerRecord
 # its exact loaded-image identity binding.
 $apiPassed = $apiLabelPassed -and $apiRecordPassed
 $workerPassed = $workerLabelPassed -and $workerRecordPassed
+$apiIdentityPassed = [string]::IsNullOrWhiteSpace($ExpectedApiImageId) -or ($apiLoadedImage.LoadedImageIdentity -ceq $ExpectedApiImageId)
+$workerIdentityPassed = [string]::IsNullOrWhiteSpace($ExpectedWorkerImageId) -or ($workerLoadedImage.LoadedImageIdentity -ceq $ExpectedWorkerImageId)
 Write-Result 'API_IMAGE_REVISION_LABEL' $apiLabelPassed
 Write-Result 'WORKER_IMAGE_REVISION_LABEL' $workerLabelPassed
 Write-Result 'API_BUILD_RECORD_PROVENANCE' $apiRecordPassed
 Write-Result 'WORKER_BUILD_RECORD_PROVENANCE' $workerRecordPassed
 Write-Result 'API_IMAGE_PROVENANCE' $apiPassed
 Write-Result 'WORKER_IMAGE_PROVENANCE' $workerPassed
-if (-not $apiPassed -or -not $workerPassed) { exit 1 }
+Write-Result 'API_IMAGE_IDENTITY_BINDING' $apiIdentityPassed
+Write-Result 'WORKER_IMAGE_IDENTITY_BINDING' $workerIdentityPassed
+if (-not $apiPassed -or -not $workerPassed -or -not $apiIdentityPassed -or -not $workerIdentityPassed) { exit 1 }

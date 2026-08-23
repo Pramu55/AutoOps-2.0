@@ -140,6 +140,10 @@ try {
     repositoryRevision = $RepositoryRevision
     apiImageId = $CandidateApiImageId
     workerImageId = $CandidateWorkerImageId
+    candidateApiImage = $ApiImage
+    candidateWorkerImage = $WorkerImage
+    apiBuildRecordRef = $ApiBuildRecordRef
+    workerBuildRecordRef = $WorkerBuildRecordRef
     requiredOverlays = @($overlays)
     rollback = $rollback
   }

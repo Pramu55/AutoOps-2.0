@@ -118,6 +118,14 @@ function Test-RotationRevision([string]$Value) {
   return -not [string]::IsNullOrWhiteSpace($Value) -and $Value -cmatch '^[a-f0-9]{40}$'
 }
 
+function Test-RotationImageReference([string]$Value) {
+  return -not [string]::IsNullOrWhiteSpace($Value) -and $Value -cmatch '^[A-Za-z0-9][A-Za-z0-9._/:@-]*$'
+}
+
+function Test-RotationBuildRecordReference([string]$Value) {
+  return -not [string]::IsNullOrWhiteSpace($Value) -and $Value -cmatch '^[a-z0-9]{20,64}$'
+}
+
 function Get-RotationPathComparison() {
   if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
     return [System.StringComparison]::OrdinalIgnoreCase
@@ -559,9 +567,11 @@ function Read-RotationPlan([string]$TargetRoot, [string]$OperationId) {
   }
   try { $plan = ConvertFrom-RotationStrictJson (Get-Content -LiteralPath $path -Raw) 'ROTATION_PLAN_MALFORMED' } catch { Stop-Rotation 'ROTATION_PLAN_MALFORMED' }
   $required = @('schemaVersion','operationId','status','createdAtUtc','candidateGenerationId','currentGoodGenerationId','previousGoodGenerationId','repositoryRevision','apiImageId','workerImageId','runtimeServices','requiredOverlays','requiredGates','activationAttemptLimit','rollbackAttemptLimit','activationAttempts','rollbackAttempts','rollback')
+  if (-not [string]::IsNullOrWhiteSpace($authorityPlanPath)) { $required += @('candidateApiImage','candidateWorkerImage','apiBuildRecordRef','workerBuildRecordRef') }
   if (-not (Test-RotationExactPropertyNames $plan $required)) { Stop-Rotation 'ROTATION_PLAN_MALFORMED' }
   $allowedStatuses = if (-not [string]::IsNullOrWhiteSpace($authorityPlanPath)) { @('ADMITTED') } else { @('PREPARED') }
   if (-not (Test-RotationExactInteger $plan.schemaVersion $script:RotationSchemaVersion) -or $plan.operationId -cne $OperationId -or $plan.status -notin $allowedStatuses -or $plan.createdAtUtc -isnot [string] -or -not (Test-RotationGenerationId $plan.candidateGenerationId) -or -not (Test-RotationGenerationId $plan.currentGoodGenerationId) -or ($null -ne $plan.previousGoodGenerationId -and -not (Test-RotationGenerationId $plan.previousGoodGenerationId)) -or $plan.candidateGenerationId -ceq $plan.currentGoodGenerationId -or $plan.candidateGenerationId -ceq $plan.previousGoodGenerationId -or -not (Test-RotationRevision $plan.repositoryRevision) -or -not (Test-RotationSha256 $plan.apiImageId) -or -not (Test-RotationSha256 $plan.workerImageId) -or $plan.apiImageId -ceq $plan.workerImageId -or -not (Test-RotationExactStringArray $plan.requiredOverlays $script:RotationRequiredOverlays) -or -not (Test-RotationExactStringArray $plan.requiredGates $script:RotationRequiredGates) -or -not (Test-RotationExactInteger $plan.activationAttemptLimit 1) -or -not (Test-RotationExactInteger $plan.rollbackAttemptLimit 1) -or -not (Test-RotationExactInteger $plan.activationAttempts 0) -or -not (Test-RotationExactInteger $plan.rollbackAttempts 0)) { Stop-Rotation 'ROTATION_PLAN_MALFORMED' }
+  if (-not [string]::IsNullOrWhiteSpace($authorityPlanPath) -and (-not (Test-RotationImageReference $plan.candidateApiImage) -or -not (Test-RotationImageReference $plan.candidateWorkerImage) -or -not (Test-RotationBuildRecordReference $plan.apiBuildRecordRef) -or -not (Test-RotationBuildRecordReference $plan.workerBuildRecordRef))) { Stop-Rotation 'ROTATION_PLAN_MALFORMED' }
   if (-not (Test-RotationExactPropertyNames $plan.runtimeServices @('api','worker')) -or $plan.runtimeServices.api -cne $script:RotationRuntimeServices.api -or $plan.runtimeServices.worker -cne $script:RotationRuntimeServices.worker) { Stop-Rotation 'ROTATION_PLAN_MALFORMED' }
   $rollback = $plan.rollback
   $rollbackRequired = @('TargetGenerationId','ApiImageId','WorkerImageId','ExpectedRuntimeMode','ExpectedHealthEndpoints','NonTargetContainerIds','VolumeInventory')

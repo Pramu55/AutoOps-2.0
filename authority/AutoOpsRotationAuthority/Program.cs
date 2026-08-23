@@ -189,6 +189,8 @@ internal sealed record CanonicalPlan(string OperationId, byte[] Utf8, string Ide
     private static readonly Regex GenerationId = new("^[a-f0-9]{32}$", RegexOptions.CultureInvariant);
     private static readonly Regex Revision = new("^[a-f0-9]{40}$", RegexOptions.CultureInvariant);
     private static readonly Regex Digest = new("^sha256:[a-f0-9]{64}$", RegexOptions.CultureInvariant);
+    private static readonly Regex ImageReference = new("^[A-Za-z0-9][A-Za-z0-9._/:@-]*$", RegexOptions.CultureInvariant);
+    private static readonly Regex BuildRecordReference = new("^[a-z0-9]{20,64}$", RegexOptions.CultureInvariant);
     private static readonly string[] RequiredOverlays = ["core", "sensitive-env", "github"];
     private static readonly string[] RequiredGates = ["mounted-secret-delivery", "provider-semantic-equivalence", "image-provenance", "runtime-acceptance"];
     private static readonly string[] NonTargets = ["autoops-grafana", "autoops-nginx", "autoops-postgres", "autoops-prometheus", "autoops-redis", "autoops-web"];
@@ -199,7 +201,8 @@ internal sealed record CanonicalPlan(string OperationId, byte[] Utf8, string Ide
         AuthorityRequest.RequireExactNames(names, new[]
         {
             "candidateGenerationId", "currentGoodGenerationId", "previousGoodGenerationId", "repositoryRevision",
-            "apiImageId", "workerImageId", "requiredOverlays", "rollback"
+            "apiImageId", "workerImageId", "candidateApiImage", "candidateWorkerImage", "apiBuildRecordRef",
+            "workerBuildRecordRef", "requiredOverlays", "rollback"
         }, "CANONICAL_PLAN_INVALID");
         var candidate = AuthorityRequest.RequiredString(proposal, "candidateGenerationId", "CANONICAL_PLAN_INVALID");
         var current = AuthorityRequest.RequiredString(proposal, "currentGoodGenerationId", "CANONICAL_PLAN_INVALID");
@@ -208,9 +211,15 @@ internal sealed record CanonicalPlan(string OperationId, byte[] Utf8, string Ide
         var revision = AuthorityRequest.RequiredString(proposal, "repositoryRevision", "CANONICAL_PLAN_INVALID");
         var apiImage = AuthorityRequest.RequiredString(proposal, "apiImageId", "CANONICAL_PLAN_INVALID");
         var workerImage = AuthorityRequest.RequiredString(proposal, "workerImageId", "CANONICAL_PLAN_INVALID");
+        var candidateApiImage = AuthorityRequest.RequiredString(proposal, "candidateApiImage", "CANONICAL_PLAN_INVALID");
+        var candidateWorkerImage = AuthorityRequest.RequiredString(proposal, "candidateWorkerImage", "CANONICAL_PLAN_INVALID");
+        var apiBuildRecordRef = AuthorityRequest.RequiredString(proposal, "apiBuildRecordRef", "CANONICAL_PLAN_INVALID");
+        var workerBuildRecordRef = AuthorityRequest.RequiredString(proposal, "workerBuildRecordRef", "CANONICAL_PLAN_INVALID");
         if (!GenerationId.IsMatch(operationId) || !GenerationId.IsMatch(candidate) || !GenerationId.IsMatch(current) ||
             (previousValue is not null && !GenerationId.IsMatch(previousValue)) || candidate == current || candidate == previousValue ||
-            !Revision.IsMatch(revision) || !Digest.IsMatch(apiImage) || !Digest.IsMatch(workerImage) || apiImage == workerImage)
+            !Revision.IsMatch(revision) || !Digest.IsMatch(apiImage) || !Digest.IsMatch(workerImage) || apiImage == workerImage ||
+            !ImageReference.IsMatch(candidateApiImage) || !ImageReference.IsMatch(candidateWorkerImage) ||
+            !BuildRecordReference.IsMatch(apiBuildRecordRef) || !BuildRecordReference.IsMatch(workerBuildRecordRef))
         {
             throw new AuthorityException("CANONICAL_PLAN_INVALID");
         }
@@ -233,6 +242,10 @@ internal sealed record CanonicalPlan(string OperationId, byte[] Utf8, string Ide
             ["repositoryRevision"] = revision,
             ["apiImageId"] = apiImage,
             ["workerImageId"] = workerImage,
+            ["candidateApiImage"] = candidateApiImage,
+            ["candidateWorkerImage"] = candidateWorkerImage,
+            ["apiBuildRecordRef"] = apiBuildRecordRef,
+            ["workerBuildRecordRef"] = workerBuildRecordRef,
             ["runtimeServices"] = new JsonObject { ["api"] = "autoops-api", ["worker"] = "autoops-worker" },
             ["requiredOverlays"] = new JsonArray(RequiredOverlays.Select(value => (JsonNode?)JsonValue.Create(value)).ToArray()),
             ["requiredGates"] = new JsonArray(RequiredGates.Select(value => (JsonNode?)JsonValue.Create(value)).ToArray()),
@@ -258,7 +271,7 @@ internal sealed record CanonicalPlan(string OperationId, byte[] Utf8, string Ide
             {
                 "schemaVersion", "operationId", "status", "createdAtUtc", "candidateGenerationId", "currentGoodGenerationId",
                 "previousGoodGenerationId", "repositoryRevision", "apiImageId", "workerImageId", "runtimeServices",
-                "requiredOverlays", "requiredGates", "activationAttemptLimit", "rollbackAttemptLimit", "activationAttempts",
+                "candidateApiImage", "candidateWorkerImage", "apiBuildRecordRef", "workerBuildRecordRef", "requiredOverlays", "requiredGates", "activationAttemptLimit", "rollbackAttemptLimit", "activationAttempts",
                 "rollbackAttempts", "rollback"
             }, "CANONICAL_PLAN_INVALID");
             if (root.GetProperty("schemaVersion").ValueKind != JsonValueKind.Number || root.GetProperty("schemaVersion").GetInt32() != 1 ||
@@ -287,6 +300,10 @@ internal sealed record CanonicalPlan(string OperationId, byte[] Utf8, string Ide
                 ["repositoryRevision"] = root.GetProperty("repositoryRevision").GetString(),
                 ["apiImageId"] = root.GetProperty("apiImageId").GetString(),
                 ["workerImageId"] = root.GetProperty("workerImageId").GetString(),
+                ["candidateApiImage"] = root.GetProperty("candidateApiImage").GetString(),
+                ["candidateWorkerImage"] = root.GetProperty("candidateWorkerImage").GetString(),
+                ["apiBuildRecordRef"] = root.GetProperty("apiBuildRecordRef").GetString(),
+                ["workerBuildRecordRef"] = root.GetProperty("workerBuildRecordRef").GetString(),
                 ["requiredOverlays"] = JsonNode.Parse(root.GetProperty("requiredOverlays").GetRawText()),
                 ["rollback"] = JsonNode.Parse(root.GetProperty("rollback").GetRawText())
             };
@@ -357,13 +374,15 @@ internal sealed class AuthorityStore
     private static readonly Regex OperationIdPattern = new("^[a-f0-9]{32}$", RegexOptions.CultureInvariant);
     private readonly string _root;
     private readonly IRuntimeValidator _validator;
+    private readonly IProvenanceValidator _provenanceValidator;
     private readonly bool _enforceProvisionedAcl;
     public string AllowedRequesterSid { get; }
 
-    private AuthorityStore(string root, IRuntimeValidator validator, string allowedRequesterSid, bool enforceProvisionedAcl)
+    private AuthorityStore(string root, IRuntimeValidator validator, IProvenanceValidator provenanceValidator, string allowedRequesterSid, bool enforceProvisionedAcl)
     {
         _root = Path.GetFullPath(root);
         _validator = validator;
+        _provenanceValidator = provenanceValidator;
         AllowedRequesterSid = allowedRequesterSid;
         _enforceProvisionedAcl = enforceProvisionedAcl;
     }
@@ -374,16 +393,16 @@ internal sealed class AuthorityStore
         var settings = AuthoritySettings.Load(root);
         if (!string.Equals(Path.GetFullPath(settings.DockerCliConfigDirectory), Path.Combine(root, "docker-cli"), StringComparison.OrdinalIgnoreCase))
             throw new AuthorityException("AUTHORITY_SETTINGS_INVALID");
-        var store = new AuthorityStore(root, new AuthorityRuntimeValidator(settings, root), settings.RequesterSid, enforceProvisionedAcl: true);
+        var store = new AuthorityStore(root, new AuthorityRuntimeValidator(settings, root), new AuthorityProvenanceValidator(), settings.RequesterSid, enforceProvisionedAcl: true);
         store.AssertProvisionedLayout();
         return store;
     }
 
-    internal static AuthorityStore CreateSynthetic(string root, IRuntimeValidator validator)
+    internal static AuthorityStore CreateSynthetic(string root, IRuntimeValidator validator, IProvenanceValidator? provenanceValidator = null)
     {
         Directory.CreateDirectory(root);
         foreach (var child in new[] { "plans", "initialization-claims", "operations" }) Directory.CreateDirectory(Path.Combine(root, child));
-        return new AuthorityStore(root, validator, "S-1-5-21-1-2-3-1001", enforceProvisionedAcl: false);
+        return new AuthorityStore(root, validator, provenanceValidator ?? new StaticProvenanceValidator(true), "S-1-5-21-1-2-3-1001", enforceProvisionedAcl: false);
     }
 
     public void CreateCanonicalPlan(CanonicalPlan plan)
@@ -410,6 +429,7 @@ internal sealed class AuthorityStore
     public void InitializeOperation(string operationId)
     {
         var plan = ReadCanonicalPlan(operationId);
+        if (!_provenanceValidator.ValidateCandidateProvenance(plan)) throw new AuthorityException("CANDIDATE_IMAGE_PROVENANCE_REJECTED");
         if (!_validator.ValidateRollbackBaseline(plan)) throw new AuthorityException("ROLLBACK_RUNTIME_BASELINE_REJECTED");
         var claimPath = ClaimPath(operationId);
         if (File.Exists(claimPath)) throw new AuthorityException("ROTATION_INITIALIZATION_ALREADY_CLAIMED");
@@ -526,11 +546,28 @@ internal sealed class AuthorityStore
         var files = Directory.EnumerateFileSystemEntries(directory).ToArray();
         if (files.Length == 0) return "OPERATION_INITIALIZATION_INTERRUPTED";
         var names = new HashSet<string>(StringComparer.Ordinal);
+        string? manualMarker = null;
         foreach (var file in files)
         {
             if (Directory.Exists(file) || (File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new AuthorityException("ROTATION_OPERATION_RECORD_INVALID");
             var name = Path.GetFileName(file);
             if (!names.Add(name)) throw new AuthorityException("ROTATION_OPERATION_RECORD_INVALID");
+            if (name == "manual-intervention.json") manualMarker = file;
+        }
+        // A valid manual marker is the terminal response to a torn prior
+        // record. Validate it before parsing damaged evidence so recovery
+        // remains readable, but never allow it to mask an accepted terminal
+        // state (including a torn accepted record).
+        if (manualMarker is not null)
+        {
+            ValidateSimpleRecord(manualMarker, plan, "MANUAL_INTERVENTION");
+            if (names.Contains("activation-accepted.json") || names.Contains("rollback-accepted.json"))
+                throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
+            return "MANUAL_INTERVENTION_REQUIRED";
+        }
+        foreach (var file in files)
+        {
+            var name = Path.GetFileName(file);
             if (name is "candidate-acceptance.json" or "rollback-acceptance.json") ValidateAcceptanceRecord(file, plan, name == "candidate-acceptance.json" ? "Candidate" : "Rollback");
             else if (!expected.TryGetValue(name, out var transition)) throw new AuthorityException("ROTATION_OPERATION_RECORD_INVALID");
             else ValidateSimpleRecord(file, plan, transition);
@@ -550,11 +587,6 @@ internal sealed class AuthorityStore
             "activation-attempt.json|activation-failed.json|operation-created.json|rollback-acceptance.json|rollback-accepted.json|rollback-attempt.json" => "ROLLED_BACK",
             _ => throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID")
         };
-        if (names.Contains("manual-intervention.json"))
-        {
-            if (state is "ACTIVE_ACCEPTED" or "ROLLED_BACK") throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
-            return "MANUAL_INTERVENTION_REQUIRED";
-        }
         return state;
     }
 
@@ -644,6 +676,16 @@ internal interface IRuntimeValidator
 {
     bool ValidateRollbackBaseline(CanonicalPlan plan);
     bool ValidateCandidateAcceptance(CanonicalPlan plan);
+}
+
+internal interface IProvenanceValidator
+{
+    bool ValidateCandidateProvenance(CanonicalPlan plan);
+}
+
+internal sealed class StaticProvenanceValidator(bool result) : IProvenanceValidator
+{
+    public bool ValidateCandidateProvenance(CanonicalPlan plan) => result;
 }
 
 internal sealed class FailClosedRuntimeValidator : IRuntimeValidator
@@ -792,6 +834,12 @@ internal static class AuthoritySelfTest
             store.CreateCanonicalPlan(plan);
             AssertThrows(() => store.CreateCanonicalPlan(plan), "CANONICAL_PLAN_REWRITE_BLOCKED");
             Assert(store.GetOperationState(operation) == "NEVER_INITIALIZED", "CANONICAL_PLAN_ADMISSION_NOT_PREPARED");
+            var provenanceRejectedOperation = new string('8', 32);
+            var provenanceRejectedPlan = CanonicalPlan.Create(provenanceRejectedOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(provenanceRejectedOperation))).PlanProposal!.Value);
+            var provenanceRejectedStore = AuthorityStore.CreateSynthetic(Path.Combine(root, "provenance-rejected"), validator, new StaticProvenanceValidator(false));
+            provenanceRejectedStore.CreateCanonicalPlan(provenanceRejectedPlan);
+            AssertThrows(() => provenanceRejectedStore.InitializeOperation(provenanceRejectedOperation), "AUTHORITY_PROVENANCE_REQUIRED_BEFORE_PREPARED");
+            Assert(provenanceRejectedStore.GetOperationState(provenanceRejectedOperation) == "NEVER_INITIALIZED", "PROVENANCE_REJECTION_NEVER_PREPARED");
             store.InitializeOperation(operation);
             Assert(store.GetOperationState(operation) == "PREPARED", "VALIDATED_INITIALIZATION_PREPARED");
             store.ConsumeActivationAttempt(operation);
@@ -815,6 +863,15 @@ internal static class AuthoritySelfTest
             Assert(store.GetOperationState(interruptedOperation) == "OPERATION_INITIALIZATION_INTERRUPTED", "LOST_OPERATION_STATE_NO_BUDGET_RESET");
             store.RecordManualIntervention(interruptedOperation);
             Assert(store.GetOperationState(interruptedOperation) == "MANUAL_INTERVENTION_REQUIRED", "INTERRUPTED_STATE_MANUAL_READABLE");
+            var tornRecordOperation = new string('7', 32);
+            var tornRecordPlan = CanonicalPlan.Create(tornRecordOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(tornRecordOperation))).PlanProposal!.Value);
+            store.CreateCanonicalPlan(tornRecordPlan);
+            File.WriteAllBytes(Path.Combine(root, "initialization-claims", tornRecordOperation + ".json"), Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { schemaVersion = 1, operationId = tornRecordOperation, planIdentity = tornRecordPlan.Identity, transition = "INITIALIZATION_CLAIMED", createdAtUtc = DateTime.UtcNow.ToString("O") })));
+            Directory.CreateDirectory(Path.Combine(root, "operations", tornRecordOperation));
+            File.WriteAllBytes(Path.Combine(root, "operations", tornRecordOperation, "operation-created.json"), []);
+            Assert(store.GetOperationState(tornRecordOperation) == "OPERATION_STATE_INTERRUPTED_OR_TAMPERED", "TORN_OPERATION_RECORD_DETECTED");
+            store.RecordManualIntervention(tornRecordOperation);
+            Assert(store.GetOperationState(tornRecordOperation) == "MANUAL_INTERVENTION_REQUIRED", "TORN_OPERATION_RECORD_MANUAL_READABLE");
             AssertThrows(() => store.InitializeOperation(operation), "INITIALIZATION_REPLAY_BLOCKED");
             var tornOperation = new string('b', 32);
             var tornPlan = CanonicalPlan.Create(tornOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(tornOperation))).PlanProposal!.Value);
@@ -838,6 +895,9 @@ internal static class AuthoritySelfTest
             Console.WriteLine("AUTHORITY_TORN_CLAIM_FAIL_CLOSED PASS");
             Console.WriteLine("AUTHORITY_IPC_STRICT_SCHEMA PASS");
             Console.WriteLine("AUTHORITY_LIFECYCLE_TRANSITIONS_VALIDATOR_BOUND PASS");
+            Console.WriteLine("AUTHORITY_PROVENANCE_REQUIRED_BEFORE_PREPARED PASS");
+            Console.WriteLine("PROVENANCE_REJECTION_NEVER_PREPARED PASS");
+            Console.WriteLine("TORN_OPERATION_RECORD_MANUAL_READABLE PASS");
             Console.WriteLine("AUTHORITY_STORE_ACL_CONTRACT PASS");
             Console.WriteLine("REQUESTER_WRITE_DATA_DENIED PASS");
             Console.WriteLine("REQUESTER_APPEND_DATA_DENIED PASS");
@@ -875,6 +935,10 @@ internal static class AuthoritySelfTest
             ["repositoryRevision"] = new string('e', 40),
             ["apiImageId"] = "sha256:" + new string('1', 64),
             ["workerImageId"] = "sha256:" + new string('2', 64),
+            ["candidateApiImage"] = "autoops-api:file-mode-candidate",
+            ["candidateWorkerImage"] = "autoops-worker:file-mode-candidate",
+            ["apiBuildRecordRef"] = new string('a', 20),
+            ["workerBuildRecordRef"] = new string('b', 20),
             ["requiredOverlays"] = new JsonArray("core", "sensitive-env", "github"),
             ["rollback"] = new JsonObject
             {
