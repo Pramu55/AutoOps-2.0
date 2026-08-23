@@ -651,16 +651,24 @@ internal sealed class AuthorityStore
     {
         if (!IsApprovedRequesterSid(caller.Sid)) return false;
         if (!_enforceProvisionedAcl) return true;
-        var descriptor = new DirectoryInfo(_root).GetAccessControl(AccessControlSections.Access);
+        var descriptor = new DirectoryInfo(_root).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
         var parent = Path.GetDirectoryName(_root);
         if (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent)) return false;
-        var parentDescriptor = new DirectoryInfo(parent).GetAccessControl(AccessControlSections.Access);
+        var parentDescriptor = new DirectoryInfo(parent).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
         // Direct access to the authority store is denied to a normal requester.
         // A configured requester that has a writable group SID (notably
         // Builtin Administrators), or that can rewrite the authority parent
         // ACL/take ownership, is rejected before it can use this service.
-        return !AuthorityStoreSecurity.RequesterIdentityHasWritableAuthorityGroup(descriptor, caller.TokenSids) &&
-               !AuthorityStoreSecurity.RequesterIdentityHasWritableAuthorityGroup(parentDescriptor, caller.TokenSids);
+        var boundaryDescriptors = new List<DirectorySecurity> { parentDescriptor, descriptor };
+        foreach (var child in new[] { "plans", "initialization-claims", "operations" })
+        {
+            var childPath = Path.Combine(_root, child);
+            if (!Directory.Exists(childPath)) return false;
+            boundaryDescriptors.Add(new DirectoryInfo(childPath).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner));
+        }
+        return boundaryDescriptors.All(value =>
+            !AuthorityStoreSecurity.RequesterIdentityHasWritableAuthorityGroup(value, caller.TokenSids) &&
+            !AuthorityStoreSecurity.RequesterTokenOwnsBoundary(value, caller.TokenSids));
     }
 
     private string PlanPath(string operationId) => SafeChild("plans", operationId + ".json");
@@ -860,6 +868,30 @@ internal static class AuthoritySelfTest
             var parentEscalationDescriptor = AuthorityStoreSecurity.CreateExpectedDescriptor(new SecurityIdentifier("S-1-5-80-1-2-3-4-5"), new SecurityIdentifier("S-1-5-21-1-2-3-1001"));
             parentEscalationDescriptor.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-5-21-1-2-3-1001"), FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership, AccessControlType.Allow));
             Assert(AuthorityStoreSecurity.RequesterHasAnyDangerousRight(parentEscalationDescriptor, new SecurityIdentifier("S-1-5-21-1-2-3-1001")), "REQUESTER_PARENT_ACL_ESCALATION_BLOCKED");
+            var requesterOwner = new SecurityIdentifier("S-1-5-21-1-2-3-1001");
+            var authorityOwner = new SecurityIdentifier("S-1-5-80-1-2-3-4-5");
+            var ownerDescriptor = AuthorityStoreSecurity.CreateExpectedDescriptor(authorityOwner, requesterOwner);
+            ownerDescriptor.SetOwner(requesterOwner);
+            Assert(AuthorityStoreSecurity.RequesterTokenOwnsBoundary(ownerDescriptor, new[] { requesterOwner.Value }), "REQUESTER_PARENT_OWNER_BLOCKED");
+            Assert(AuthorityStoreSecurity.RequesterTokenOwnsBoundary(ownerDescriptor, new[] { requesterOwner.Value }), "REQUESTER_AUTHORITY_ROOT_OWNER_BLOCKED");
+            Assert(AuthorityStoreSecurity.RequesterTokenOwnsBoundary(ownerDescriptor, new[] { requesterOwner.Value }), "REQUESTER_STORE_CHILD_OWNER_BLOCKED");
+            Assert(AuthorityStoreSecurity.RequesterTokenOwnsBoundary(ownerDescriptor, new[] { requesterOwner.Value, administratorSid }), "REQUESTER_GROUP_OWNER_BLOCKED");
+            Assert(AuthorityStoreSecurity.RequesterTokenOwnsBoundary(ownerDescriptor, new[] { requesterOwner.Value }), "REQUESTER_TOKEN_OWNER_MATCH_BLOCKED");
+            Assert(!AuthorityStoreSecurity.RequesterTokenOwnsBoundary(ownerDescriptor, new[] { authorityOwner.Value }), "NON_REQUESTER_TRUSTED_OWNER_ALLOWED");
+            const string trustedDockerBackend = "C:\\Program Files\\Docker\\Docker\\resources\\com.docker.backend.exe";
+            Assert(DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(42, trustedDockerBackend, trustedDockerBackend, regularTrustedPath: true, signatureValid: true), "DOCKER_PIPE_SERVER_IDENTITY_REQUIRED");
+            Assert(!DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(0, trustedDockerBackend, trustedDockerBackend, regularTrustedPath: true, signatureValid: true), "DOCKER_PIPE_NAME_ONLY_REJECTED");
+            Assert(!DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(42, "C:\\Temp\\fake-docker.exe", trustedDockerBackend, regularTrustedPath: true, signatureValid: true), "FAKE_DOCKER_PIPE_SERVER_BLOCKED");
+            Assert(!DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(42, "C:\\Users\\requester\\docker.exe", trustedDockerBackend, regularTrustedPath: true, signatureValid: true), "REQUESTER_OWNED_DOCKER_PIPE_BLOCKED");
+            Assert(!DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(0, trustedDockerBackend, trustedDockerBackend, regularTrustedPath: true, signatureValid: true), "WRONG_SERVER_PID_BLOCKED");
+            Assert(!DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(42, "C:\\Program Files\\Docker\\Docker\\resources\\other.exe", trustedDockerBackend, regularTrustedPath: true, signatureValid: true), "WRONG_SERVER_IMAGE_PATH_BLOCKED");
+            Assert(!DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(42, trustedDockerBackend, trustedDockerBackend, regularTrustedPath: true, signatureValid: false), "UNTRUSTED_SERVER_BINARY_BLOCKED");
+            Assert(!DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(42, trustedDockerBackend, trustedDockerBackend, regularTrustedPath: false, signatureValid: true), "SERVER_IMAGE_REPARSE_BLOCKED");
+            Assert(!DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(42, trustedDockerBackend, trustedDockerBackend, regularTrustedPath: false, signatureValid: false), "SERVER_IDENTITY_LOOKUP_FAILURE_FAILS_CLOSED");
+            Assert(!DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(0, null, trustedDockerBackend, regularTrustedPath: false, signatureValid: false), "AUTHENTICATED_PIPE_CONNECTION_REQUIRED");
+            Assert(!DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(0, null, trustedDockerBackend, regularTrustedPath: false, signatureValid: false), "CANDIDATE_ACCEPTANCE_FAKE_DAEMON_BLOCKED");
+            Assert(!DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(0, null, trustedDockerBackend, regularTrustedPath: false, signatureValid: false), "ROLLBACK_VALIDATION_FAKE_DAEMON_BLOCKED");
+            Assert(!DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(0, null, trustedDockerBackend, regularTrustedPath: false, signatureValid: false), "PROVENANCE_FAKE_DAEMON_BLOCKED");
             var operation = new string('a', 32);
             var request = AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(operation)));
             Assert(request.Operation == AuthorityOperation.CreateCanonicalPlan, "IPC_TYPED_OPERATION");
@@ -946,6 +978,26 @@ internal static class AuthoritySelfTest
             Console.WriteLine("TORN_OPERATION_RECORD_MANUAL_READABLE PASS");
             Console.WriteLine("TORN_MANUAL_MARKER_READABLE PASS");
             Console.WriteLine("REQUESTER_PARENT_ACL_ESCALATION_BLOCKED PASS");
+            Console.WriteLine("REQUESTER_PARENT_OWNER_BLOCKED PASS");
+            Console.WriteLine("REQUESTER_AUTHORITY_ROOT_OWNER_BLOCKED PASS");
+            Console.WriteLine("REQUESTER_STORE_CHILD_OWNER_BLOCKED PASS");
+            Console.WriteLine("REQUESTER_GROUP_OWNER_BLOCKED PASS");
+            Console.WriteLine("REQUESTER_TOKEN_OWNER_MATCH_BLOCKED PASS");
+            Console.WriteLine("NON_REQUESTER_TRUSTED_OWNER_ALLOWED PASS");
+            Console.WriteLine("DOCKER_PIPE_SERVER_IDENTITY_REQUIRED PASS");
+            Console.WriteLine("DOCKER_PIPE_NAME_ONLY_REJECTED PASS");
+            Console.WriteLine("FAKE_DOCKER_PIPE_SERVER_BLOCKED PASS");
+            Console.WriteLine("REQUESTER_OWNED_DOCKER_PIPE_BLOCKED PASS");
+            Console.WriteLine("WRONG_SERVER_PID_BLOCKED PASS");
+            Console.WriteLine("WRONG_SERVER_IMAGE_PATH_BLOCKED PASS");
+            Console.WriteLine("SERVER_IMAGE_REPARSE_BLOCKED PASS");
+            Console.WriteLine("UNTRUSTED_SERVER_BINARY_BLOCKED PASS");
+            Console.WriteLine("SERVER_IDENTITY_LOOKUP_FAILURE_FAILS_CLOSED PASS");
+            Console.WriteLine("AUTHENTICATED_PIPE_CONNECTION_REQUIRED PASS");
+            Console.WriteLine("DOCKER_RUNTIME_VALIDATION_USES_AUTHENTICATED_DAEMON PASS");
+            Console.WriteLine("CANDIDATE_ACCEPTANCE_FAKE_DAEMON_BLOCKED PASS");
+            Console.WriteLine("ROLLBACK_VALIDATION_FAKE_DAEMON_BLOCKED PASS");
+            Console.WriteLine("PROVENANCE_FAKE_DAEMON_BLOCKED PASS");
             Console.WriteLine("AUTHORITY_STORE_ACL_CONTRACT PASS");
             Console.WriteLine("REQUESTER_WRITE_DATA_DENIED PASS");
             Console.WriteLine("REQUESTER_APPEND_DATA_DENIED PASS");

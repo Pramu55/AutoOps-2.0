@@ -2,8 +2,6 @@
 param(
   [Parameter(Mandatory, ParameterSetName = 'Inspect')][string]$TargetRoot,
   [Parameter(Mandatory, ParameterSetName = 'Inspect')][ValidatePattern('^[a-f0-9]{32}$')][string]$OperationId,
-  [Parameter(ParameterSetName = 'Inspect')][string]$AuthorityPlanPath,
-  [Parameter(ParameterSetName = 'Inspect')][string]$AuthorityOperationState,
   [Parameter(Mandatory, ParameterSetName = 'SelfTest')][switch]$RunSelfTest
 )
 
@@ -11,10 +9,6 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'secret-rotation-common.ps1')
 . (Join-Path $PSScriptRoot 'rotation-authority-client.ps1')
-
-if (-not [string]::IsNullOrWhiteSpace($AuthorityPlanPath)) {
-  $script:RotationAuthorityCanonicalPlanPath = $AuthorityPlanPath
-}
 
 function Get-RotationSyntheticObservation([bool]$ApiCandidate, [bool]$WorkerCandidate, [bool]$CandidateAcceptancePassed, [bool]$RollbackAcceptancePassed) {
   return [pscustomobject]@{ ApiCandidate = $ApiCandidate; WorkerCandidate = $WorkerCandidate; CandidateAcceptancePassed = $CandidateAcceptancePassed; RollbackAcceptancePassed = $RollbackAcceptancePassed }
@@ -67,18 +61,12 @@ try {
     [Console]::WriteLine('RECOVERY_SELF_TEST PASS')
     exit 0
   }
-  if (-not [string]::IsNullOrWhiteSpace($AuthorityPlanPath)) {
-    if ([string]::IsNullOrWhiteSpace($AuthorityOperationState)) { Stop-Rotation 'RECOVERY_AUTHORITY_STATE_REQUIRED' }
-    $plan = Read-RotationPlan $TargetRoot $OperationId
-    $state = [pscustomobject]@{ State = $AuthorityOperationState; Plan = $plan }
-    $classification = Get-RotationRecoveryInspectionClassification $TargetRoot $state
-  } else {
-    # Recovery classification is authority-owned; requester-side tooling cannot
-    # turn its own plan/runtime observations into an actionable transition.
-    $response = Invoke-RotationAuthorityRequest 'GET_RECOVERY_CLASSIFICATION' $OperationId
-    $state = [pscustomobject]@{ State = $response.state }
-    $classification = [string]$response.classification
-  }
+  # The public recovery command accepts only an operation lookup. Recovery
+  # classification is authority-owned; requester tooling cannot supply a plan,
+  # state, observation, or actionable result.
+  $response = Invoke-RotationAuthorityRequest 'GET_RECOVERY_CLASSIFICATION' $OperationId
+  $state = [pscustomobject]@{ State = $response.state }
+  $classification = [string]$response.classification
   if ($classification -notin @('SAFE_TO_RESUME_PREFLIGHT','ACTIVATION_IN_PROGRESS','ROLLBACK_REQUIRED','NO_ACTION_REQUIRED','MANUAL_INTERVENTION_REQUIRED')) { Stop-Rotation 'RECOVERY_CLASSIFICATION_INVALID' }
   [Console]::WriteLine(('RECOVERY_AUTHORITY_STATE ' + $state.State))
   [Console]::WriteLine(('RECOVERY_CLASSIFICATION ' + $classification))

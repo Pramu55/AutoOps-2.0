@@ -82,6 +82,11 @@ function Get-RotationDockerExecutable() {
 }
 
 $script:RotationDockerEndpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine'
+$authorityDockerEndpoint = [Environment]::GetEnvironmentVariable('AUTOOPS_AUTHORITY_DOCKER_ENDPOINT', 'Process')
+if (-not [string]::IsNullOrWhiteSpace($authorityDockerEndpoint)) {
+  if ($authorityDockerEndpoint -notmatch '^npipe:////\./pipe/AutoOpsRotationAuthorityDocker-[a-f0-9]{32}$') { Stop-Rotation 'AUTHORITY_DOCKER_ENDPOINT_INVALID' }
+  $script:RotationDockerEndpoint = $authorityDockerEndpoint
+}
 $script:RotationAuthorityDockerConfig = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)) 'AutoOps\rotation-authority\docker-cli'
 
 function Get-RotationAuthorityChildEnvironment {

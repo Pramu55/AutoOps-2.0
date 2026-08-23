@@ -16,6 +16,7 @@ internal sealed class AuthorityProvenanceValidator : IProvenanceValidator
     {
         try
         {
+            using var dockerProxy = AuthenticatedDockerPipeProxy.StartForAuthority();
             var powershell = GetWindowsPowerShellPath();
             var psi = new ProcessStartInfo(powershell)
             {
@@ -25,7 +26,7 @@ internal sealed class AuthorityProvenanceValidator : IProvenanceValidator
                 CreateNoWindow = true,
                 WorkingDirectory = _repositoryRoot
             };
-            ConfigureMinimalEnvironment(psi);
+            ConfigureMinimalEnvironment(psi, dockerProxy.Endpoint);
             psi.ArgumentList.Add("-NoProfile");
             psi.ArgumentList.Add("-ExecutionPolicy");
             psi.ArgumentList.Add("Bypass");
@@ -58,7 +59,7 @@ internal sealed class AuthorityProvenanceValidator : IProvenanceValidator
         psi.ArgumentList.Add(CanonicalPlan.ReadString(plan.Utf8, property));
     }
 
-    private static void ConfigureMinimalEnvironment(ProcessStartInfo psi)
+    private static void ConfigureMinimalEnvironment(ProcessStartInfo psi, string dockerEndpoint)
     {
         psi.Environment.Clear();
         var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
@@ -69,6 +70,7 @@ internal sealed class AuthorityProvenanceValidator : IProvenanceValidator
         psi.Environment["ComSpec"] = Path.Combine(system, "cmd.exe");
         psi.Environment["TEMP"] = Path.GetTempPath();
         psi.Environment["TMP"] = Path.GetTempPath();
+        psi.Environment["AUTOOPS_AUTHORITY_DOCKER_ENDPOINT"] = dockerEndpoint;
     }
 
     private static string GetProtectedFile(string directory, string filename)

@@ -13,12 +13,13 @@ internal sealed class AuthorityRecoveryClassifier(AuthoritySettings settings, st
     };
     private readonly string _secretRoot = settings.SecretRoot;
     private readonly string _planRoot = Path.Combine(storeRoot, "plans");
-    private readonly string _script = GetInstalledInspectorPath();
+    private readonly string _script = GetInstalledClassifierPath();
 
     public string Classify(CanonicalPlan plan, string operationState)
     {
         try
         {
+            using var dockerProxy = AuthenticatedDockerPipeProxy.StartForAuthority();
             var planPath = Path.Combine(_planRoot, plan.OperationId + ".json");
             if (!File.Exists(planPath) || IsReparsePoint(planPath)) return "MANUAL_INTERVENTION_REQUIRED";
             var powershell = GetWindowsPowerShellPath();
@@ -30,7 +31,7 @@ internal sealed class AuthorityRecoveryClassifier(AuthoritySettings settings, st
                 CreateNoWindow = true,
                 WorkingDirectory = Path.GetDirectoryName(_script)!
             };
-            ConfigureMinimalEnvironment(psi);
+            ConfigureMinimalEnvironment(psi, dockerProxy.Endpoint);
             foreach (var argument in new[]
             {
                 "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", _script,
@@ -52,7 +53,7 @@ internal sealed class AuthorityRecoveryClassifier(AuthoritySettings settings, st
         catch { return "MANUAL_INTERVENTION_REQUIRED"; }
     }
 
-    private static void ConfigureMinimalEnvironment(ProcessStartInfo psi)
+    private static void ConfigureMinimalEnvironment(ProcessStartInfo psi, string dockerEndpoint)
     {
         psi.Environment.Clear();
         var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
@@ -63,12 +64,13 @@ internal sealed class AuthorityRecoveryClassifier(AuthoritySettings settings, st
         psi.Environment["ComSpec"] = Path.Combine(system, "cmd.exe");
         psi.Environment["TEMP"] = Path.GetTempPath();
         psi.Environment["TMP"] = Path.GetTempPath();
+        psi.Environment["AUTOOPS_AUTHORITY_DOCKER_ENDPOINT"] = dockerEndpoint;
     }
 
-    private static string GetInstalledInspectorPath()
+    private static string GetInstalledClassifierPath()
     {
         var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "scripts"));
-        var path = Path.GetFullPath(Path.Combine(root, "inspect-secret-rotation-recovery.ps1"));
+        var path = Path.GetFullPath(Path.Combine(root, "invoke-authority-recovery-classification.ps1"));
         if (!Directory.Exists(root) || IsReparsePoint(root) || !path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(path) || IsReparsePoint(path))
             throw new AuthorityException("AUTHORITY_RECOVERY_PAYLOAD_UNAVAILABLE");
         return path;

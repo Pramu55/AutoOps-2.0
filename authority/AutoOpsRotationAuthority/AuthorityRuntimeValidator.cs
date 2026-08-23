@@ -20,6 +20,7 @@ internal sealed class AuthorityRuntimeValidator(AuthoritySettings settings, stri
     {
         try
         {
+            using var dockerProxy = AuthenticatedDockerPipeProxy.StartForAuthority();
             var powershell = GetWindowsPowerShellPath();
             var planPath = Path.Combine(_planRoot, plan.OperationId + ".json");
             if (!File.Exists(planPath) || (File.GetAttributes(planPath) & FileAttributes.ReparsePoint) != 0) return false;
@@ -40,6 +41,7 @@ internal sealed class AuthorityRuntimeValidator(AuthoritySettings settings, stri
             psi.Environment["ComSpec"] = Path.Combine(system, "cmd.exe");
             psi.Environment["TEMP"] = Path.GetTempPath();
             psi.Environment["TMP"] = Path.GetTempPath();
+            psi.Environment["AUTOOPS_AUTHORITY_DOCKER_ENDPOINT"] = dockerProxy.Endpoint;
             psi.ArgumentList.Add("-NoProfile");
             psi.ArgumentList.Add("-ExecutionPolicy");
             psi.ArgumentList.Add("Bypass");

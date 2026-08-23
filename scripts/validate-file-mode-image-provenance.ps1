@@ -56,6 +56,11 @@ $gitRepositorySelectionVariables = @(
   'GIT_DISCOVERY_ACROSS_FILESYSTEM'
 )
 $trustedDockerEndpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine'
+$authorityDockerEndpoint = [Environment]::GetEnvironmentVariable('AUTOOPS_AUTHORITY_DOCKER_ENDPOINT', 'Process')
+if (-not [string]::IsNullOrWhiteSpace($authorityDockerEndpoint)) {
+  if ($authorityDockerEndpoint -notmatch '^npipe:////\./pipe/AutoOpsRotationAuthorityDocker-[a-f0-9]{32}$') { throw 'AUTHORITY_DOCKER_ENDPOINT_INVALID' }
+  $trustedDockerEndpoint = $authorityDockerEndpoint
+}
 $trustedDockerConfigRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)) 'AutoOps\rotation-authority\docker-cli'
 
 function Write-Result([string]$Name, [bool]$Passed) {
