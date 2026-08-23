@@ -431,8 +431,12 @@ internal sealed class AuthorityStore
 
     public string GetRecoveryClassification(string operationId)
     {
-        var plan = ReadCanonicalPlan(operationId);
         var state = GetOperationState(operationId);
+        // A present but malformed canonical plan is durable consumed evidence.
+        // Do not reparse it or let a recovery request turn that state into a
+        // retryable initialization path; return the fixed fail-closed outcome.
+        if (state == "CANONICAL_PLAN_INTERRUPTED_OR_TAMPERED") return "MANUAL_INTERVENTION_REQUIRED";
+        var plan = ReadCanonicalPlan(operationId);
         return _recoveryClassifier.Classify(plan, state);
     }
 
@@ -458,8 +462,12 @@ internal sealed class AuthorityStore
 
     public void RecordManualIntervention(string operationId)
     {
-        var plan = ReadCanonicalPlan(operationId);
         var state = GetOperationState(operationId);
+        // The malformed canonical plan itself is the non-overwritable manual
+        // evidence. A plan-bound marker cannot safely be written without a
+        // valid canonical plan, so leave the consumed file intact.
+        if (state == "CANONICAL_PLAN_INTERRUPTED_OR_TAMPERED") return;
+        var plan = ReadCanonicalPlan(operationId);
         if (state is "NEVER_INITIALIZED" or "ACTIVE_ACCEPTED" or "ROLLED_BACK" or "MANUAL_INTERVENTION_REQUIRED")
             throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
         var directory = OperationDirectory(operationId);
@@ -666,9 +674,12 @@ internal sealed class AuthorityStore
             if (!Directory.Exists(childPath)) return false;
             boundaryDescriptors.Add(new DirectoryInfo(childPath).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner));
         }
+        var authoritySid = WindowsIdentity.GetCurrent().User;
+        if (authoritySid is null) return false;
         return boundaryDescriptors.All(value =>
             !AuthorityStoreSecurity.RequesterIdentityHasWritableAuthorityGroup(value, caller.TokenSids) &&
-            !AuthorityStoreSecurity.RequesterTokenOwnsBoundary(value, caller.TokenSids));
+            !AuthorityStoreSecurity.RequesterTokenOwnsBoundary(value, caller.TokenSids) &&
+            AuthorityStoreSecurity.HasTrustedBoundaryOwner(value, authoritySid));
     }
 
     private string PlanPath(string operationId) => SafeChild("plans", operationId + ".json");
@@ -877,7 +888,11 @@ internal static class AuthoritySelfTest
             Assert(AuthorityStoreSecurity.RequesterTokenOwnsBoundary(ownerDescriptor, new[] { requesterOwner.Value }), "REQUESTER_STORE_CHILD_OWNER_BLOCKED");
             Assert(AuthorityStoreSecurity.RequesterTokenOwnsBoundary(ownerDescriptor, new[] { requesterOwner.Value, administratorSid }), "REQUESTER_GROUP_OWNER_BLOCKED");
             Assert(AuthorityStoreSecurity.RequesterTokenOwnsBoundary(ownerDescriptor, new[] { requesterOwner.Value }), "REQUESTER_TOKEN_OWNER_MATCH_BLOCKED");
-            Assert(!AuthorityStoreSecurity.RequesterTokenOwnsBoundary(ownerDescriptor, new[] { authorityOwner.Value }), "NON_REQUESTER_TRUSTED_OWNER_ALLOWED");
+            ownerDescriptor.SetOwner(authorityOwner);
+            Assert(AuthorityStoreSecurity.HasTrustedBoundaryOwner(ownerDescriptor, authorityOwner), "AUTHORITY_OWNER_ALLOWED");
+            var untrustedOwner = new SecurityIdentifier("S-1-5-21-1-2-3-1002");
+            ownerDescriptor.SetOwner(untrustedOwner);
+            Assert(!AuthorityStoreSecurity.HasTrustedBoundaryOwner(ownerDescriptor, authorityOwner), "UNTRUSTED_OWNER_BLOCKED");
             const string trustedDockerBackend = "C:\\Program Files\\Docker\\Docker\\resources\\com.docker.backend.exe";
             Assert(DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(42, trustedDockerBackend, trustedDockerBackend, regularTrustedPath: true, signatureValid: true), "DOCKER_PIPE_SERVER_IDENTITY_REQUIRED");
             Assert(!DockerPipeServerAuthenticator.IsTrustedServerIdentityForTest(0, trustedDockerBackend, trustedDockerBackend, regularTrustedPath: true, signatureValid: true), "DOCKER_PIPE_NAME_ONLY_REJECTED");
@@ -960,6 +975,9 @@ internal static class AuthoritySelfTest
             File.WriteAllBytes(Path.Combine(root, "plans", tornPlanOperation + ".json"), []);
             Assert(store.GetOperationState(tornPlanOperation) == "CANONICAL_PLAN_INTERRUPTED_OR_TAMPERED", "CANONICAL_PLAN_TORN_WRITE_MANUAL");
             AssertThrows(() => store.InitializeOperation(tornPlanOperation), "CANONICAL_PLAN_TORN_WRITE_NEVER_PREPARED");
+            Assert(store.GetRecoveryClassification(tornPlanOperation) == "MANUAL_INTERVENTION_REQUIRED", "TORN_CANONICAL_PLAN_RECOVERY_MANUAL_READABLE");
+            store.RecordManualIntervention(tornPlanOperation);
+            Assert(store.GetOperationState(tornPlanOperation) == "CANONICAL_PLAN_INTERRUPTED_OR_TAMPERED", "TORN_CANONICAL_PLAN_NOT_REPAIRED");
             var wrongBindingOperation = new string('e', 32);
             File.WriteAllBytes(Path.Combine(root, "plans", wrongBindingOperation + ".json"), Encoding.UTF8.GetBytes("{\"operationId\":\"" + operation + "\"}"));
             Assert(store.GetOperationState(wrongBindingOperation) == "CANONICAL_PLAN_INTERRUPTED_OR_TAMPERED", "CANONICAL_PLAN_WRONG_BINDING_BLOCKED");
@@ -983,7 +1001,10 @@ internal static class AuthoritySelfTest
             Console.WriteLine("REQUESTER_STORE_CHILD_OWNER_BLOCKED PASS");
             Console.WriteLine("REQUESTER_GROUP_OWNER_BLOCKED PASS");
             Console.WriteLine("REQUESTER_TOKEN_OWNER_MATCH_BLOCKED PASS");
-            Console.WriteLine("NON_REQUESTER_TRUSTED_OWNER_ALLOWED PASS");
+            Console.WriteLine("AUTHORITY_OWNER_ALLOWED PASS");
+            Console.WriteLine("UNTRUSTED_OWNER_BLOCKED PASS");
+            Console.WriteLine("TORN_CANONICAL_PLAN_RECOVERY_MANUAL_READABLE PASS");
+            Console.WriteLine("TORN_CANONICAL_PLAN_NOT_REPAIRED PASS");
             Console.WriteLine("DOCKER_PIPE_SERVER_IDENTITY_REQUIRED PASS");
             Console.WriteLine("DOCKER_PIPE_NAME_ONLY_REJECTED PASS");
             Console.WriteLine("FAKE_DOCKER_PIPE_SERVER_BLOCKED PASS");

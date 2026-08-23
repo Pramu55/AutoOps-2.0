@@ -57,11 +57,23 @@ internal static class AuthorityStoreSecurity
         return owner is not null && new HashSet<string>(requesterTokenSids, StringComparer.Ordinal).Contains(owner.Value);
     }
 
+    // An owner can rewrite a DACL without an explicit ChangePermissions ACE.
+    // The service therefore treats every owner other than the authority, SYSTEM,
+    // or Administrators as untrusted, rather than merely excluding the requester.
+    internal static bool HasTrustedBoundaryOwner(DirectorySecurity security, SecurityIdentifier authoritySid)
+    {
+        var owner = security.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+        if (owner is null) return false;
+        var administratorsSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var systemSid = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        return owner == authoritySid || owner == administratorsSid || owner == systemSid;
+    }
+
     internal static void AssertProvisionedDescriptor(string path, SecurityIdentifier authoritySid, SecurityIdentifier requesterSid)
     {
         if (authoritySid == requesterSid) throw new AuthorityException("AUTHORITY_REQUESTER_IDENTITY_CONFLICT");
         var descriptor = new DirectoryInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
-        if (!descriptor.AreAccessRulesProtected || !RequesterCannotWrite(descriptor, requesterSid) || RequesterTokenOwnsBoundary(descriptor, new[] { requesterSid.Value }))
+        if (!descriptor.AreAccessRulesProtected || !RequesterCannotWrite(descriptor, requesterSid) || RequesterTokenOwnsBoundary(descriptor, new[] { requesterSid.Value }) || !HasTrustedBoundaryOwner(descriptor, authoritySid))
         {
             throw new AuthorityException("AUTHORITY_STORE_ACL_INVALID");
         }
@@ -84,7 +96,7 @@ internal static class AuthorityStoreSecurity
     internal static void AssertAuthorityStoreParentDescriptor(string path, SecurityIdentifier authoritySid, SecurityIdentifier requesterSid)
     {
         var descriptor = new DirectoryInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
-        if (!descriptor.AreAccessRulesProtected || RequesterHasAnyDangerousRight(descriptor, requesterSid) || RequesterTokenOwnsBoundary(descriptor, new[] { requesterSid.Value }))
+        if (!descriptor.AreAccessRulesProtected || RequesterHasAnyDangerousRight(descriptor, requesterSid) || RequesterTokenOwnsBoundary(descriptor, new[] { requesterSid.Value }) || !HasTrustedBoundaryOwner(descriptor, authoritySid))
         {
             throw new AuthorityException("AUTHORITY_STORE_PARENT_ACL_INVALID");
         }
