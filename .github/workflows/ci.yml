@@ -80,6 +80,9 @@ jobs:
       - name: Run synthetic transfer qualification
         run: pnpm test:mounted-secret-transfer
 
+      - name: Run rotation authority qualification
+        run: pnpm test:rotation-authority
+
       - name: Run secret rotation and recovery qualification
         run: pnpm test:secret-rotation-recovery
 

@@ -24,6 +24,7 @@ $contract = [ordered]@{
   RuntimeValidatorPayloadRoot = (Join-Path $installRoot 'scripts')
   RuntimeValidatorPayload = (Join-Path $installRoot 'scripts\validate-secret-rotation-runtime.ps1')
   RuntimeValidatorCommonPayload = (Join-Path $installRoot 'scripts\secret-rotation-common.ps1')
+  RecoveryInspectorPayload = (Join-Path $installRoot 'scripts\inspect-secret-rotation-recovery.ps1')
   RuntimeValidatorPayloadSource = 'PROTECTED_SERVICE_INSTALL_COPY_ONLY'
   ProvenanceValidatorPayload = (Join-Path $installRoot 'scripts\validate-file-mode-image-provenance.ps1')
   ProvenanceRepositoryRoot = (Join-Path $installRoot 'provenance-repository')

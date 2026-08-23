@@ -70,6 +70,7 @@ internal enum AuthorityOperation
     CreateCanonicalPlan,
     InitializeOperation,
     GetOperationState,
+    GetRecoveryClassification,
     ConsumeActivationAttempt,
     RecordActivationFailure,
     ConsumeRollbackAttempt,
@@ -375,14 +376,16 @@ internal sealed class AuthorityStore
     private readonly string _root;
     private readonly IRuntimeValidator _validator;
     private readonly IProvenanceValidator _provenanceValidator;
+    private readonly IRecoveryClassifier _recoveryClassifier;
     private readonly bool _enforceProvisionedAcl;
     public string AllowedRequesterSid { get; }
 
-    private AuthorityStore(string root, IRuntimeValidator validator, IProvenanceValidator provenanceValidator, string allowedRequesterSid, bool enforceProvisionedAcl)
+    private AuthorityStore(string root, IRuntimeValidator validator, IProvenanceValidator provenanceValidator, IRecoveryClassifier recoveryClassifier, string allowedRequesterSid, bool enforceProvisionedAcl)
     {
         _root = Path.GetFullPath(root);
         _validator = validator;
         _provenanceValidator = provenanceValidator;
+        _recoveryClassifier = recoveryClassifier;
         AllowedRequesterSid = allowedRequesterSid;
         _enforceProvisionedAcl = enforceProvisionedAcl;
     }
@@ -393,16 +396,16 @@ internal sealed class AuthorityStore
         var settings = AuthoritySettings.Load(root);
         if (!string.Equals(Path.GetFullPath(settings.DockerCliConfigDirectory), Path.Combine(root, "docker-cli"), StringComparison.OrdinalIgnoreCase))
             throw new AuthorityException("AUTHORITY_SETTINGS_INVALID");
-        var store = new AuthorityStore(root, new AuthorityRuntimeValidator(settings, root), new AuthorityProvenanceValidator(), settings.RequesterSid, enforceProvisionedAcl: true);
+        var store = new AuthorityStore(root, new AuthorityRuntimeValidator(settings, root), new AuthorityProvenanceValidator(), new AuthorityRecoveryClassifier(settings, root), settings.RequesterSid, enforceProvisionedAcl: true);
         store.AssertProvisionedLayout();
         return store;
     }
 
-    internal static AuthorityStore CreateSynthetic(string root, IRuntimeValidator validator, IProvenanceValidator? provenanceValidator = null)
+    internal static AuthorityStore CreateSynthetic(string root, IRuntimeValidator validator, IProvenanceValidator? provenanceValidator = null, IRecoveryClassifier? recoveryClassifier = null)
     {
         Directory.CreateDirectory(root);
         foreach (var child in new[] { "plans", "initialization-claims", "operations" }) Directory.CreateDirectory(Path.Combine(root, child));
-        return new AuthorityStore(root, validator, provenanceValidator ?? new StaticProvenanceValidator(true), "S-1-5-21-1-2-3-1001", enforceProvisionedAcl: false);
+        return new AuthorityStore(root, validator, provenanceValidator ?? new StaticProvenanceValidator(true), recoveryClassifier ?? new StaticRecoveryClassifier("MANUAL_INTERVENTION_REQUIRED"), "S-1-5-21-1-2-3-1001", enforceProvisionedAcl: false);
     }
 
     public void CreateCanonicalPlan(CanonicalPlan plan)
@@ -424,6 +427,13 @@ internal sealed class AuthorityStore
         if (!Directory.Exists(operationDirectory)) return "OPERATION_INITIALIZATION_INTERRUPTED";
         try { return ReadOperationState(operationDirectory, plan); }
         catch { return "OPERATION_STATE_INTERRUPTED_OR_TAMPERED"; }
+    }
+
+    public string GetRecoveryClassification(string operationId)
+    {
+        var plan = ReadCanonicalPlan(operationId);
+        var state = GetOperationState(operationId);
+        return _recoveryClassifier.Classify(plan, state);
     }
 
     public void InitializeOperation(string operationId)
@@ -560,9 +570,13 @@ internal sealed class AuthorityStore
         // state (including a torn accepted record).
         if (manualMarker is not null)
         {
-            ValidateSimpleRecord(manualMarker, plan, "MANUAL_INTERVENTION");
             if (names.Contains("activation-accepted.json") || names.Contains("rollback-accepted.json"))
                 throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
+            // The manual marker itself is terminal consumed evidence. A torn
+            // create-new marker must not be retried or overwritten; classify
+            // it conservatively as manual so recovery remains readable.
+            try { ValidateSimpleRecord(manualMarker, plan, "MANUAL_INTERVENTION"); }
+            catch { return "MANUAL_INTERVENTION_REQUIRED"; }
             return "MANUAL_INTERVENTION_REQUIRED";
         }
         foreach (var file in files)
@@ -638,10 +652,15 @@ internal sealed class AuthorityStore
         if (!IsApprovedRequesterSid(caller.Sid)) return false;
         if (!_enforceProvisionedAcl) return true;
         var descriptor = new DirectoryInfo(_root).GetAccessControl(AccessControlSections.Access);
+        var parent = Path.GetDirectoryName(_root);
+        if (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent)) return false;
+        var parentDescriptor = new DirectoryInfo(parent).GetAccessControl(AccessControlSections.Access);
         // Direct access to the authority store is denied to a normal requester.
         // A configured requester that has a writable group SID (notably
-        // Builtin Administrators) is rejected before it can use this service.
-        return !AuthorityStoreSecurity.RequesterIdentityHasWritableAuthorityGroup(descriptor, caller.TokenSids);
+        // Builtin Administrators), or that can rewrite the authority parent
+        // ACL/take ownership, is rejected before it can use this service.
+        return !AuthorityStoreSecurity.RequesterIdentityHasWritableAuthorityGroup(descriptor, caller.TokenSids) &&
+               !AuthorityStoreSecurity.RequesterIdentityHasWritableAuthorityGroup(parentDescriptor, caller.TokenSids);
     }
 
     private string PlanPath(string operationId) => SafeChild("plans", operationId + ".json");
@@ -683,6 +702,16 @@ internal interface IProvenanceValidator
     bool ValidateCandidateProvenance(CanonicalPlan plan);
 }
 
+internal interface IRecoveryClassifier
+{
+    string Classify(CanonicalPlan plan, string operationState);
+}
+
+internal sealed class StaticRecoveryClassifier(string result) : IRecoveryClassifier
+{
+    public string Classify(CanonicalPlan plan, string operationState) => result;
+}
+
 internal sealed class StaticProvenanceValidator(bool result) : IProvenanceValidator
 {
     public bool ValidateCandidateProvenance(CanonicalPlan plan) => result;
@@ -714,6 +743,7 @@ internal static class AuthorityServer
                 AuthorityOperation.CreateCanonicalPlan => CreateCanonicalPlan(store, request),
                 AuthorityOperation.InitializeOperation => Initialize(store, request),
                 AuthorityOperation.GetOperationState => new { result = "PASS", state = store.GetOperationState(request.OperationId) },
+                AuthorityOperation.GetRecoveryClassification => new { result = "PASS", state = store.GetOperationState(request.OperationId), classification = store.GetRecoveryClassification(request.OperationId) },
                 AuthorityOperation.ConsumeActivationAttempt => Transition(store, request, static (value, id) => value.ConsumeActivationAttempt(id)),
                 AuthorityOperation.RecordActivationFailure => Transition(store, request, static (value, id) => value.RecordActivationFailure(id)),
                 AuthorityOperation.ConsumeRollbackAttempt => Transition(store, request, static (value, id) => value.ConsumeRollbackAttempt(id)),
@@ -827,6 +857,9 @@ internal static class AuthoritySelfTest
             Assert(!AuthorityStoreSecurity.RequesterHasDangerousRight(descriptor, new SecurityIdentifier("S-1-5-21-1-2-3-1001"), FileSystemRights.DeleteSubdirectoriesAndFiles), "REQUESTER_PARENT_DELETE_CHILD_DENIED");
             var administratorSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null).Value;
             Assert(AuthorityStoreSecurity.RequesterIdentityHasWritableAuthorityGroup(descriptor, new[] { "S-1-5-21-1-2-3-1001", administratorSid }), "REQUESTER_WRITABLE_GROUP_BLOCKED");
+            var parentEscalationDescriptor = AuthorityStoreSecurity.CreateExpectedDescriptor(new SecurityIdentifier("S-1-5-80-1-2-3-4-5"), new SecurityIdentifier("S-1-5-21-1-2-3-1001"));
+            parentEscalationDescriptor.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-5-21-1-2-3-1001"), FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership, AccessControlType.Allow));
+            Assert(AuthorityStoreSecurity.RequesterHasAnyDangerousRight(parentEscalationDescriptor, new SecurityIdentifier("S-1-5-21-1-2-3-1001")), "REQUESTER_PARENT_ACL_ESCALATION_BLOCKED");
             var operation = new string('a', 32);
             var request = AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(operation)));
             Assert(request.Operation == AuthorityOperation.CreateCanonicalPlan, "IPC_TYPED_OPERATION");
@@ -840,6 +873,11 @@ internal static class AuthoritySelfTest
             provenanceRejectedStore.CreateCanonicalPlan(provenanceRejectedPlan);
             AssertThrows(() => provenanceRejectedStore.InitializeOperation(provenanceRejectedOperation), "AUTHORITY_PROVENANCE_REQUIRED_BEFORE_PREPARED");
             Assert(provenanceRejectedStore.GetOperationState(provenanceRejectedOperation) == "NEVER_INITIALIZED", "PROVENANCE_REJECTION_NEVER_PREPARED");
+            var recoveryOperation = new string('5', 32);
+            var recoveryPlan = CanonicalPlan.Create(recoveryOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(recoveryOperation))).PlanProposal!.Value);
+            var recoveryStore = AuthorityStore.CreateSynthetic(Path.Combine(root, "recovery-classification"), validator, recoveryClassifier: new StaticRecoveryClassifier("SAFE_TO_RESUME_PREFLIGHT"));
+            recoveryStore.CreateCanonicalPlan(recoveryPlan);
+            Assert(recoveryStore.GetRecoveryClassification(recoveryOperation) == "SAFE_TO_RESUME_PREFLIGHT", "AUTHORITY_RECOVERY_CLASSIFICATION_BOUND");
             store.InitializeOperation(operation);
             Assert(store.GetOperationState(operation) == "PREPARED", "VALIDATED_INITIALIZATION_PREPARED");
             store.ConsumeActivationAttempt(operation);
@@ -872,6 +910,13 @@ internal static class AuthoritySelfTest
             Assert(store.GetOperationState(tornRecordOperation) == "OPERATION_STATE_INTERRUPTED_OR_TAMPERED", "TORN_OPERATION_RECORD_DETECTED");
             store.RecordManualIntervention(tornRecordOperation);
             Assert(store.GetOperationState(tornRecordOperation) == "MANUAL_INTERVENTION_REQUIRED", "TORN_OPERATION_RECORD_MANUAL_READABLE");
+            var tornManualOperation = new string('6', 32);
+            var tornManualPlan = CanonicalPlan.Create(tornManualOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(tornManualOperation))).PlanProposal!.Value);
+            store.CreateCanonicalPlan(tornManualPlan);
+            store.InitializeOperation(tornManualOperation);
+            File.WriteAllBytes(Path.Combine(root, "operations", tornManualOperation, "manual-intervention.json"), []);
+            Assert(store.GetOperationState(tornManualOperation) == "MANUAL_INTERVENTION_REQUIRED", "TORN_MANUAL_MARKER_READABLE");
+            AssertThrows(() => store.RecordManualIntervention(tornManualOperation), "TORN_MANUAL_MARKER_NOT_RETRIED");
             AssertThrows(() => store.InitializeOperation(operation), "INITIALIZATION_REPLAY_BLOCKED");
             var tornOperation = new string('b', 32);
             var tornPlan = CanonicalPlan.Create(tornOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(tornOperation))).PlanProposal!.Value);
@@ -897,7 +942,10 @@ internal static class AuthoritySelfTest
             Console.WriteLine("AUTHORITY_LIFECYCLE_TRANSITIONS_VALIDATOR_BOUND PASS");
             Console.WriteLine("AUTHORITY_PROVENANCE_REQUIRED_BEFORE_PREPARED PASS");
             Console.WriteLine("PROVENANCE_REJECTION_NEVER_PREPARED PASS");
+            Console.WriteLine("AUTHORITY_RECOVERY_CLASSIFICATION_BOUND PASS");
             Console.WriteLine("TORN_OPERATION_RECORD_MANUAL_READABLE PASS");
+            Console.WriteLine("TORN_MANUAL_MARKER_READABLE PASS");
+            Console.WriteLine("REQUESTER_PARENT_ACL_ESCALATION_BLOCKED PASS");
             Console.WriteLine("AUTHORITY_STORE_ACL_CONTRACT PASS");
             Console.WriteLine("REQUESTER_WRITE_DATA_DENIED PASS");
             Console.WriteLine("REQUESTER_APPEND_DATA_DENIED PASS");

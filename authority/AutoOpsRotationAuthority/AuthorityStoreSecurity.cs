@@ -40,6 +40,9 @@ internal static class AuthorityStoreSecurity
             .Any(rule => rule.IdentityReference.Value == requesterSid.Value && rule.AccessControlType == AccessControlType.Allow && (rule.FileSystemRights & right) != 0);
     }
 
+    internal static bool RequesterHasAnyDangerousRight(DirectorySecurity security, SecurityIdentifier requesterSid) =>
+        RequesterHasDangerousRight(security, requesterSid, RequesterWriteRights);
+
     internal static bool RequesterIdentityHasWritableAuthorityGroup(DirectorySecurity security, IEnumerable<string> requesterTokenSids)
     {
         var identities = new HashSet<string>(requesterTokenSids, StringComparer.Ordinal);
@@ -75,7 +78,7 @@ internal static class AuthorityStoreSecurity
     internal static void AssertAuthorityStoreParentDescriptor(string path, SecurityIdentifier authoritySid, SecurityIdentifier requesterSid)
     {
         var descriptor = new DirectoryInfo(path).GetAccessControl(AccessControlSections.Access);
-        if (!descriptor.AreAccessRulesProtected || RequesterHasDangerousRight(descriptor, requesterSid, FileSystemRights.DeleteSubdirectoriesAndFiles))
+        if (!descriptor.AreAccessRulesProtected || RequesterHasAnyDangerousRight(descriptor, requesterSid))
         {
             throw new AuthorityException("AUTHORITY_STORE_PARENT_ACL_INVALID");
         }
@@ -83,7 +86,7 @@ internal static class AuthorityStoreSecurity
         var systemSid = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null).Value;
         foreach (FileSystemAccessRule rule in descriptor.GetAccessRules(includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier)))
         {
-            if (rule.AccessControlType != AccessControlType.Allow || (rule.FileSystemRights & FileSystemRights.DeleteSubdirectoriesAndFiles) == 0) continue;
+            if (rule.AccessControlType != AccessControlType.Allow || (rule.FileSystemRights & RequesterWriteRights) == 0) continue;
             var identity = rule.IdentityReference.Value;
             if (identity != authoritySid.Value && identity != administratorsSid && identity != systemSid)
             {
