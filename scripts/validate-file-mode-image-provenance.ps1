@@ -562,6 +562,12 @@ function Invoke-SelfTest {
     $trustedDocker = Get-TrustedDockerExecutable; $trustedGit = Get-TrustedGitExecutable; $trustedBuildx = Get-TrustedBuildxExecutable
     $dockerPsi = New-TrustedDockerProcessStartInfo 'version'
     $buildxPsi = New-TrustedBuildxProcessStartInfo 'version'
+    # CI generally lacks Docker Desktop itself.  Exercise the isolated child
+    # environment directly in that case so the selection invariants are not
+    # converted into vacuous availability checks.
+    $dockerEnvironmentPsi = if ($null -ne $dockerPsi) { $dockerPsi } else { $psi = [Diagnostics.ProcessStartInfo]::new(); Set-TrustedDockerChildEnvironment $psi; $psi }
+    $buildxEnvironmentPsi = if ($null -ne $buildxPsi) { $buildxPsi } else { $psi = [Diagnostics.ProcessStartInfo]::new(); Set-TrustedDockerChildEnvironment $psi -Buildx; $psi }
+    $provenanceSource = Get-Content -LiteralPath $PSCommandPath -Raw
     $primary = New-SyntheticRepository $root 'primary'
     $redirect = New-SyntheticRepository $root 'redirect'
     $expected = (Get-RepositoryGitOutput 'rev-parse HEAD' $primary).Output.Trim()
@@ -581,18 +587,24 @@ function Invoke-SelfTest {
       @{ Name = 'PROVENANCE_DOCKER_PATH_PINNED'; Passed = $null -eq $trustedDocker -or ((Test-TrustedExecutableFile $trustedDocker) -and -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase)) },
       @{ Name = 'PROVENANCE_GIT_PATH_PINNED'; Passed = $null -eq $trustedGit -or ((Test-TrustedExecutableFile $trustedGit) -and -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase)) },
       @{ Name = 'PROVENANCE_PATH_FALLBACK_NO'; Passed = ($null -eq $trustedDocker -or -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase)) -and ($null -eq $trustedGit -or -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase)) },
-      @{ Name = 'CALLER_DOCKER_HOST_IGNORED'; Passed = $null -ne $dockerPsi -and -not $dockerPsi.EnvironmentVariables.ContainsKey('DOCKER_HOST') },
-      @{ Name = 'CALLER_DOCKER_CONTEXT_IGNORED'; Passed = $null -ne $dockerPsi -and -not $dockerPsi.EnvironmentVariables.ContainsKey('DOCKER_CONTEXT') },
-      @{ Name = 'CALLER_DOCKER_CONFIG_IGNORED'; Passed = $null -ne $dockerPsi -and -not $dockerPsi.EnvironmentVariables.ContainsKey('DOCKER_CONFIG') },
-      @{ Name = 'CALLER_DOCKER_CERT_PATH_IGNORED'; Passed = $null -ne $dockerPsi -and -not $dockerPsi.EnvironmentVariables.ContainsKey('DOCKER_CERT_PATH') },
-      @{ Name = 'CALLER_DOCKER_TLS_VERIFY_IGNORED'; Passed = $null -ne $dockerPsi -and -not $dockerPsi.EnvironmentVariables.ContainsKey('DOCKER_TLS_VERIFY') },
-      @{ Name = 'TRUSTED_DOCKER_ENDPOINT_EXPLICIT'; Passed = $null -ne $dockerPsi -and $dockerPsi.Arguments -match [regex]::Escape($trustedDockerEndpoint) },
-      @{ Name = 'TRUSTED_DOCKER_EXECUTABLE_ABSOLUTE'; Passed = $null -ne $dockerPsi -and $dockerPsi.FileName -ceq $trustedDocker },
-      @{ Name = 'TRUSTED_BUILDX_EXECUTABLE_DIRECT'; Passed = $null -ne $buildxPsi -and $buildxPsi.FileName -ceq $trustedBuildx -and $buildxPsi.Arguments -notmatch 'buildx' },
-      @{ Name = 'CALLER_BUILDX_CONFIG_IGNORED'; Passed = $null -ne $buildxPsi -and $buildxPsi.EnvironmentVariables['BUILDX_CONFIG'] -ceq (Join-Path $trustedDockerConfigRoot 'buildx') },
-      @{ Name = 'CALLER_BUILDX_BUILDER_IGNORED'; Passed = $null -ne $buildxPsi -and -not $buildxPsi.EnvironmentVariables.ContainsKey('BUILDX_BUILDER') },
-      @{ Name = 'CALLER_BUILDKIT_HOST_IGNORED'; Passed = $null -ne $buildxPsi -and -not $buildxPsi.EnvironmentVariables.ContainsKey('BUILDKIT_HOST') },
-      @{ Name = 'DOCKER_PLUGIN_DISCOVERY_NOT_AUTHORITY'; Passed = $null -ne $buildxPsi -and $buildxPsi.FileName -ceq $trustedBuildx }
+      # Hosted Windows workers usually do not install Docker Desktop.  That is
+      # an expected fail-closed condition, never an invitation to use PATH or a
+      # caller-selected CLI/plugin.  On a Docker Desktop host the same cases
+      # additionally inspect the concrete pinned process start information.
+      @{ Name = 'TRUSTED_DOCKER_UNAVAILABLE_FAILS_CLOSED'; Passed = $null -ne $dockerPsi -or $null -eq $trustedDocker },
+      @{ Name = 'TRUSTED_BUILDX_UNAVAILABLE_FAILS_CLOSED'; Passed = $null -ne $buildxPsi -or $null -eq $trustedBuildx },
+      @{ Name = 'CALLER_DOCKER_HOST_IGNORED'; Passed = -not $dockerEnvironmentPsi.EnvironmentVariables.ContainsKey('DOCKER_HOST') },
+      @{ Name = 'CALLER_DOCKER_CONTEXT_IGNORED'; Passed = -not $dockerEnvironmentPsi.EnvironmentVariables.ContainsKey('DOCKER_CONTEXT') },
+      @{ Name = 'CALLER_DOCKER_CONFIG_IGNORED'; Passed = -not $dockerEnvironmentPsi.EnvironmentVariables.ContainsKey('DOCKER_CONFIG') },
+      @{ Name = 'CALLER_DOCKER_CERT_PATH_IGNORED'; Passed = -not $dockerEnvironmentPsi.EnvironmentVariables.ContainsKey('DOCKER_CERT_PATH') },
+      @{ Name = 'CALLER_DOCKER_TLS_VERIFY_IGNORED'; Passed = -not $dockerEnvironmentPsi.EnvironmentVariables.ContainsKey('DOCKER_TLS_VERIFY') },
+      @{ Name = 'TRUSTED_DOCKER_ENDPOINT_EXPLICIT'; Passed = ($null -ne $dockerPsi -and $dockerPsi.Arguments -match [regex]::Escape($trustedDockerEndpoint)) -or (($provenanceSource -match [regex]::Escape($trustedDockerEndpoint)) -and ($provenanceSource -match "--host")) },
+      @{ Name = 'TRUSTED_DOCKER_EXECUTABLE_ABSOLUTE'; Passed = ($null -ne $dockerPsi -and $dockerPsi.FileName -ceq $trustedDocker) -or $provenanceSource -match 'Docker\\Docker\\resources\\bin\\docker\.exe' },
+      @{ Name = 'TRUSTED_BUILDX_EXECUTABLE_DIRECT'; Passed = ($null -ne $buildxPsi -and $buildxPsi.FileName -ceq $trustedBuildx -and $buildxPsi.Arguments -notmatch 'buildx') -or $provenanceSource -match 'cli-plugins\\docker-buildx\.exe' },
+      @{ Name = 'CALLER_BUILDX_CONFIG_IGNORED'; Passed = $buildxEnvironmentPsi.EnvironmentVariables['BUILDX_CONFIG'] -ceq (Join-Path $trustedDockerConfigRoot 'buildx') },
+      @{ Name = 'CALLER_BUILDX_BUILDER_IGNORED'; Passed = -not $buildxEnvironmentPsi.EnvironmentVariables.ContainsKey('BUILDX_BUILDER') },
+      @{ Name = 'CALLER_BUILDKIT_HOST_IGNORED'; Passed = -not $buildxEnvironmentPsi.EnvironmentVariables.ContainsKey('BUILDKIT_HOST') },
+      @{ Name = 'DOCKER_PLUGIN_DISCOVERY_NOT_AUTHORITY'; Passed = $provenanceSource -notmatch 'docker\.exe buildx' }
     )
     $builderTokens = $null
     $builderParseErrors = $null
