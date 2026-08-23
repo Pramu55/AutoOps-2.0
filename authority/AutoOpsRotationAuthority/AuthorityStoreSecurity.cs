@@ -40,6 +40,14 @@ internal static class AuthorityStoreSecurity
             .Any(rule => rule.IdentityReference.Value == requesterSid.Value && rule.AccessControlType == AccessControlType.Allow && (rule.FileSystemRights & right) != 0);
     }
 
+    internal static bool RequesterIdentityHasWritableAuthorityGroup(DirectorySecurity security, IEnumerable<string> requesterTokenSids)
+    {
+        var identities = new HashSet<string>(requesterTokenSids, StringComparer.Ordinal);
+        return security.GetAccessRules(includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier))
+            .OfType<FileSystemAccessRule>()
+            .Any(rule => rule.AccessControlType == AccessControlType.Allow && identities.Contains(rule.IdentityReference.Value) && (rule.FileSystemRights & RequesterWriteRights) != 0);
+    }
+
     internal static void AssertProvisionedDescriptor(string path, SecurityIdentifier authoritySid, SecurityIdentifier requesterSid)
     {
         if (authoritySid == requesterSid) throw new AuthorityException("AUTHORITY_REQUESTER_IDENTITY_CONFLICT");

@@ -55,7 +55,10 @@ internal static class Program
             PipeDirection.InOut,
             NamedPipeServerStream.MaxAllowedServerInstances,
             PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous,
+            // The service must be the first creator.  If an untrusted process
+            // has squatted this name, Create fails and SCM start fails closed
+            // rather than accepting a parallel/malicious pipe server.
+            PipeOptions.Asynchronous | PipeOptions.FirstPipeInstance,
             4096,
             4096,
             security);
@@ -335,6 +338,18 @@ internal sealed record CanonicalPlan(string OperationId, byte[] Utf8, string Ide
         var actual = array.EnumerateArray().Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : null).ToArray();
         if (actual.Length != expected.Count || actual.Any(item => item is null) || !actual.SequenceEqual(expected, StringComparer.Ordinal)) throw new AuthorityException(code);
     }
+
+    internal static string ReadString(byte[] utf8, string property)
+    {
+        using var document = JsonDocument.Parse(utf8);
+        return AuthorityRequest.RequiredString(document.RootElement, property, "CANONICAL_PLAN_INVALID");
+    }
+
+    internal static string ReadRollbackString(byte[] utf8, string property)
+    {
+        using var document = JsonDocument.Parse(utf8);
+        return AuthorityRequest.RequiredString(document.RootElement.GetProperty("rollback"), property, "CANONICAL_PLAN_INVALID");
+    }
 }
 
 internal sealed class AuthorityStore
@@ -357,7 +372,9 @@ internal sealed class AuthorityStore
     {
         var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "AutoOps", "rotation-authority");
         var settings = AuthoritySettings.Load(root);
-        var store = new AuthorityStore(root, new FailClosedRuntimeValidator(), settings.RequesterSid, enforceProvisionedAcl: true);
+        if (!string.Equals(Path.GetFullPath(settings.DockerCliConfigDirectory), Path.Combine(root, "docker-cli"), StringComparison.OrdinalIgnoreCase))
+            throw new AuthorityException("AUTHORITY_SETTINGS_INVALID");
+        var store = new AuthorityStore(root, new AuthorityRuntimeValidator(settings, root), settings.RequesterSid, enforceProvisionedAcl: true);
         store.AssertProvisionedLayout();
         return store;
     }
@@ -385,8 +402,9 @@ internal sealed class AuthorityStore
         if (!File.Exists(claimPath)) return "NEVER_INITIALIZED";
         if (!IsValidClaim(claimPath, plan)) return "INITIALIZATION_CLAIM_INTERRUPTED_OR_TAMPERED";
         var operationDirectory = OperationDirectory(operationId);
-        if (!Directory.Exists(operationDirectory) || !File.Exists(Path.Combine(operationDirectory, "operation-created.json"))) return "OPERATION_INITIALIZATION_INTERRUPTED";
-        return "PREPARED";
+        if (!Directory.Exists(operationDirectory)) return "OPERATION_INITIALIZATION_INTERRUPTED";
+        try { return ReadOperationState(operationDirectory, plan); }
+        catch { return "OPERATION_STATE_INTERRUPTED_OR_TAMPERED"; }
     }
 
     public void InitializeOperation(string operationId)
@@ -402,6 +420,68 @@ internal sealed class AuthorityStore
         Directory.CreateDirectory(operationDirectory);
         var created = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { schemaVersion = 1, operationId, planIdentity = plan.Identity, transition = "OPERATION_CREATED", createdAtUtc = DateTime.UtcNow.ToString("O") }));
         WriteCreateNew(Path.Combine(operationDirectory, "operation-created.json"), created, "ROTATION_OPERATION_RECORD_WRITE_FAILED");
+    }
+
+    public void ConsumeActivationAttempt(string operationId) => WriteTransition(operationId, "PREPARED", "activation-attempt.json", "ACTIVATION_ATTEMPT");
+    public void RecordActivationFailure(string operationId) => WriteTransition(operationId, "ACTIVATION_ATTEMPT_CONSUMED", "activation-failed.json", "ACTIVATION_FAILED");
+    public void ConsumeRollbackAttempt(string operationId) => WriteTransition(operationId, "ACTIVATION_FAILED", "rollback-attempt.json", "ROLLBACK_ATTEMPT");
+
+    public void RecordManualIntervention(string operationId)
+    {
+        var plan = ReadCanonicalPlan(operationId);
+        var state = GetOperationState(operationId);
+        if (state is "NEVER_INITIALIZED" or "ACTIVE_ACCEPTED" or "ROLLED_BACK" or "MANUAL_INTERVENTION_REQUIRED")
+            throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
+        var directory = OperationDirectory(operationId);
+        if (!Directory.Exists(directory))
+        {
+            if (!File.Exists(ClaimPath(operationId))) throw new AuthorityException("ROTATION_INITIALIZATION_CLAIM_MISSING");
+            Directory.CreateDirectory(directory);
+        }
+        WriteRecord(Path.Combine(directory, "manual-intervention.json"), plan, "MANUAL_INTERVENTION");
+    }
+
+    public void ConfirmCandidate(string operationId)
+    {
+        var plan = ReadCanonicalPlan(operationId);
+        if (GetOperationState(operationId) != "ACTIVATION_ATTEMPT_CONSUMED") throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
+        if (!_validator.ValidateCandidateAcceptance(plan)) throw new AuthorityException("CANDIDATE_RUNTIME_ACCEPTANCE_REJECTED");
+        WriteAcceptance(Path.Combine(OperationDirectory(operationId), "candidate-acceptance.json"), plan, "Candidate");
+        WriteRecord(Path.Combine(OperationDirectory(operationId), "activation-accepted.json"), plan, "ACTIVATION_ACCEPTED");
+    }
+
+    public void ConfirmRollback(string operationId)
+    {
+        var plan = ReadCanonicalPlan(operationId);
+        if (GetOperationState(operationId) != "ROLLBACK_ATTEMPT_CONSUMED") throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
+        if (!_validator.ValidateRollbackBaseline(plan)) throw new AuthorityException("ROLLBACK_RUNTIME_ACCEPTANCE_REJECTED");
+        WriteAcceptance(Path.Combine(OperationDirectory(operationId), "rollback-acceptance.json"), plan, "Rollback");
+        WriteRecord(Path.Combine(OperationDirectory(operationId), "rollback-accepted.json"), plan, "ROLLBACK_ACCEPTED");
+    }
+
+    private void WriteTransition(string operationId, string expectedState, string filename, string transition)
+    {
+        var plan = ReadCanonicalPlan(operationId);
+        if (GetOperationState(operationId) != expectedState) throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
+        WriteRecord(Path.Combine(OperationDirectory(operationId), filename), plan, transition);
+    }
+
+    private static void WriteRecord(string path, CanonicalPlan plan, string transition) =>
+        WriteCreateNew(path, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { schemaVersion = 1, operationId = plan.OperationId, planIdentity = plan.Identity, transition, createdAtUtc = DateTime.UtcNow.ToString("O") })), "ROTATION_OPERATION_RECORD_WRITE_FAILED");
+
+    private static void WriteAcceptance(string path, CanonicalPlan plan, string mode)
+    {
+        var rollback = mode == "Rollback";
+        var node = new JsonObject
+        {
+            ["schemaVersion"] = 1, ["operationId"] = plan.OperationId, ["planIdentity"] = plan.Identity,
+            ["transition"] = "ACCEPTANCE_EVIDENCE", ["mode"] = mode,
+            ["repositoryRevision"] = CanonicalPlan.ReadString(plan.Utf8, "repositoryRevision"),
+            ["expectedApiImageId"] = rollback ? CanonicalPlan.ReadRollbackString(plan.Utf8, "ApiImageId") : CanonicalPlan.ReadString(plan.Utf8, "apiImageId"),
+            ["expectedWorkerImageId"] = rollback ? CanonicalPlan.ReadRollbackString(plan.Utf8, "WorkerImageId") : CanonicalPlan.ReadString(plan.Utf8, "workerImageId"),
+            ["acceptanceResult"] = "PASS", ["createdAtUtc"] = DateTime.UtcNow.ToString("O")
+        };
+        WriteCreateNew(path, Encoding.UTF8.GetBytes(node.ToJsonString()), "ROTATION_ACCEPTANCE_RECORD_WRITE_FAILED");
     }
 
     private CanonicalPlan ReadCanonicalPlan(string operationId)
@@ -434,6 +514,76 @@ internal sealed class AuthorityStore
         }
     }
 
+    private static string ReadOperationState(string directory, CanonicalPlan plan)
+    {
+        var expected = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["operation-created.json"] = "OPERATION_CREATED", ["activation-attempt.json"] = "ACTIVATION_ATTEMPT",
+            ["activation-accepted.json"] = "ACTIVATION_ACCEPTED", ["activation-failed.json"] = "ACTIVATION_FAILED",
+            ["rollback-attempt.json"] = "ROLLBACK_ATTEMPT", ["rollback-accepted.json"] = "ROLLBACK_ACCEPTED",
+            ["manual-intervention.json"] = "MANUAL_INTERVENTION"
+        };
+        var files = Directory.EnumerateFileSystemEntries(directory).ToArray();
+        if (files.Length == 0) return "OPERATION_INITIALIZATION_INTERRUPTED";
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var file in files)
+        {
+            if (Directory.Exists(file) || (File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new AuthorityException("ROTATION_OPERATION_RECORD_INVALID");
+            var name = Path.GetFileName(file);
+            if (!names.Add(name)) throw new AuthorityException("ROTATION_OPERATION_RECORD_INVALID");
+            if (name is "candidate-acceptance.json" or "rollback-acceptance.json") ValidateAcceptanceRecord(file, plan, name == "candidate-acceptance.json" ? "Candidate" : "Rollback");
+            else if (!expected.TryGetValue(name, out var transition)) throw new AuthorityException("ROTATION_OPERATION_RECORD_INVALID");
+            else ValidateSimpleRecord(file, plan, transition);
+        }
+        var baseNames = names.Where(name => name != "manual-intervention.json").OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        var signature = string.Join("|", baseNames);
+        var state = signature switch
+        {
+            "" => "OPERATION_INITIALIZATION_INTERRUPTED",
+            "operation-created.json" => "PREPARED",
+            "activation-attempt.json|operation-created.json" => "ACTIVATION_ATTEMPT_CONSUMED",
+            "activation-attempt.json|candidate-acceptance.json|operation-created.json" => "CANDIDATE_ACCEPTANCE_INTERRUPTED",
+            "activation-accepted.json|activation-attempt.json|candidate-acceptance.json|operation-created.json" => "ACTIVE_ACCEPTED",
+            "activation-attempt.json|activation-failed.json|operation-created.json" => "ACTIVATION_FAILED",
+            "activation-attempt.json|activation-failed.json|operation-created.json|rollback-attempt.json" => "ROLLBACK_ATTEMPT_CONSUMED",
+            "activation-attempt.json|activation-failed.json|operation-created.json|rollback-acceptance.json|rollback-attempt.json" => "ROLLBACK_ACCEPTANCE_INTERRUPTED",
+            "activation-attempt.json|activation-failed.json|operation-created.json|rollback-acceptance.json|rollback-accepted.json|rollback-attempt.json" => "ROLLED_BACK",
+            _ => throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID")
+        };
+        if (names.Contains("manual-intervention.json"))
+        {
+            if (state is "ACTIVE_ACCEPTED" or "ROLLED_BACK") throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
+            return "MANUAL_INTERVENTION_REQUIRED";
+        }
+        return state;
+    }
+
+    private static void ValidateSimpleRecord(string path, CanonicalPlan plan, string expectedTransition)
+    {
+        using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+        var root = document.RootElement;
+        AuthorityRequest.AssertNoDuplicateProperties(root, "ROTATION_OPERATION_RECORD_INVALID");
+        AuthorityRequest.RequireExactNames(AuthorityRequest.PropertyNames(root, "ROTATION_OPERATION_RECORD_INVALID"), new[] { "schemaVersion", "operationId", "planIdentity", "transition", "createdAtUtc" }, "ROTATION_OPERATION_RECORD_INVALID");
+        if (root.GetProperty("schemaVersion").GetInt32() != 1 || AuthorityRequest.RequiredString(root, "operationId", "ROTATION_OPERATION_RECORD_INVALID") != plan.OperationId ||
+            AuthorityRequest.RequiredString(root, "planIdentity", "ROTATION_OPERATION_RECORD_INVALID") != plan.Identity || AuthorityRequest.RequiredString(root, "transition", "ROTATION_OPERATION_RECORD_INVALID") != expectedTransition ||
+            !DateTime.TryParse(AuthorityRequest.RequiredString(root, "createdAtUtc", "ROTATION_OPERATION_RECORD_INVALID"), out _)) throw new AuthorityException("ROTATION_OPERATION_RECORD_INVALID");
+    }
+
+    private static void ValidateAcceptanceRecord(string path, CanonicalPlan plan, string mode)
+    {
+        using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+        var root = document.RootElement;
+        AuthorityRequest.AssertNoDuplicateProperties(root, "ROTATION_ACCEPTANCE_EVIDENCE_INVALID");
+        AuthorityRequest.RequireExactNames(AuthorityRequest.PropertyNames(root, "ROTATION_ACCEPTANCE_EVIDENCE_INVALID"), new[] { "schemaVersion", "operationId", "planIdentity", "transition", "mode", "repositoryRevision", "expectedApiImageId", "expectedWorkerImageId", "acceptanceResult", "createdAtUtc" }, "ROTATION_ACCEPTANCE_EVIDENCE_INVALID");
+        var rollback = mode == "Rollback";
+        if (root.GetProperty("schemaVersion").GetInt32() != 1 || AuthorityRequest.RequiredString(root, "operationId", "ROTATION_ACCEPTANCE_EVIDENCE_INVALID") != plan.OperationId ||
+            AuthorityRequest.RequiredString(root, "planIdentity", "ROTATION_ACCEPTANCE_EVIDENCE_INVALID") != plan.Identity || AuthorityRequest.RequiredString(root, "transition", "ROTATION_ACCEPTANCE_EVIDENCE_INVALID") != "ACCEPTANCE_EVIDENCE" ||
+            AuthorityRequest.RequiredString(root, "mode", "ROTATION_ACCEPTANCE_EVIDENCE_INVALID") != mode || AuthorityRequest.RequiredString(root, "repositoryRevision", "ROTATION_ACCEPTANCE_EVIDENCE_INVALID") != CanonicalPlan.ReadString(plan.Utf8, "repositoryRevision") ||
+            AuthorityRequest.RequiredString(root, "expectedApiImageId", "ROTATION_ACCEPTANCE_EVIDENCE_INVALID") != (rollback ? CanonicalPlan.ReadRollbackString(plan.Utf8, "ApiImageId") : CanonicalPlan.ReadString(plan.Utf8, "apiImageId")) ||
+            AuthorityRequest.RequiredString(root, "expectedWorkerImageId", "ROTATION_ACCEPTANCE_EVIDENCE_INVALID") != (rollback ? CanonicalPlan.ReadRollbackString(plan.Utf8, "WorkerImageId") : CanonicalPlan.ReadString(plan.Utf8, "workerImageId")) ||
+            AuthorityRequest.RequiredString(root, "acceptanceResult", "ROTATION_ACCEPTANCE_EVIDENCE_INVALID") != "PASS" || !DateTime.TryParse(AuthorityRequest.RequiredString(root, "createdAtUtc", "ROTATION_ACCEPTANCE_EVIDENCE_INVALID"), out _)) throw new AuthorityException("ROTATION_ACCEPTANCE_EVIDENCE_INVALID");
+    }
+
     private void AssertProvisionedLayout()
     {
         var authoritySid = _enforceProvisionedAcl ? WindowsIdentity.GetCurrent().User ?? throw new AuthorityException("AUTHORITY_SERVICE_IDENTITY_UNAVAILABLE") : null;
@@ -450,6 +600,17 @@ internal sealed class AuthorityStore
 
     internal bool IsApprovedRequesterSid(string? callerSid) =>
         !string.IsNullOrWhiteSpace(callerSid) && string.Equals(callerSid, AllowedRequesterSid, StringComparison.Ordinal);
+
+    internal bool IsApprovedRequester(AuthenticatedClient caller)
+    {
+        if (!IsApprovedRequesterSid(caller.Sid)) return false;
+        if (!_enforceProvisionedAcl) return true;
+        var descriptor = new DirectoryInfo(_root).GetAccessControl(AccessControlSections.Access);
+        // Direct access to the authority store is denied to a normal requester.
+        // A configured requester that has a writable group SID (notably
+        // Builtin Administrators) is rejected before it can use this service.
+        return !AuthorityStoreSecurity.RequesterIdentityHasWritableAuthorityGroup(descriptor, caller.TokenSids);
+    }
 
     private string PlanPath(string operationId) => SafeChild("plans", operationId + ".json");
     private string ClaimPath(string operationId) => SafeChild("initialization-claims", operationId + ".json");
@@ -482,16 +643,19 @@ internal sealed class AuthorityStore
 internal interface IRuntimeValidator
 {
     bool ValidateRollbackBaseline(CanonicalPlan plan);
+    bool ValidateCandidateAcceptance(CanonicalPlan plan);
 }
 
 internal sealed class FailClosedRuntimeValidator : IRuntimeValidator
 {
     public bool ValidateRollbackBaseline(CanonicalPlan plan) => false;
+    public bool ValidateCandidateAcceptance(CanonicalPlan plan) => false;
 }
 
 internal sealed class StaticRuntimeValidator(bool result) : IRuntimeValidator
 {
     public bool ValidateRollbackBaseline(CanonicalPlan plan) => result;
+    public bool ValidateCandidateAcceptance(CanonicalPlan plan) => result;
 }
 
 internal static class AuthorityServer
@@ -500,15 +664,21 @@ internal static class AuthorityServer
     {
         try
         {
-            var callerSid = GetAuthenticatedClientSid(pipe);
-            if (!store.IsApprovedRequesterSid(callerSid)) throw new AuthorityException("IPC_CALLER_UNAUTHORIZED");
+            var caller = GetAuthenticatedClient(pipe);
+            if (!store.IsApprovedRequester(caller)) throw new AuthorityException("IPC_CALLER_UNAUTHORIZED");
             var request = AuthorityRequest.Parse(await ReadFrameAsync(pipe, cancellationToken).ConfigureAwait(false));
             object payload = request.Operation switch
             {
                 AuthorityOperation.CreateCanonicalPlan => CreateCanonicalPlan(store, request),
                 AuthorityOperation.InitializeOperation => Initialize(store, request),
                 AuthorityOperation.GetOperationState => new { result = "PASS", state = store.GetOperationState(request.OperationId) },
-                _ => throw new AuthorityException("IPC_OPERATION_NOT_IMPLEMENTED")
+                AuthorityOperation.ConsumeActivationAttempt => Transition(store, request, static (value, id) => value.ConsumeActivationAttempt(id)),
+                AuthorityOperation.RecordActivationFailure => Transition(store, request, static (value, id) => value.RecordActivationFailure(id)),
+                AuthorityOperation.ConsumeRollbackAttempt => Transition(store, request, static (value, id) => value.ConsumeRollbackAttempt(id)),
+                AuthorityOperation.RecordManualIntervention => Transition(store, request, static (value, id) => value.RecordManualIntervention(id)),
+                AuthorityOperation.ConfirmCandidate => Transition(store, request, static (value, id) => value.ConfirmCandidate(id)),
+                AuthorityOperation.ConfirmRollback => Transition(store, request, static (value, id) => value.ConfirmRollback(id)),
+                _ => throw new AuthorityException("IPC_OPERATION_INVALID")
             };
             return JsonSerializer.SerializeToUtf8Bytes(payload);
         }
@@ -522,15 +692,20 @@ internal static class AuthorityServer
         }
     }
 
-    internal static string GetAuthenticatedClientSid(NamedPipeServerStream pipe)
+    internal static AuthenticatedClient GetAuthenticatedClient(NamedPipeServerStream pipe)
     {
-        string? result = null;
+        AuthenticatedClient? result = null;
         pipe.RunAsClient(() =>
         {
             using var identity = WindowsIdentity.GetCurrent();
-            result = identity.User?.Value;
+            var sid = identity.User?.Value;
+            if (!string.IsNullOrWhiteSpace(sid))
+            {
+                var groups = identity.Groups?.Select(group => group.Value).Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).Append(sid).ToArray() ?? [sid];
+                result = new AuthenticatedClient(sid, groups);
+            }
         });
-        if (string.IsNullOrWhiteSpace(result)) throw new AuthorityException("IPC_CALLER_IDENTITY_UNAVAILABLE");
+        if (result is null) throw new AuthorityException("IPC_CALLER_IDENTITY_UNAVAILABLE");
         return result;
     }
 
@@ -575,12 +750,20 @@ internal static class AuthorityServer
         store.InitializeOperation(request.OperationId);
         return new { result = "PASS", state = "PREPARED" };
     }
+
+    private static object Transition(AuthorityStore store, AuthorityRequest request, Action<AuthorityStore, string> apply)
+    {
+        apply(store, request.OperationId);
+        return new { result = "PASS", state = store.GetOperationState(request.OperationId) };
+    }
 }
 
 internal sealed class AuthorityException(string code) : Exception(code)
 {
     public string Code { get; } = code;
 }
+
+internal sealed record AuthenticatedClient(string Sid, IReadOnlyCollection<string> TokenSids);
 
 internal static class AuthoritySelfTest
 {
@@ -600,6 +783,8 @@ internal static class AuthoritySelfTest
             Assert(!AuthorityStoreSecurity.RequesterHasDangerousRight(descriptor, new SecurityIdentifier("S-1-5-21-1-2-3-1001"), FileSystemRights.ChangePermissions), "REQUESTER_CHANGE_PERMISSIONS_DENIED");
             Assert(!AuthorityStoreSecurity.RequesterHasDangerousRight(descriptor, new SecurityIdentifier("S-1-5-21-1-2-3-1001"), FileSystemRights.TakeOwnership), "REQUESTER_TAKE_OWNERSHIP_DENIED");
             Assert(!AuthorityStoreSecurity.RequesterHasDangerousRight(descriptor, new SecurityIdentifier("S-1-5-21-1-2-3-1001"), FileSystemRights.DeleteSubdirectoriesAndFiles), "REQUESTER_PARENT_DELETE_CHILD_DENIED");
+            var administratorSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null).Value;
+            Assert(AuthorityStoreSecurity.RequesterIdentityHasWritableAuthorityGroup(descriptor, new[] { "S-1-5-21-1-2-3-1001", administratorSid }), "REQUESTER_WRITABLE_GROUP_BLOCKED");
             var operation = new string('a', 32);
             var request = AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(operation)));
             Assert(request.Operation == AuthorityOperation.CreateCanonicalPlan, "IPC_TYPED_OPERATION");
@@ -609,6 +794,27 @@ internal static class AuthoritySelfTest
             Assert(store.GetOperationState(operation) == "NEVER_INITIALIZED", "CANONICAL_PLAN_ADMISSION_NOT_PREPARED");
             store.InitializeOperation(operation);
             Assert(store.GetOperationState(operation) == "PREPARED", "VALIDATED_INITIALIZATION_PREPARED");
+            store.ConsumeActivationAttempt(operation);
+            Assert(store.GetOperationState(operation) == "ACTIVATION_ATTEMPT_CONSUMED", "ACTIVATION_ATTEMPT_CONSUMED");
+            store.ConfirmCandidate(operation);
+            Assert(store.GetOperationState(operation) == "ACTIVE_ACCEPTED", "CANDIDATE_ACCEPTANCE_CONFIRMED");
+            AssertThrows(() => store.ConsumeActivationAttempt(operation), "ACTIVATION_ATTEMPT_REPLAY_BLOCKED");
+            var rollbackOperation = new string('f', 32);
+            var rollbackPlan = CanonicalPlan.Create(rollbackOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(rollbackOperation))).PlanProposal!.Value);
+            store.CreateCanonicalPlan(rollbackPlan);
+            store.InitializeOperation(rollbackOperation);
+            store.ConsumeActivationAttempt(rollbackOperation);
+            store.RecordActivationFailure(rollbackOperation);
+            store.ConsumeRollbackAttempt(rollbackOperation);
+            store.ConfirmRollback(rollbackOperation);
+            Assert(store.GetOperationState(rollbackOperation) == "ROLLED_BACK", "ROLLBACK_ACCEPTANCE_CONFIRMED");
+            var interruptedOperation = new string('9', 32);
+            var interruptedPlan = CanonicalPlan.Create(interruptedOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(interruptedOperation))).PlanProposal!.Value);
+            store.CreateCanonicalPlan(interruptedPlan);
+            File.WriteAllBytes(Path.Combine(root, "initialization-claims", interruptedOperation + ".json"), Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { schemaVersion = 1, operationId = interruptedOperation, planIdentity = interruptedPlan.Identity, transition = "INITIALIZATION_CLAIMED", createdAtUtc = DateTime.UtcNow.ToString("O") })));
+            Assert(store.GetOperationState(interruptedOperation) == "OPERATION_INITIALIZATION_INTERRUPTED", "LOST_OPERATION_STATE_NO_BUDGET_RESET");
+            store.RecordManualIntervention(interruptedOperation);
+            Assert(store.GetOperationState(interruptedOperation) == "MANUAL_INTERVENTION_REQUIRED", "INTERRUPTED_STATE_MANUAL_READABLE");
             AssertThrows(() => store.InitializeOperation(operation), "INITIALIZATION_REPLAY_BLOCKED");
             var tornOperation = new string('b', 32);
             var tornPlan = CanonicalPlan.Create(tornOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(tornOperation))).PlanProposal!.Value);
@@ -631,6 +837,7 @@ internal static class AuthoritySelfTest
             Console.WriteLine("AUTHORITY_INITIALIZATION_SINGLE_USE PASS");
             Console.WriteLine("AUTHORITY_TORN_CLAIM_FAIL_CLOSED PASS");
             Console.WriteLine("AUTHORITY_IPC_STRICT_SCHEMA PASS");
+            Console.WriteLine("AUTHORITY_LIFECYCLE_TRANSITIONS_VALIDATOR_BOUND PASS");
             Console.WriteLine("AUTHORITY_STORE_ACL_CONTRACT PASS");
             Console.WriteLine("REQUESTER_WRITE_DATA_DENIED PASS");
             Console.WriteLine("REQUESTER_APPEND_DATA_DENIED PASS");
@@ -639,6 +846,7 @@ internal static class AuthoritySelfTest
             Console.WriteLine("REQUESTER_CHANGE_PERMISSIONS_DENIED PASS");
             Console.WriteLine("REQUESTER_TAKE_OWNERSHIP_DENIED PASS");
             Console.WriteLine("REQUESTER_PARENT_DELETE_CHILD_DENIED PASS");
+            Console.WriteLine("REQUESTER_WRITABLE_GROUP_BLOCKED PASS");
             Console.WriteLine("CANONICAL_PLAN_TORN_WRITE_FAIL_CLOSED PASS");
             Console.WriteLine("PIPE_USES_OS_CLIENT_IDENTITY PASS");
             Console.WriteLine("PIPE_PAYLOAD_IDENTITY_IGNORED PASS");

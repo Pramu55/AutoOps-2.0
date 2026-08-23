@@ -3,12 +3,20 @@ param(
   [Parameter(Mandatory, ParameterSetName = 'Validate')][string]$TargetRoot,
   [Parameter(Mandatory, ParameterSetName = 'Validate')][ValidatePattern('^[a-f0-9]{32}$')][string]$OperationId,
   [Parameter(ParameterSetName = 'Validate')][ValidateSet('Candidate', 'Rollback')][string]$Mode = 'Candidate',
+  [Parameter(ParameterSetName = 'Validate')][string]$AuthorityPlanPath,
   [Parameter(Mandatory, ParameterSetName = 'SelfTest')][switch]$RunSelfTest
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'secret-rotation-common.ps1')
+
+if (-not [string]::IsNullOrWhiteSpace($AuthorityPlanPath)) {
+  # Only the installed authority payload supplies this path. Read-RotationPlan
+  # independently restricts it to the authority-owned ProgramData plan root;
+  # it is never a requester-side TargetRoot plan authority.
+  $script:RotationAuthorityCanonicalPlanPath = $AuthorityPlanPath
+}
 
 function Invoke-RotationDocker([string[]]$Arguments, [string]$FailureCode) {
   $process = Start-RotationTrustedDockerProcess $Arguments $FailureCode
