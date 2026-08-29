@@ -22,7 +22,7 @@ internal static class AuthorityStoreSecurity
         return security;
     }
 
-    internal static bool RequesterCannotWrite(DirectorySecurity security, SecurityIdentifier requesterSid)
+    internal static bool RequesterCannotWrite(FileSystemSecurity security, SecurityIdentifier requesterSid)
     {
         if (!security.AreAccessRulesProtected) return false;
         foreach (FileSystemAccessRule rule in security.GetAccessRules(includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier)))
@@ -32,7 +32,7 @@ internal static class AuthorityStoreSecurity
         return true;
     }
 
-    internal static bool RequesterHasDangerousRight(DirectorySecurity security, SecurityIdentifier requesterSid, FileSystemRights right)
+    internal static bool RequesterHasDangerousRight(FileSystemSecurity security, SecurityIdentifier requesterSid, FileSystemRights right)
     {
         if ((right & RequesterWriteRights) == 0) throw new ArgumentOutOfRangeException(nameof(right));
         return security.GetAccessRules(includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier))
@@ -43,7 +43,7 @@ internal static class AuthorityStoreSecurity
     internal static bool RequesterHasAnyDangerousRight(DirectorySecurity security, SecurityIdentifier requesterSid) =>
         RequesterHasDangerousRight(security, requesterSid, RequesterWriteRights);
 
-    internal static bool RequesterIdentityHasWritableAuthorityGroup(DirectorySecurity security, IEnumerable<string> requesterTokenSids)
+    internal static bool RequesterIdentityHasWritableAuthorityGroup(FileSystemSecurity security, IEnumerable<string> requesterTokenSids)
     {
         var identities = new HashSet<string>(requesterTokenSids, StringComparer.Ordinal);
         return security.GetAccessRules(includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier))
@@ -51,7 +51,7 @@ internal static class AuthorityStoreSecurity
             .Any(rule => rule.AccessControlType == AccessControlType.Allow && identities.Contains(rule.IdentityReference.Value) && (rule.FileSystemRights & RequesterWriteRights) != 0);
     }
 
-    internal static bool RequesterTokenOwnsBoundary(DirectorySecurity security, IEnumerable<string> requesterTokenSids)
+    internal static bool RequesterTokenOwnsBoundary(FileSystemSecurity security, IEnumerable<string> requesterTokenSids)
     {
         var owner = security.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
         return owner is not null && new HashSet<string>(requesterTokenSids, StringComparer.Ordinal).Contains(owner.Value);
@@ -60,13 +60,40 @@ internal static class AuthorityStoreSecurity
     // An owner can rewrite a DACL without an explicit ChangePermissions ACE.
     // The service therefore treats every owner other than the authority, SYSTEM,
     // or Administrators as untrusted, rather than merely excluding the requester.
-    internal static bool HasTrustedBoundaryOwner(DirectorySecurity security, SecurityIdentifier authoritySid)
+    internal static bool HasTrustedBoundaryOwner(FileSystemSecurity security, SecurityIdentifier authoritySid)
     {
         var owner = security.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
         if (owner is null) return false;
         var administratorsSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
         var systemSid = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
         return owner == authoritySid || owner == administratorsSid || owner == systemSid;
+    }
+
+    // Installed authority payloads are executable trust boundaries.  Every
+    // component in the installed chain is checked against the same owner and
+    // dangerous-rights policy as the authority store.  A merely different
+    // owner is not sufficient: any non-authority principal with write,
+    // delete, ACL, or ownership rights invalidates the chain.
+    internal static void AssertTrustedPayloadDescriptor(FileSystemSecurity security, SecurityIdentifier authoritySid, SecurityIdentifier requesterSid)
+    {
+        if (!HasTrustedBoundaryOwner(security, authoritySid))
+            throw new AuthorityException("AUTHORITY_PAYLOAD_OWNER_UNTRUSTED");
+
+        var administratorsSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null).Value;
+        var systemSid = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null).Value;
+        foreach (var rule in security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+                     .OfType<FileSystemAccessRule>())
+        {
+            if (rule.AccessControlType != AccessControlType.Allow || (rule.FileSystemRights & RequesterWriteRights) == 0)
+                continue;
+
+            var identity = rule.IdentityReference.Value;
+            if (identity != authoritySid.Value && identity != administratorsSid && identity != systemSid)
+                throw new AuthorityException("AUTHORITY_PAYLOAD_ACL_INVALID");
+        }
+
+        if (RequesterHasDangerousRight(security, requesterSid, RequesterWriteRights))
+            throw new AuthorityException("AUTHORITY_PAYLOAD_REQUESTER_WRITABLE");
     }
 
     internal static void AssertProvisionedDescriptor(string path, SecurityIdentifier authoritySid, SecurityIdentifier requesterSid)

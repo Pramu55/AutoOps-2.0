@@ -11,16 +11,17 @@ internal sealed class AuthorityRuntimeValidator(AuthoritySettings settings, stri
 {
     private readonly string _secretRoot = settings.SecretRoot;
     private readonly string _planRoot = Path.Combine(storeRoot, "plans");
-    private readonly string _script = GetInstalledValidatorPath();
+    private readonly string _script = AuthorityPathSecurity.RequireTrustedInstalledFile("scripts", "validate-secret-rotation-runtime.ps1", settings.RequesterSid);
 
-    public bool ValidateRollbackBaseline(CanonicalPlan plan) => Validate(plan, "Rollback");
-    public bool ValidateCandidateAcceptance(CanonicalPlan plan) => Validate(plan, "Candidate");
+    public bool ValidateRollbackBaseline(CanonicalPlan plan, CancellationToken cancellationToken) => Validate(plan, "Rollback", cancellationToken);
+    public bool ValidateCandidateAcceptance(CanonicalPlan plan, CancellationToken cancellationToken) => Validate(plan, "Candidate", cancellationToken);
 
-    private bool Validate(CanonicalPlan plan, string mode)
+    private bool Validate(CanonicalPlan plan, string mode, CancellationToken cancellationToken)
     {
         try
         {
-            using var dockerProxy = AuthenticatedDockerPipeProxy.StartForAuthority();
+            cancellationToken.ThrowIfCancellationRequested();
+            using var dockerProxy = AuthenticatedDockerPipeProxy.StartForAuthority(cancellationToken);
             var powershell = GetWindowsPowerShellPath();
             var planPath = Path.Combine(_planRoot, plan.OperationId + ".json");
             if (!File.Exists(planPath) || (File.GetAttributes(planPath) & FileAttributes.ReparsePoint) != 0) return false;
@@ -55,23 +56,10 @@ internal sealed class AuthorityRuntimeValidator(AuthoritySettings settings, stri
             psi.ArgumentList.Add(mode);
             psi.ArgumentList.Add("-AuthorityPlanPath");
             psi.ArgumentList.Add(planPath);
-            using var process = Process.Start(psi);
-            if (process is null) return false;
-            _ = process.StandardOutput.ReadToEnd();
-            _ = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-            return process.ExitCode == 0;
+            return AuthorityProcessRunner.Run(psi, cancellationToken).ExitCode == 0;
         }
+        catch (OperationCanceledException) { throw; }
         catch { return false; }
-    }
-
-    private static string GetInstalledValidatorPath()
-    {
-        var path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "scripts", "validate-secret-rotation-runtime.ps1"));
-        var payloadRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "scripts"));
-        if (!path.StartsWith(payloadRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-            throw new AuthorityException("AUTHORITY_VALIDATOR_PAYLOAD_UNAVAILABLE");
-        return path;
     }
 
     private static string GetWindowsPowerShellPath()

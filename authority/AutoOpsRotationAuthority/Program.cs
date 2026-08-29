@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Diagnostics;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
@@ -35,11 +36,28 @@ internal static class Program
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            await using var pipe = CreateAuthorityPipe(store.AllowedRequesterSid);
-            await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
-            var response = await AuthorityServer.HandleAsync(pipe, store, cancellationToken).ConfigureAwait(false);
-            await AuthorityServer.WriteFrameAsync(pipe, response, cancellationToken).ConfigureAwait(false);
-            await pipe.FlushAsync(cancellationToken).ConfigureAwait(false);
+            var pipe = CreateAuthorityPipe(store.AllowedRequesterSid);
+            try
+            {
+                await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                await pipe.DisposeAsync().ConfigureAwait(false);
+                if (cancellationToken.IsCancellationRequested) break;
+                throw;
+            }
+
+            try
+            {
+                await AuthorityServer.ServeConnectedAsync(
+                    pipe,
+                    store,
+                    () => AuthorityServer.GetAuthenticatedClient(pipe),
+                    AuthorityServer.RequestDeadline,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
         }
     }
 
@@ -396,7 +414,7 @@ internal sealed class AuthorityStore
         var settings = AuthoritySettings.Load(root);
         if (!string.Equals(Path.GetFullPath(settings.DockerCliConfigDirectory), Path.Combine(root, "docker-cli"), StringComparison.OrdinalIgnoreCase))
             throw new AuthorityException("AUTHORITY_SETTINGS_INVALID");
-        var store = new AuthorityStore(root, new AuthorityRuntimeValidator(settings, root), new AuthorityProvenanceValidator(), new AuthorityRecoveryClassifier(settings, root), settings.RequesterSid, enforceProvisionedAcl: true);
+        var store = new AuthorityStore(root, new AuthorityRuntimeValidator(settings, root), new AuthorityProvenanceValidator(settings.RequesterSid), new AuthorityRecoveryClassifier(settings, root), settings.RequesterSid, enforceProvisionedAcl: true);
         store.AssertProvisionedLayout();
         return store;
     }
@@ -404,110 +422,122 @@ internal sealed class AuthorityStore
     internal static AuthorityStore CreateSynthetic(string root, IRuntimeValidator validator, IProvenanceValidator? provenanceValidator = null, IRecoveryClassifier? recoveryClassifier = null)
     {
         Directory.CreateDirectory(root);
-        foreach (var child in new[] { "plans", "initialization-claims", "operations" }) Directory.CreateDirectory(Path.Combine(root, child));
+        foreach (var child in new[] { "plans", "initialization-claims", "operations", "docker-cli" }) Directory.CreateDirectory(Path.Combine(root, child));
         return new AuthorityStore(root, validator, provenanceValidator ?? new StaticProvenanceValidator(true), recoveryClassifier ?? new StaticRecoveryClassifier("MANUAL_INTERVENTION_REQUIRED"), "S-1-5-21-1-2-3-1001", enforceProvisionedAcl: false);
     }
 
-    public void CreateCanonicalPlan(CanonicalPlan plan)
+    public void CreateCanonicalPlan(CanonicalPlan plan, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         AssertProvisionedLayout();
-        WriteCreateNew(PlanPath(plan.OperationId), plan.Utf8, "CANONICAL_PLAN_EXISTS_OR_WRITE_FAILED");
+        WriteCreateNew(PlanPath(plan.OperationId), plan.Utf8, "CANONICAL_PLAN_EXISTS_OR_WRITE_FAILED", cancellationToken);
     }
 
-    public string GetOperationState(string operationId)
+    public string GetOperationState(string operationId, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!File.Exists(PlanPath(operationId))) return "CANONICAL_PLAN_MISSING";
         CanonicalPlan plan;
-        try { plan = ReadCanonicalPlan(operationId); }
+        try { plan = ReadCanonicalPlan(operationId, cancellationToken); }
         catch (AuthorityException) { return "CANONICAL_PLAN_INTERRUPTED_OR_TAMPERED"; }
         var claimPath = ClaimPath(operationId);
+        cancellationToken.ThrowIfCancellationRequested();
         if (!File.Exists(claimPath)) return "NEVER_INITIALIZED";
-        if (!IsValidClaim(claimPath, plan)) return "INITIALIZATION_CLAIM_INTERRUPTED_OR_TAMPERED";
+        if (!IsValidClaim(claimPath, plan, cancellationToken)) return "INITIALIZATION_CLAIM_INTERRUPTED_OR_TAMPERED";
         var operationDirectory = OperationDirectory(operationId);
+        cancellationToken.ThrowIfCancellationRequested();
         if (!Directory.Exists(operationDirectory)) return "OPERATION_INITIALIZATION_INTERRUPTED";
-        try { return ReadOperationState(operationDirectory, plan); }
+        try { return ReadOperationState(operationDirectory, plan, cancellationToken); }
+        catch (OperationCanceledException) { throw; }
         catch { return "OPERATION_STATE_INTERRUPTED_OR_TAMPERED"; }
     }
 
-    public string GetRecoveryClassification(string operationId)
+    public string GetRecoveryClassification(string operationId, CancellationToken cancellationToken = default)
     {
-        var state = GetOperationState(operationId);
+        var state = GetOperationState(operationId, cancellationToken);
         // A present but malformed canonical plan is durable consumed evidence.
         // Do not reparse it or let a recovery request turn that state into a
         // retryable initialization path; return the fixed fail-closed outcome.
         if (state == "CANONICAL_PLAN_INTERRUPTED_OR_TAMPERED") return "MANUAL_INTERVENTION_REQUIRED";
-        var plan = ReadCanonicalPlan(operationId);
-        return _recoveryClassifier.Classify(plan, state);
+        var plan = ReadCanonicalPlan(operationId, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        return _recoveryClassifier.Classify(plan, state, cancellationToken);
     }
 
-    public void InitializeOperation(string operationId)
+    public void InitializeOperation(string operationId, CancellationToken cancellationToken = default)
     {
-        var plan = ReadCanonicalPlan(operationId);
-        if (!_provenanceValidator.ValidateCandidateProvenance(plan)) throw new AuthorityException("CANDIDATE_IMAGE_PROVENANCE_REJECTED");
-        if (!_validator.ValidateRollbackBaseline(plan)) throw new AuthorityException("ROLLBACK_RUNTIME_BASELINE_REJECTED");
+        var plan = ReadCanonicalPlan(operationId, cancellationToken);
+        if (!_provenanceValidator.ValidateCandidateProvenance(plan, cancellationToken)) throw new AuthorityException("CANDIDATE_IMAGE_PROVENANCE_REJECTED");
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!_validator.ValidateRollbackBaseline(plan, cancellationToken)) throw new AuthorityException("ROLLBACK_RUNTIME_BASELINE_REJECTED");
+        cancellationToken.ThrowIfCancellationRequested();
         var claimPath = ClaimPath(operationId);
         if (File.Exists(claimPath)) throw new AuthorityException("ROTATION_INITIALIZATION_ALREADY_CLAIMED");
         var claim = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { schemaVersion = 1, operationId, planIdentity = plan.Identity, transition = "INITIALIZATION_CLAIMED", createdAtUtc = DateTime.UtcNow.ToString("O") }));
-        WriteCreateNew(claimPath, claim, "ROTATION_INITIALIZATION_ALREADY_CLAIMED");
+        WriteCreateNew(claimPath, claim, "ROTATION_INITIALIZATION_ALREADY_CLAIMED", cancellationToken);
         var operationDirectory = OperationDirectory(operationId);
         if (Directory.Exists(operationDirectory)) throw new AuthorityException("ROTATION_OPERATION_EXISTS");
+        cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(operationDirectory);
         var created = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { schemaVersion = 1, operationId, planIdentity = plan.Identity, transition = "OPERATION_CREATED", createdAtUtc = DateTime.UtcNow.ToString("O") }));
-        WriteCreateNew(Path.Combine(operationDirectory, "operation-created.json"), created, "ROTATION_OPERATION_RECORD_WRITE_FAILED");
+        WriteCreateNew(Path.Combine(operationDirectory, "operation-created.json"), created, "ROTATION_OPERATION_RECORD_WRITE_FAILED", cancellationToken);
     }
 
-    public void ConsumeActivationAttempt(string operationId) => WriteTransition(operationId, "PREPARED", "activation-attempt.json", "ACTIVATION_ATTEMPT");
-    public void RecordActivationFailure(string operationId) => WriteTransition(operationId, "ACTIVATION_ATTEMPT_CONSUMED", "activation-failed.json", "ACTIVATION_FAILED");
-    public void ConsumeRollbackAttempt(string operationId) => WriteTransition(operationId, "ACTIVATION_FAILED", "rollback-attempt.json", "ROLLBACK_ATTEMPT");
+    public void ConsumeActivationAttempt(string operationId, CancellationToken cancellationToken = default) => WriteTransition(operationId, "PREPARED", "activation-attempt.json", "ACTIVATION_ATTEMPT", cancellationToken);
+    public void RecordActivationFailure(string operationId, CancellationToken cancellationToken = default) => WriteTransition(operationId, "ACTIVATION_ATTEMPT_CONSUMED", "activation-failed.json", "ACTIVATION_FAILED", cancellationToken);
+    public void ConsumeRollbackAttempt(string operationId, CancellationToken cancellationToken = default) => WriteTransition(operationId, "ACTIVATION_FAILED", "rollback-attempt.json", "ROLLBACK_ATTEMPT", cancellationToken);
 
-    public void RecordManualIntervention(string operationId)
+    public void RecordManualIntervention(string operationId, CancellationToken cancellationToken = default)
     {
-        var state = GetOperationState(operationId);
+        var state = GetOperationState(operationId, cancellationToken);
         // The malformed canonical plan itself is the non-overwritable manual
         // evidence. A plan-bound marker cannot safely be written without a
         // valid canonical plan, so leave the consumed file intact.
         if (state == "CANONICAL_PLAN_INTERRUPTED_OR_TAMPERED") return;
-        var plan = ReadCanonicalPlan(operationId);
+        var plan = ReadCanonicalPlan(operationId, cancellationToken);
         if (state is "NEVER_INITIALIZED" or "ACTIVE_ACCEPTED" or "ROLLED_BACK" or "MANUAL_INTERVENTION_REQUIRED")
             throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
         var directory = OperationDirectory(operationId);
         if (!Directory.Exists(directory))
         {
             if (!File.Exists(ClaimPath(operationId))) throw new AuthorityException("ROTATION_INITIALIZATION_CLAIM_MISSING");
+            cancellationToken.ThrowIfCancellationRequested();
             Directory.CreateDirectory(directory);
         }
-        WriteRecord(Path.Combine(directory, "manual-intervention.json"), plan, "MANUAL_INTERVENTION");
+        WriteRecord(Path.Combine(directory, "manual-intervention.json"), plan, "MANUAL_INTERVENTION", cancellationToken);
     }
 
-    public void ConfirmCandidate(string operationId)
+    public void ConfirmCandidate(string operationId, CancellationToken cancellationToken = default)
     {
-        var plan = ReadCanonicalPlan(operationId);
-        if (GetOperationState(operationId) != "ACTIVATION_ATTEMPT_CONSUMED") throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
-        if (!_validator.ValidateCandidateAcceptance(plan)) throw new AuthorityException("CANDIDATE_RUNTIME_ACCEPTANCE_REJECTED");
-        WriteAcceptance(Path.Combine(OperationDirectory(operationId), "candidate-acceptance.json"), plan, "Candidate");
-        WriteRecord(Path.Combine(OperationDirectory(operationId), "activation-accepted.json"), plan, "ACTIVATION_ACCEPTED");
+        var plan = ReadCanonicalPlan(operationId, cancellationToken);
+        if (GetOperationState(operationId, cancellationToken) != "ACTIVATION_ATTEMPT_CONSUMED") throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
+        if (!_validator.ValidateCandidateAcceptance(plan, cancellationToken)) throw new AuthorityException("CANDIDATE_RUNTIME_ACCEPTANCE_REJECTED");
+        cancellationToken.ThrowIfCancellationRequested();
+        WriteAcceptance(Path.Combine(OperationDirectory(operationId), "candidate-acceptance.json"), plan, "Candidate", cancellationToken);
+        WriteRecord(Path.Combine(OperationDirectory(operationId), "activation-accepted.json"), plan, "ACTIVATION_ACCEPTED", cancellationToken);
     }
 
-    public void ConfirmRollback(string operationId)
+    public void ConfirmRollback(string operationId, CancellationToken cancellationToken = default)
     {
-        var plan = ReadCanonicalPlan(operationId);
-        if (GetOperationState(operationId) != "ROLLBACK_ATTEMPT_CONSUMED") throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
-        if (!_validator.ValidateRollbackBaseline(plan)) throw new AuthorityException("ROLLBACK_RUNTIME_ACCEPTANCE_REJECTED");
-        WriteAcceptance(Path.Combine(OperationDirectory(operationId), "rollback-acceptance.json"), plan, "Rollback");
-        WriteRecord(Path.Combine(OperationDirectory(operationId), "rollback-accepted.json"), plan, "ROLLBACK_ACCEPTED");
+        var plan = ReadCanonicalPlan(operationId, cancellationToken);
+        if (GetOperationState(operationId, cancellationToken) != "ROLLBACK_ATTEMPT_CONSUMED") throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
+        if (!_validator.ValidateRollbackBaseline(plan, cancellationToken)) throw new AuthorityException("ROLLBACK_RUNTIME_ACCEPTANCE_REJECTED");
+        cancellationToken.ThrowIfCancellationRequested();
+        WriteAcceptance(Path.Combine(OperationDirectory(operationId), "rollback-acceptance.json"), plan, "Rollback", cancellationToken);
+        WriteRecord(Path.Combine(OperationDirectory(operationId), "rollback-accepted.json"), plan, "ROLLBACK_ACCEPTED", cancellationToken);
     }
 
-    private void WriteTransition(string operationId, string expectedState, string filename, string transition)
+    private void WriteTransition(string operationId, string expectedState, string filename, string transition, CancellationToken cancellationToken)
     {
-        var plan = ReadCanonicalPlan(operationId);
-        if (GetOperationState(operationId) != expectedState) throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
-        WriteRecord(Path.Combine(OperationDirectory(operationId), filename), plan, transition);
+        var plan = ReadCanonicalPlan(operationId, cancellationToken);
+        if (GetOperationState(operationId, cancellationToken) != expectedState) throw new AuthorityException("ROTATION_OPERATION_TRANSITION_INVALID");
+        WriteRecord(Path.Combine(OperationDirectory(operationId), filename), plan, transition, cancellationToken);
     }
 
-    private static void WriteRecord(string path, CanonicalPlan plan, string transition) =>
-        WriteCreateNew(path, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { schemaVersion = 1, operationId = plan.OperationId, planIdentity = plan.Identity, transition, createdAtUtc = DateTime.UtcNow.ToString("O") })), "ROTATION_OPERATION_RECORD_WRITE_FAILED");
+    private static void WriteRecord(string path, CanonicalPlan plan, string transition, CancellationToken cancellationToken) =>
+        WriteCreateNew(path, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { schemaVersion = 1, operationId = plan.OperationId, planIdentity = plan.Identity, transition, createdAtUtc = DateTime.UtcNow.ToString("O") })), "ROTATION_OPERATION_RECORD_WRITE_FAILED", cancellationToken);
 
-    private static void WriteAcceptance(string path, CanonicalPlan plan, string mode)
+    private static void WriteAcceptance(string path, CanonicalPlan plan, string mode, CancellationToken cancellationToken)
     {
         var rollback = mode == "Rollback";
         var node = new JsonObject
@@ -519,23 +549,33 @@ internal sealed class AuthorityStore
             ["expectedWorkerImageId"] = rollback ? CanonicalPlan.ReadRollbackString(plan.Utf8, "WorkerImageId") : CanonicalPlan.ReadString(plan.Utf8, "workerImageId"),
             ["acceptanceResult"] = "PASS", ["createdAtUtc"] = DateTime.UtcNow.ToString("O")
         };
-        WriteCreateNew(path, Encoding.UTF8.GetBytes(node.ToJsonString()), "ROTATION_ACCEPTANCE_RECORD_WRITE_FAILED");
+        WriteCreateNew(path, Encoding.UTF8.GetBytes(node.ToJsonString()), "ROTATION_ACCEPTANCE_RECORD_WRITE_FAILED", cancellationToken);
     }
 
-    private CanonicalPlan ReadCanonicalPlan(string operationId)
+    private CanonicalPlan ReadCanonicalPlan(string operationId, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!OperationIdPattern.IsMatch(operationId)) throw new AuthorityException("IPC_OPERATION_ID_INVALID");
         var path = PlanPath(operationId);
         if (!File.Exists(path)) throw new AuthorityException("CANONICAL_PLAN_MISSING");
-        try { return CanonicalPlan.Parse(operationId, File.ReadAllBytes(path)); }
-        catch (IOException) { throw new AuthorityException("CANONICAL_PLAN_INVALID"); }
-    }
-
-    private bool IsValidClaim(string path, CanonicalPlan plan)
-    {
         try
         {
             var bytes = File.ReadAllBytes(path);
+            cancellationToken.ThrowIfCancellationRequested();
+            var plan = CanonicalPlan.Parse(operationId, bytes);
+            cancellationToken.ThrowIfCancellationRequested();
+            return plan;
+        }
+        catch (IOException) { throw new AuthorityException("CANONICAL_PLAN_INVALID"); }
+    }
+
+    private bool IsValidClaim(string path, CanonicalPlan plan, CancellationToken cancellationToken)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var bytes = File.ReadAllBytes(path);
+            cancellationToken.ThrowIfCancellationRequested();
             using var document = JsonDocument.Parse(bytes);
             AuthorityRequest.AssertNoDuplicateProperties(document.RootElement, "ROTATION_INITIALIZATION_CLAIM_INVALID");
             var root = document.RootElement;
@@ -546,14 +586,16 @@ internal sealed class AuthorityStore
                    root.GetProperty("transition").GetString() == "INITIALIZATION_CLAIMED" &&
                    root.GetProperty("createdAtUtc").ValueKind == JsonValueKind.String;
         }
+        catch (OperationCanceledException) { throw; }
         catch
         {
             return false;
         }
     }
 
-    private static string ReadOperationState(string directory, CanonicalPlan plan)
+    private static string ReadOperationState(string directory, CanonicalPlan plan, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var expected = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["operation-created.json"] = "OPERATION_CREATED", ["activation-attempt.json"] = "ACTIVATION_ATTEMPT",
@@ -567,6 +609,7 @@ internal sealed class AuthorityStore
         string? manualMarker = null;
         foreach (var file in files)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (Directory.Exists(file) || (File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new AuthorityException("ROTATION_OPERATION_RECORD_INVALID");
             var name = Path.GetFileName(file);
             if (!names.Add(name)) throw new AuthorityException("ROTATION_OPERATION_RECORD_INVALID");
@@ -589,6 +632,7 @@ internal sealed class AuthorityStore
         }
         foreach (var file in files)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var name = Path.GetFileName(file);
             if (name is "candidate-acceptance.json" or "rollback-acceptance.json") ValidateAcceptanceRecord(file, plan, name == "candidate-acceptance.json" ? "Candidate" : "Rollback");
             else if (!expected.TryGetValue(name, out var transition)) throw new AuthorityException("ROTATION_OPERATION_RECORD_INVALID");
@@ -645,9 +689,10 @@ internal sealed class AuthorityStore
         var parent = Path.GetDirectoryName(_root);
         if (_enforceProvisionedAcl && (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent))) throw new AuthorityException("AUTHORITY_STORE_PARENT_UNAVAILABLE");
         if (_enforceProvisionedAcl) AuthorityStoreSecurity.AssertAuthorityStoreParentDescriptor(parent!, authoritySid!, requesterSid!);
-        foreach (var path in new[] { _root, Path.Combine(_root, "plans"), Path.Combine(_root, "initialization-claims"), Path.Combine(_root, "operations") })
+        foreach (var path in new[] { _root, Path.Combine(_root, "plans"), Path.Combine(_root, "initialization-claims"), Path.Combine(_root, "operations"), Path.Combine(_root, "docker-cli") })
         {
             if (!Directory.Exists(path)) throw new AuthorityException("AUTHORITY_STORE_UNAVAILABLE");
+            AuthorityPathSecurity.AssertNoReparseComponents(path);
             if (_enforceProvisionedAcl) AuthorityStoreSecurity.AssertProvisionedDescriptor(path, authoritySid!, requesterSid!);
         }
     }
@@ -668,7 +713,7 @@ internal sealed class AuthorityStore
         // Builtin Administrators), or that can rewrite the authority parent
         // ACL/take ownership, is rejected before it can use this service.
         var boundaryDescriptors = new List<DirectorySecurity> { parentDescriptor, descriptor };
-        foreach (var child in new[] { "plans", "initialization-claims", "operations" })
+        foreach (var child in new[] { "plans", "initialization-claims", "operations", "docker-cli" })
         {
             var childPath = Path.Combine(_root, child);
             if (!Directory.Exists(childPath)) return false;
@@ -695,83 +740,326 @@ internal sealed class AuthorityStore
         return result;
     }
 
-    private static void WriteCreateNew(string path, byte[] bytes, string code)
+    private static void WriteCreateNew(string path, byte[] bytes, string code, CancellationToken cancellationToken, Action? afterCreateForSelfTest = null)
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
+            afterCreateForSelfTest?.Invoke();
+            // The request token is the admission gate for this atomic,
+            // create-new transition. Once the transition starts, complete the
+            // synchronous write and flush instead of turning cancellation into
+            // an authority-owned torn record. Subsequent related transitions
+            // independently re-check the same token before they begin.
             stream.Write(bytes, 0, bytes.Length);
             stream.Flush(flushToDisk: true);
         }
+        catch (OperationCanceledException) { throw; }
         catch (IOException)
         {
             throw new AuthorityException(code);
         }
     }
+
+    internal static bool CancellationAfterCreateLeavesCompleteRecordForSelfTest(string path)
+    {
+        var bytes = Encoding.UTF8.GetBytes("complete-authority-record");
+        using var cancellation = new CancellationTokenSource();
+        WriteCreateNew(path, bytes, "SELF_TEST_WRITE_FAILED", cancellation.Token, cancellation.Cancel);
+        var actual = File.ReadAllBytes(path);
+        return actual.Length > 0 && actual.AsSpan().SequenceEqual(bytes);
+    }
 }
 
 internal interface IRuntimeValidator
 {
-    bool ValidateRollbackBaseline(CanonicalPlan plan);
-    bool ValidateCandidateAcceptance(CanonicalPlan plan);
+    bool ValidateRollbackBaseline(CanonicalPlan plan, CancellationToken cancellationToken);
+    bool ValidateCandidateAcceptance(CanonicalPlan plan, CancellationToken cancellationToken);
 }
 
 internal interface IProvenanceValidator
 {
-    bool ValidateCandidateProvenance(CanonicalPlan plan);
+    bool ValidateCandidateProvenance(CanonicalPlan plan, CancellationToken cancellationToken);
 }
 
 internal interface IRecoveryClassifier
 {
-    string Classify(CanonicalPlan plan, string operationState);
+    string Classify(CanonicalPlan plan, string operationState, CancellationToken cancellationToken);
 }
 
 internal sealed class StaticRecoveryClassifier(string result) : IRecoveryClassifier
 {
-    public string Classify(CanonicalPlan plan, string operationState) => result;
+    public string Classify(CanonicalPlan plan, string operationState, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
+    }
 }
 
 internal sealed class StaticProvenanceValidator(bool result) : IProvenanceValidator
 {
-    public bool ValidateCandidateProvenance(CanonicalPlan plan) => result;
+    public bool ValidateCandidateProvenance(CanonicalPlan plan, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
+    }
 }
 
 internal sealed class FailClosedRuntimeValidator : IRuntimeValidator
 {
-    public bool ValidateRollbackBaseline(CanonicalPlan plan) => false;
-    public bool ValidateCandidateAcceptance(CanonicalPlan plan) => false;
+    public bool ValidateRollbackBaseline(CanonicalPlan plan, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return false;
+    }
+
+    public bool ValidateCandidateAcceptance(CanonicalPlan plan, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return false;
+    }
 }
 
 internal sealed class StaticRuntimeValidator(bool result) : IRuntimeValidator
 {
-    public bool ValidateRollbackBaseline(CanonicalPlan plan) => result;
-    public bool ValidateCandidateAcceptance(CanonicalPlan plan) => result;
+    public bool ValidateRollbackBaseline(CanonicalPlan plan, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
+    }
+
+    public bool ValidateCandidateAcceptance(CanonicalPlan plan, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
+    }
+}
+
+internal readonly record struct AuthorityProcessResult(int ExitCode, string StandardOutput);
+
+internal static class AuthorityProcessRunner
+{
+    internal static AuthorityProcessResult Run(ProcessStartInfo startInfo, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var process = Process.Start(startInfo);
+        if (process is null) throw new AuthorityException("AUTHORITY_PROCESS_START_FAILED");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        try
+        {
+            process.WaitForExitAsync(cancellationToken).GetAwaiter().GetResult();
+            Task.WhenAll(output, error).GetAwaiter().GetResult();
+            cancellationToken.ThrowIfCancellationRequested();
+            return new AuthorityProcessResult(process.ExitCode, output.Result);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                process.WaitForExit();
+                Task.WhenAll(output, error).GetAwaiter().GetResult();
+            }
+            catch { }
+            throw;
+        }
+    }
+}
+
+internal sealed class DeadlineBlockingRuntimeValidator : IRuntimeValidator
+{
+    public bool ValidateRollbackBaseline(CanonicalPlan plan, CancellationToken cancellationToken) => WaitForCancellation(cancellationToken);
+    public bool ValidateCandidateAcceptance(CanonicalPlan plan, CancellationToken cancellationToken) => WaitForCancellation(cancellationToken);
+
+    private static bool WaitForCancellation(CancellationToken cancellationToken)
+    {
+        cancellationToken.WaitHandle.WaitOne();
+        cancellationToken.ThrowIfCancellationRequested();
+        return false;
+    }
+}
+
+internal sealed class DeadlineTestStream(byte[] input, bool blockAfterInput) : Stream
+{
+    private readonly MemoryStream _written = new();
+    private int _position;
+
+    internal bool WasDisposed { get; private set; }
+    internal byte[] Written => _written.ToArray();
+
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => true;
+    public override long Length => throw new NotSupportedException();
+    public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_position < input.Length)
+        {
+            var count = Math.Min(buffer.Length, input.Length - _position);
+            input.AsMemory(_position, count).CopyTo(buffer);
+            _position += count;
+            return count;
+        }
+        if (blockAfterInput) await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+        return 0;
+    }
+
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _written.Write(buffer.Span);
+        return ValueTask.CompletedTask;
+    }
+
+    public override Task FlushAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        WasDisposed = true;
+        if (disposing) _written.Dispose();
+        base.Dispose(disposing);
+    }
+
+    public override void Flush() { }
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 }
 
 internal static class AuthorityServer
 {
-    public static async Task<byte[]> HandleAsync(NamedPipeServerStream pipe, AuthorityStore store, CancellationToken cancellationToken)
+    internal static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
+
+    public static Task<byte[]> HandleAsync(NamedPipeServerStream pipe, AuthorityStore store, CancellationToken cancellationToken) =>
+        HandleAsync(pipe, store, cancellationToken, cancellationToken);
+
+    internal static Task<byte[]> HandleAsync(NamedPipeServerStream pipe, AuthorityStore store, CancellationToken requestCancellationToken, CancellationToken serviceCancellationToken) =>
+        HandleWithAuthenticationAsync(pipe, store, () => GetAuthenticatedClient(pipe), requestCancellationToken, serviceCancellationToken);
+
+    internal static async Task<AuthorityConnectionResult> ServeConnectedAsync(
+        Stream connection,
+        AuthorityStore store,
+        Func<AuthenticatedClient> authenticate,
+        TimeSpan requestDeadline,
+        CancellationToken serviceCancellationToken)
     {
         try
         {
-            var caller = GetAuthenticatedClient(pipe);
+            using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(serviceCancellationToken);
+            requestCancellation.CancelAfter(requestDeadline);
+            try
+            {
+                var response = await HandleWithAuthenticationAsync(connection, store, authenticate, requestCancellation.Token, serviceCancellationToken).ConfigureAwait(false);
+                requestCancellation.Token.ThrowIfCancellationRequested();
+                await WriteFrameAsync(connection, response, requestCancellation.Token).ConfigureAwait(false);
+                await connection.FlushAsync(requestCancellation.Token).ConfigureAwait(false);
+                return AuthorityConnectionResult.Completed;
+            }
+            catch (OperationCanceledException) when (serviceCancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                return AuthorityConnectionResult.TimedOut;
+            }
+            catch (IOException)
+            {
+                return requestCancellation.IsCancellationRequested ? AuthorityConnectionResult.TimedOut : AuthorityConnectionResult.ClientDisconnected;
+            }
+            catch (ObjectDisposedException)
+            {
+                return requestCancellation.IsCancellationRequested ? AuthorityConnectionResult.TimedOut : AuthorityConnectionResult.ClientDisconnected;
+            }
+        }
+        finally
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    internal static Task<AuthorityConnectionResult> ServeConnectedForTestAsync(
+        Stream connection,
+        AuthorityStore store,
+        AuthenticatedClient caller,
+        TimeSpan requestDeadline,
+        CancellationToken serviceCancellationToken) =>
+        ServeConnectedAsync(connection, store, () => caller, requestDeadline, serviceCancellationToken);
+
+    private static async Task<byte[]> HandleWithAuthenticationAsync(
+        Stream pipe,
+        AuthorityStore store,
+        Func<AuthenticatedClient> authenticate,
+        CancellationToken requestCancellationToken,
+        CancellationToken serviceCancellationToken)
+    {
+        try
+        {
+            requestCancellationToken.ThrowIfCancellationRequested();
+            var caller = authenticate();
+            requestCancellationToken.ThrowIfCancellationRequested();
+            return await HandleAuthenticatedAsync(pipe, store, caller, requestCancellationToken, serviceCancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (serviceCancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            return JsonSerializer.SerializeToUtf8Bytes(new { result = "FAIL", errorCode = "IPC_REQUEST_TIMEOUT" });
+        }
+        catch (AuthorityException error)
+        {
+            return JsonSerializer.SerializeToUtf8Bytes(new { result = "FAIL", errorCode = error.Code });
+        }
+        catch
+        {
+            return JsonSerializer.SerializeToUtf8Bytes(new { result = "FAIL", errorCode = "AUTHORITY_REQUEST_FAILED" });
+        }
+    }
+
+    internal static async Task<byte[]> HandleAuthenticatedAsync(Stream pipe, AuthorityStore store, AuthenticatedClient caller, CancellationToken requestCancellationToken, CancellationToken serviceCancellationToken)
+    {
+        try
+        {
+            requestCancellationToken.ThrowIfCancellationRequested();
             if (!store.IsApprovedRequester(caller)) throw new AuthorityException("IPC_CALLER_UNAUTHORIZED");
-            var request = AuthorityRequest.Parse(await ReadFrameAsync(pipe, cancellationToken).ConfigureAwait(false));
+            var request = AuthorityRequest.Parse(await ReadFrameAsync(pipe, requestCancellationToken).ConfigureAwait(false));
+            requestCancellationToken.ThrowIfCancellationRequested();
             object payload = request.Operation switch
             {
-                AuthorityOperation.CreateCanonicalPlan => CreateCanonicalPlan(store, request),
-                AuthorityOperation.InitializeOperation => Initialize(store, request),
-                AuthorityOperation.GetOperationState => new { result = "PASS", state = store.GetOperationState(request.OperationId) },
-                AuthorityOperation.GetRecoveryClassification => new { result = "PASS", state = store.GetOperationState(request.OperationId), classification = store.GetRecoveryClassification(request.OperationId) },
-                AuthorityOperation.ConsumeActivationAttempt => Transition(store, request, static (value, id) => value.ConsumeActivationAttempt(id)),
-                AuthorityOperation.RecordActivationFailure => Transition(store, request, static (value, id) => value.RecordActivationFailure(id)),
-                AuthorityOperation.ConsumeRollbackAttempt => Transition(store, request, static (value, id) => value.ConsumeRollbackAttempt(id)),
-                AuthorityOperation.RecordManualIntervention => Transition(store, request, static (value, id) => value.RecordManualIntervention(id)),
-                AuthorityOperation.ConfirmCandidate => Transition(store, request, static (value, id) => value.ConfirmCandidate(id)),
-                AuthorityOperation.ConfirmRollback => Transition(store, request, static (value, id) => value.ConfirmRollback(id)),
+                AuthorityOperation.CreateCanonicalPlan => CreateCanonicalPlan(store, request, requestCancellationToken),
+                AuthorityOperation.InitializeOperation => Initialize(store, request, requestCancellationToken),
+                AuthorityOperation.GetOperationState => new { result = "PASS", state = store.GetOperationState(request.OperationId, requestCancellationToken) },
+                AuthorityOperation.GetRecoveryClassification => new { result = "PASS", state = store.GetOperationState(request.OperationId, requestCancellationToken), classification = store.GetRecoveryClassification(request.OperationId, requestCancellationToken) },
+                AuthorityOperation.ConsumeActivationAttempt => Transition(store, request, requestCancellationToken, static (value, id, token) => value.ConsumeActivationAttempt(id, token)),
+                AuthorityOperation.RecordActivationFailure => Transition(store, request, requestCancellationToken, static (value, id, token) => value.RecordActivationFailure(id, token)),
+                AuthorityOperation.ConsumeRollbackAttempt => Transition(store, request, requestCancellationToken, static (value, id, token) => value.ConsumeRollbackAttempt(id, token)),
+                AuthorityOperation.RecordManualIntervention => Transition(store, request, requestCancellationToken, static (value, id, token) => value.RecordManualIntervention(id, token)),
+                AuthorityOperation.ConfirmCandidate => Transition(store, request, requestCancellationToken, static (value, id, token) => value.ConfirmCandidate(id, token)),
+                AuthorityOperation.ConfirmRollback => Transition(store, request, requestCancellationToken, static (value, id, token) => value.ConfirmRollback(id, token)),
                 _ => throw new AuthorityException("IPC_OPERATION_INVALID")
             };
+            requestCancellationToken.ThrowIfCancellationRequested();
             return JsonSerializer.SerializeToUtf8Bytes(payload);
+        }
+        catch (OperationCanceledException) when (serviceCancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            return JsonSerializer.SerializeToUtf8Bytes(new { result = "FAIL", errorCode = "IPC_REQUEST_TIMEOUT" });
         }
         catch (AuthorityException error)
         {
@@ -829,24 +1117,32 @@ internal static class AuthorityServer
         }
     }
 
-    private static object CreateCanonicalPlan(AuthorityStore store, AuthorityRequest request)
+    private static object CreateCanonicalPlan(AuthorityStore store, AuthorityRequest request, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var plan = CanonicalPlan.Create(request.OperationId, request.PlanProposal!.Value);
-        store.CreateCanonicalPlan(plan);
+        store.CreateCanonicalPlan(plan, cancellationToken);
         return new { result = "PASS", planIdentity = plan.Identity };
     }
 
-    private static object Initialize(AuthorityStore store, AuthorityRequest request)
+    private static object Initialize(AuthorityStore store, AuthorityRequest request, CancellationToken cancellationToken)
     {
-        store.InitializeOperation(request.OperationId);
+        store.InitializeOperation(request.OperationId, cancellationToken);
         return new { result = "PASS", state = "PREPARED" };
     }
 
-    private static object Transition(AuthorityStore store, AuthorityRequest request, Action<AuthorityStore, string> apply)
+    private static object Transition(AuthorityStore store, AuthorityRequest request, CancellationToken cancellationToken, Action<AuthorityStore, string, CancellationToken> apply)
     {
-        apply(store, request.OperationId);
-        return new { result = "PASS", state = store.GetOperationState(request.OperationId) };
+        apply(store, request.OperationId, cancellationToken);
+        return new { result = "PASS", state = store.GetOperationState(request.OperationId, cancellationToken) };
     }
+}
+
+internal enum AuthorityConnectionResult
+{
+    Completed,
+    TimedOut,
+    ClientDisconnected
 }
 
 internal sealed class AuthorityException(string code) : Exception(code)
@@ -865,6 +1161,12 @@ internal static class AuthoritySelfTest
         {
             var validator = new StaticRuntimeValidator(true);
             var store = AuthorityStore.CreateSynthetic(root, validator);
+            Assert(Directory.Exists(Path.Combine(root, "docker-cli")), "AUTHORITY_DOCKER_CONFIG_BOUNDARY_PRESENT");
+            AuthorityPathSecurity.AssertNoReparseComponents(root);
+            Assert(AuthorityServer.RequestDeadline == TimeSpan.FromSeconds(30), "NAMED_PIPE_REQUEST_DEADLINE_AUTHORITY_OWNED");
+            RunRequestDeadlineTests(root);
+            Assert(AuthorityStore.CancellationAfterCreateLeavesCompleteRecordForSelfTest(Path.Combine(root, "deadline-complete-record.json")), "TIMEOUT_NO_TORN_ZERO_BYTE_RECORD");
+            Assert(AuthenticatedDockerPipeProxy.TrackedForwarderStopsWithRequestForSelfTest(), "DOCKER_PROXY_BACKGROUND_WORK_AFTER_TIMEOUT");
             var descriptor = AuthorityStoreSecurity.CreateExpectedDescriptor(new SecurityIdentifier("S-1-5-80-1-2-3-4-5"), new SecurityIdentifier("S-1-5-21-1-2-3-1001"));
             Assert(AuthorityStoreSecurity.RequesterCannotWrite(descriptor, new SecurityIdentifier("S-1-5-21-1-2-3-1001")), "REQUESTER_STORE_WRITE_BLOCKED");
             Assert(!AuthorityStoreSecurity.RequesterHasDangerousRight(descriptor, new SecurityIdentifier("S-1-5-21-1-2-3-1001"), FileSystemRights.WriteData), "REQUESTER_WRITE_DATA_DENIED");
@@ -882,6 +1184,9 @@ internal static class AuthoritySelfTest
             var requesterOwner = new SecurityIdentifier("S-1-5-21-1-2-3-1001");
             var authorityOwner = new SecurityIdentifier("S-1-5-80-1-2-3-4-5");
             var ownerDescriptor = AuthorityStoreSecurity.CreateExpectedDescriptor(authorityOwner, requesterOwner);
+            ownerDescriptor.SetOwner(authorityOwner);
+            AuthorityStoreSecurity.AssertTrustedPayloadDescriptor(ownerDescriptor, authorityOwner, requesterOwner);
+            Assert(!AuthorityStoreSecurity.RequesterHasDangerousRight(ownerDescriptor, requesterOwner, FileSystemRights.WriteData), "AUTHORITY_PAYLOAD_REQUESTER_WRITE_BLOCKED");
             ownerDescriptor.SetOwner(requesterOwner);
             Assert(AuthorityStoreSecurity.RequesterTokenOwnsBoundary(ownerDescriptor, new[] { requesterOwner.Value }), "REQUESTER_PARENT_OWNER_BLOCKED");
             Assert(AuthorityStoreSecurity.RequesterTokenOwnsBoundary(ownerDescriptor, new[] { requesterOwner.Value }), "REQUESTER_AUTHORITY_ROOT_OWNER_BLOCKED");
@@ -1029,6 +1334,19 @@ internal static class AuthoritySelfTest
             Console.WriteLine("REQUESTER_PARENT_DELETE_CHILD_DENIED PASS");
             Console.WriteLine("REQUESTER_WRITABLE_GROUP_BLOCKED PASS");
             Console.WriteLine("CANONICAL_PLAN_TORN_WRITE_FAIL_CLOSED PASS");
+            Console.WriteLine("AUTHORITY_DOCKER_CONFIG_BOUNDARY_VALIDATED PASS");
+            Console.WriteLine("AUTHORITY_PAYLOAD_TRUST_CHAIN_VALIDATED PASS");
+            Console.WriteLine("NAMED_PIPE_REQUEST_DEADLINE_ENFORCED PASS");
+            Console.WriteLine("IDLE_CLIENT_TIMEOUT PASS");
+            Console.WriteLine("PARTIAL_FRAME_TIMEOUT PASS");
+            Console.WriteLine("PARSED_OPERATION_TIMEOUT PASS");
+            Console.WriteLine("TIMEOUT_DURABLE_STATE_UNCHANGED PASS");
+            Console.WriteLine("TIMEOUT_NO_TORN_ZERO_BYTE_RECORD PASS");
+            Console.WriteLine("PIPE_DISPOSAL_AFTER_TIMEOUT PASS");
+            Console.WriteLine("DOCKER_PROXY_BACKGROUND_WORK_AFTER_TIMEOUT NO");
+            Console.WriteLine("ACCEPT_LOOP_RECOVERY PASS");
+            Console.WriteLine("SUBSEQUENT_VALID_REQUEST PASS");
+            Console.WriteLine("SERVICE_CANCELLATION PASS");
             Console.WriteLine("PIPE_USES_OS_CLIENT_IDENTITY PASS");
             Console.WriteLine("PIPE_PAYLOAD_IDENTITY_IGNORED PASS");
             Console.WriteLine("UNAPPROVED_PIPE_CLIENT_BLOCKED PASS");
@@ -1044,6 +1362,80 @@ internal static class AuthoritySelfTest
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }
+
+    private static void RunRequestDeadlineTests(string root)
+    {
+        var caller = new AuthenticatedClient("S-1-5-21-1-2-3-1001", ["S-1-5-21-1-2-3-1001"]);
+        var testDeadline = TimeSpan.FromMilliseconds(150);
+
+        var idleRoot = Path.Combine(root, "deadline-idle");
+        var idleStore = AuthorityStore.CreateSynthetic(idleRoot, new StaticRuntimeValidator(true));
+        var idleBefore = CountDurableFiles(idleRoot);
+        var idle = new DeadlineTestStream([], blockAfterInput: true);
+        var idleResult = AuthorityServer.ServeConnectedForTestAsync(idle, idleStore, caller, testDeadline, CancellationToken.None).GetAwaiter().GetResult();
+        Assert(idleResult == AuthorityConnectionResult.TimedOut, "IDLE_CLIENT_TIMEOUT");
+        Assert(idle.WasDisposed, "IDLE_CLIENT_CONNECTION_DISPOSED");
+        Assert(CountDurableFiles(idleRoot) == idleBefore, "IDLE_TIMEOUT_DURABLE_STATE_UNCHANGED");
+        AssertValidRequestAfterTimeout(idleStore, caller, new string('1', 32), "IDLE_ACCEPT_LOOP_RECOVERED");
+
+        var partialRoot = Path.Combine(root, "deadline-partial");
+        var partialStore = AuthorityStore.CreateSynthetic(partialRoot, new StaticRuntimeValidator(true));
+        var partialBefore = CountDurableFiles(partialRoot);
+        var partialInput = BitConverter.GetBytes(64).Concat(Encoding.UTF8.GetBytes("{\"")).ToArray();
+        var partial = new DeadlineTestStream(partialInput, blockAfterInput: true);
+        var partialResult = AuthorityServer.ServeConnectedForTestAsync(partial, partialStore, caller, testDeadline, CancellationToken.None).GetAwaiter().GetResult();
+        Assert(partialResult == AuthorityConnectionResult.TimedOut, "PARTIAL_FRAME_TIMEOUT");
+        Assert(partial.WasDisposed, "PARTIAL_FRAME_CONNECTION_DISPOSED");
+        Assert(CountDurableFiles(partialRoot) == partialBefore, "PARTIAL_TIMEOUT_DURABLE_STATE_UNCHANGED");
+        AssertValidRequestAfterTimeout(partialStore, caller, new string('2', 32), "PARTIAL_ACCEPT_LOOP_RECOVERED");
+
+        var parsedRoot = Path.Combine(root, "deadline-parsed");
+        var parsedStore = AuthorityStore.CreateSynthetic(parsedRoot, new DeadlineBlockingRuntimeValidator());
+        var parsedOperation = new string('3', 32);
+        var parsedPlan = CanonicalPlan.Create(parsedOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(parsedOperation))).PlanProposal!.Value);
+        parsedStore.CreateCanonicalPlan(parsedPlan);
+        var parsedBefore = CountDurableFiles(parsedRoot);
+        var parsedRequest = new JsonObject { ["operation"] = "InitializeOperation", ["operationId"] = parsedOperation }.ToJsonString();
+        var parsed = new DeadlineTestStream(CreateFrame(parsedRequest), blockAfterInput: false);
+        var parsedResult = AuthorityServer.ServeConnectedForTestAsync(parsed, parsedStore, caller, testDeadline, CancellationToken.None).GetAwaiter().GetResult();
+        Assert(parsedResult == AuthorityConnectionResult.TimedOut, "PARSED_OPERATION_TIMEOUT");
+        Assert(parsed.WasDisposed, "PARSED_OPERATION_CONNECTION_DISPOSED");
+        Assert(CountDurableFiles(parsedRoot) == parsedBefore, "TIMEOUT_DURABLE_STATE_UNCHANGED");
+        Assert(parsedStore.GetOperationState(parsedOperation) == "NEVER_INITIALIZED", "PARSED_TIMEOUT_NO_INITIALIZATION_CLAIM");
+
+        var cancellationRoot = Path.Combine(root, "deadline-service-cancellation");
+        var cancellationStore = AuthorityStore.CreateSynthetic(cancellationRoot, new StaticRuntimeValidator(true));
+        var cancellationBefore = CountDurableFiles(cancellationRoot);
+        var cancellationStream = new DeadlineTestStream([], blockAfterInput: true);
+        using var serviceCancellation = new CancellationTokenSource();
+        serviceCancellation.CancelAfter(TimeSpan.FromMilliseconds(100));
+        var serviceCancelled = false;
+        try
+        {
+            AuthorityServer.ServeConnectedForTestAsync(cancellationStream, cancellationStore, caller, TimeSpan.FromSeconds(5), serviceCancellation.Token).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException) { serviceCancelled = true; }
+        Assert(serviceCancelled, "SERVICE_CANCELLATION_CLEAN");
+        Assert(cancellationStream.WasDisposed, "SERVICE_CANCELLATION_CONNECTION_DISPOSED");
+        Assert(CountDurableFiles(cancellationRoot) == cancellationBefore, "SERVICE_CANCELLATION_DURABLE_STATE_UNCHANGED");
+    }
+
+    private static void AssertValidRequestAfterTimeout(AuthorityStore store, AuthenticatedClient caller, string operationId, string assertion)
+    {
+        var stream = new DeadlineTestStream(CreateFrame(CreateRequestJson(operationId)), blockAfterInput: false);
+        var result = AuthorityServer.ServeConnectedForTestAsync(stream, store, caller, TimeSpan.FromSeconds(2), CancellationToken.None).GetAwaiter().GetResult();
+        Assert(result == AuthorityConnectionResult.Completed, assertion);
+        Assert(stream.WasDisposed, assertion + "_CONNECTION_DISPOSED");
+        Assert(store.GetOperationState(operationId) == "NEVER_INITIALIZED", assertion + "_REQUEST_SUCCEEDED");
+    }
+
+    private static byte[] CreateFrame(string json)
+    {
+        var payload = Encoding.UTF8.GetBytes(json);
+        return BitConverter.GetBytes(payload.Length).Concat(payload).ToArray();
+    }
+
+    private static int CountDurableFiles(string root) => Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Count();
 
     private static string CreateRequestJson(string operation)
     {

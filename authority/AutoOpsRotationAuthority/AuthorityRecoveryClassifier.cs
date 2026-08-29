@@ -13,15 +13,16 @@ internal sealed class AuthorityRecoveryClassifier(AuthoritySettings settings, st
     };
     private readonly string _secretRoot = settings.SecretRoot;
     private readonly string _planRoot = Path.Combine(storeRoot, "plans");
-    private readonly string _script = GetInstalledClassifierPath();
+    private readonly string _script = AuthorityPathSecurity.RequireTrustedInstalledFile("scripts", "invoke-authority-recovery-classification.ps1", settings.RequesterSid);
 
-    public string Classify(CanonicalPlan plan, string operationState)
+    public string Classify(CanonicalPlan plan, string operationState, CancellationToken cancellationToken)
     {
         try
         {
-            using var dockerProxy = AuthenticatedDockerPipeProxy.StartForAuthority();
+            cancellationToken.ThrowIfCancellationRequested();
+            using var dockerProxy = AuthenticatedDockerPipeProxy.StartForAuthority(cancellationToken);
             var planPath = Path.Combine(_planRoot, plan.OperationId + ".json");
-            if (!File.Exists(planPath) || IsReparsePoint(planPath)) return "MANUAL_INTERVENTION_REQUIRED";
+            if (!File.Exists(planPath)) return "MANUAL_INTERVENTION_REQUIRED";
             var powershell = GetWindowsPowerShellPath();
             var psi = new ProcessStartInfo(powershell)
             {
@@ -38,18 +39,16 @@ internal sealed class AuthorityRecoveryClassifier(AuthoritySettings settings, st
                 "-TargetRoot", _secretRoot, "-OperationId", plan.OperationId,
                 "-AuthorityPlanPath", planPath, "-AuthorityOperationState", operationState
             }) psi.ArgumentList.Add(argument);
-            using var process = Process.Start(psi);
-            if (process is null) return "MANUAL_INTERVENTION_REQUIRED";
-            var output = process.StandardOutput.ReadToEnd();
-            _ = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-            if (process.ExitCode != 0) return "MANUAL_INTERVENTION_REQUIRED";
+            var result = AuthorityProcessRunner.Run(psi, cancellationToken);
+            if (result.ExitCode != 0) return "MANUAL_INTERVENTION_REQUIRED";
+            var output = result.StandardOutput;
             var values = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                 .Where(line => line.StartsWith("RECOVERY_CLASSIFICATION ", StringComparison.Ordinal))
                 .Select(line => line["RECOVERY_CLASSIFICATION ".Length..])
                 .ToArray();
             return values.Length == 1 && AllowedClassifications.Contains(values[0]) ? values[0] : "MANUAL_INTERVENTION_REQUIRED";
         }
+        catch (OperationCanceledException) { throw; }
         catch { return "MANUAL_INTERVENTION_REQUIRED"; }
     }
 
@@ -67,22 +66,12 @@ internal sealed class AuthorityRecoveryClassifier(AuthoritySettings settings, st
         psi.Environment["AUTOOPS_AUTHORITY_DOCKER_ENDPOINT"] = dockerEndpoint;
     }
 
-    private static string GetInstalledClassifierPath()
-    {
-        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "scripts"));
-        var path = Path.GetFullPath(Path.Combine(root, "invoke-authority-recovery-classification.ps1"));
-        if (!Directory.Exists(root) || IsReparsePoint(root) || !path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(path) || IsReparsePoint(path))
-            throw new AuthorityException("AUTHORITY_RECOVERY_PAYLOAD_UNAVAILABLE");
-        return path;
-    }
-
-    private static bool IsReparsePoint(string path) => (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
-
     private static string GetWindowsPowerShellPath()
     {
         var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         var path = Path.Combine(windows, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-        if (string.IsNullOrWhiteSpace(windows) || !File.Exists(path) || IsReparsePoint(path)) throw new AuthorityException("AUTHORITY_POWERSHELL_UNAVAILABLE");
+        if (string.IsNullOrWhiteSpace(windows) || !File.Exists(path)) throw new AuthorityException("AUTHORITY_POWERSHELL_UNAVAILABLE");
+        AuthorityPathSecurity.AssertNoReparseComponents(path);
         return Path.GetFullPath(path);
     }
 }

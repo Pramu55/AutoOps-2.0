@@ -15,18 +15,29 @@ internal sealed class AuthenticatedDockerPipeProxy : IDisposable
 {
     private const string DockerDesktopPipe = "dockerDesktopLinuxEngine";
     private readonly string _pipeName = "AutoOpsRotationAuthorityDocker-" + Guid.NewGuid().ToString("N");
-    private readonly CancellationTokenSource _stopping = new();
+    private readonly CancellationTokenSource _stopping;
     private readonly Task _acceptLoop;
+    private readonly object _forwarderLock = new();
+    private readonly List<Task> _forwarders = [];
 
-    private AuthenticatedDockerPipeProxy()
+    private AuthenticatedDockerPipeProxy(CancellationToken requestCancellationToken, bool startListener = true)
     {
-        var first = CreateListener(firstInstance: true);
-        _acceptLoop = Task.Run(() => AcceptLoopAsync(first));
+        requestCancellationToken.ThrowIfCancellationRequested();
+        _stopping = CancellationTokenSource.CreateLinkedTokenSource(requestCancellationToken);
+        if (startListener)
+        {
+            var first = CreateListener(firstInstance: true);
+            _acceptLoop = Task.Run(() => AcceptLoopAsync(first));
+        }
+        else
+        {
+            _acceptLoop = Task.CompletedTask;
+        }
     }
 
     internal string Endpoint => "npipe:////./pipe/" + _pipeName;
 
-    internal static AuthenticatedDockerPipeProxy StartForAuthority() => new();
+    internal static AuthenticatedDockerPipeProxy StartForAuthority(CancellationToken requestCancellationToken) => new(requestCancellationToken);
 
     private NamedPipeServerStream CreateListener(bool firstInstance)
     {
@@ -52,7 +63,7 @@ internal sealed class AuthenticatedDockerPipeProxy : IDisposable
             while (!_stopping.IsCancellationRequested)
             {
                 await listener.WaitForConnectionAsync(_stopping.Token).ConfigureAwait(false);
-                _ = ForwardAsync(listener);
+                TrackForwarder(ForwardAsync(listener, _stopping.Token));
                 listener = CreateListener(firstInstance: false);
             }
         }
@@ -60,22 +71,59 @@ internal sealed class AuthenticatedDockerPipeProxy : IDisposable
         catch { listener.Dispose(); }
     }
 
-    private static async Task ForwardAsync(NamedPipeServerStream client)
+    private void TrackForwarder(Task forwarder)
+    {
+        lock (_forwarderLock) _forwarders.Add(forwarder);
+        _ = forwarder.ContinueWith(
+            completed =>
+            {
+                lock (_forwarderLock) _forwarders.Remove(completed);
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    internal static bool TrackedForwarderStopsWithRequestForSelfTest()
+    {
+        using var requestCancellation = new CancellationTokenSource();
+        var proxy = new AuthenticatedDockerPipeProxy(requestCancellation.Token, startListener: false);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var forwarder = Task.Run(async () =>
+        {
+            entered.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, proxy._stopping.Token).ConfigureAwait(false);
+        });
+        proxy.TrackForwarder(forwarder);
+        if (!entered.Task.Wait(TimeSpan.FromSeconds(5)))
+        {
+            proxy.Dispose();
+            return false;
+        }
+
+        requestCancellation.Cancel();
+        proxy.Dispose();
+        return forwarder.IsCompleted;
+    }
+
+    private static async Task ForwardAsync(NamedPipeServerStream client, CancellationToken cancellationToken)
     {
         using (client)
         using (var backend = new NamedPipeClientStream(".", DockerDesktopPipe, PipeDirection.InOut, PipeOptions.Asynchronous))
         {
             try
             {
-                await backend.ConnectAsync(5000).ConfigureAwait(false);
+                await backend.ConnectAsync(5000, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!DockerPipeServerAuthenticator.Authenticate(backend)) return;
-                using var cancelled = new CancellationTokenSource();
+                using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 var upstream = client.CopyToAsync(backend, 81920, cancelled.Token);
                 var downstream = backend.CopyToAsync(client, 81920, cancelled.Token);
                 await Task.WhenAny(upstream, downstream).ConfigureAwait(false);
                 cancelled.Cancel();
                 try { await Task.WhenAll(upstream, downstream).ConfigureAwait(false); } catch (OperationCanceledException) { }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
             catch { }
         }
     }
@@ -83,7 +131,10 @@ internal sealed class AuthenticatedDockerPipeProxy : IDisposable
     public void Dispose()
     {
         _stopping.Cancel();
-        try { _acceptLoop.Wait(TimeSpan.FromSeconds(2)); } catch { }
+        try { _acceptLoop.GetAwaiter().GetResult(); } catch { }
+        Task[] forwarders;
+        lock (_forwarderLock) forwarders = _forwarders.ToArray();
+        try { Task.WhenAll(forwarders).GetAwaiter().GetResult(); } catch { }
         _stopping.Dispose();
     }
 }
