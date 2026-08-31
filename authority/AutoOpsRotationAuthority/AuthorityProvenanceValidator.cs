@@ -11,17 +11,26 @@ internal sealed class AuthorityProvenanceValidator : IProvenanceValidator
     private const string Builder = "desktop-linux";
     private readonly string _script;
     private readonly string _repositoryRoot;
+    private readonly string _dockerConfigRoot;
+    private readonly string _requesterSid;
 
-    internal AuthorityProvenanceValidator(string requesterSid)
+    internal AuthorityProvenanceValidator(AuthoritySettings settings)
     {
-        _script = AuthorityPathSecurity.RequireTrustedInstalledFile("scripts", "validate-file-mode-image-provenance.ps1", requesterSid);
-        _repositoryRoot = AuthorityPathSecurity.RequireTrustedInstalledDirectory("provenance-repository", requesterSid);
+        _script = AuthorityPathSecurity.RequireTrustedInstalledFile("scripts", "validate-file-mode-image-provenance.ps1", settings.RequesterSid);
+        _repositoryRoot = AuthorityPathSecurity.RequireTrustedInstalledDirectory("provenance-repository", settings.RequesterSid);
+        _dockerConfigRoot = Path.GetFullPath(settings.DockerCliConfigDirectory);
+        _requesterSid = settings.RequesterSid;
     }
 
     public bool ValidateCandidateProvenance(CanonicalPlan plan, CancellationToken cancellationToken)
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            // Buildx metadata is authority only after every existing node in
+            // the protected Docker CLI tree has been revalidated. Startup
+            // validation alone would leave a time-of-use gap.
+            AuthorityPathSecurity.AssertTrustedDirectoryTree(_dockerConfigRoot, _requesterSid);
             cancellationToken.ThrowIfCancellationRequested();
             using var dockerProxy = AuthenticatedDockerPipeProxy.StartForAuthority(cancellationToken);
             var powershell = GetWindowsPowerShellPath();

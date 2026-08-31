@@ -3,6 +3,8 @@ using System.Security.Principal;
 
 namespace AutoOpsRotationAuthority;
 
+internal sealed record AuthorityPathEntry(bool IsDirectory, bool IsReparse, FileSystemSecurity Descriptor);
+
 internal static class AuthorityPathSecurity
 {
     internal static void AssertNoReparseComponents(string path)
@@ -63,38 +65,126 @@ internal static class AuthorityPathSecurity
 
     private static void ValidatePathChain(string trustedRoot, string path, string requesterSid)
     {
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        if (string.IsNullOrWhiteSpace(programFiles))
+            throw new AuthorityException("AUTHORITY_PAYLOAD_INSTALL_ROOT_UNTRUSTED");
+        ValidatePathChainCore(
+            trustedRoot,
+            path,
+            Path.GetFullPath(programFiles),
+            new SecurityIdentifier(requesterSid),
+            WindowsIdentity.GetCurrent().User ?? throw new AuthorityException("AUTHORITY_SERVICE_IDENTITY_UNAVAILABLE"),
+            ReadEntry);
+    }
+
+    internal static void ValidateInstalledPathChainForSelfTest(
+        string trustedRoot,
+        string path,
+        string programFiles,
+        SecurityIdentifier requesterSid,
+        SecurityIdentifier authoritySid,
+        Func<string, AuthorityPathEntry> readEntry) =>
+        ValidatePathChainCore(trustedRoot, path, programFiles, requesterSid, authoritySid, readEntry);
+
+    private static void ValidatePathChainCore(
+        string trustedRoot,
+        string path,
+        string programFiles,
+        SecurityIdentifier requesterSid,
+        SecurityIdentifier authoritySid,
+        Func<string, AuthorityPathEntry> readEntry)
+    {
         var root = Path.GetFullPath(trustedRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var canonical = Path.GetFullPath(path);
-        if (!canonical.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(canonical, root, StringComparison.OrdinalIgnoreCase))
+        var boundary = Path.GetFullPath(programFiles).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (!IsSameOrChild(canonical, root) || !IsSameOrChild(root, boundary))
             throw new AuthorityException("AUTHORITY_PAYLOAD_PATH_INVALID");
 
-        var authoritySid = WindowsIdentity.GetCurrent().User ?? throw new AuthorityException("AUTHORITY_SERVICE_IDENTITY_UNAVAILABLE");
         var current = canonical;
+        var reachedBoundary = false;
         while (!string.IsNullOrWhiteSpace(current))
         {
-            if (!File.Exists(current) && !Directory.Exists(current))
-                throw new AuthorityException("AUTHORITY_PAYLOAD_UNAVAILABLE");
-            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+            var entry = readEntry(current);
+            if (entry.IsReparse)
                 throw new AuthorityException("AUTHORITY_PAYLOAD_REPARSE_BLOCKED");
 
-            // ACL/owner validation is required from the protected install
-            // root through the payload leaf.  Reparse validation continues
-            // above that root so a junctioned parent cannot redirect it.
-            var withinTrustedRoot = string.Equals(current, root, StringComparison.OrdinalIgnoreCase) ||
-                current.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-            if (withinTrustedRoot)
-            {
-                FileSystemSecurity descriptor = Directory.Exists(current)
-                    ? new DirectoryInfo(current).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner)
-                    : new FileInfo(current).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
-                AuthorityStoreSecurity.AssertTrustedPayloadDescriptor(descriptor, authoritySid, new SecurityIdentifier(requesterSid));
-            }
+            if (IsSameOrChild(current, root))
+                AuthorityStoreSecurity.AssertTrustedPayloadDescriptor(entry.Descriptor, authoritySid, requesterSid);
+            else
+                AuthorityStoreSecurity.AssertTrustedWindowsAncestorDescriptor(entry.Descriptor, requesterSid);
 
-            if (string.Equals(current, root, StringComparison.OrdinalIgnoreCase)) break;
+            if (string.Equals(current, boundary, StringComparison.OrdinalIgnoreCase))
+            {
+                reachedBoundary = true;
+                break;
+            }
             var parent = Path.GetDirectoryName(current);
             if (string.IsNullOrWhiteSpace(parent) || string.Equals(parent, current, StringComparison.OrdinalIgnoreCase)) break;
             current = parent;
         }
+        if (!reachedBoundary) throw new AuthorityException("AUTHORITY_PAYLOAD_ANCESTOR_CHAIN_INVALID");
     }
+
+    internal static void AssertTrustedDirectoryTree(string root, string requesterSid)
+    {
+        var authoritySid = WindowsIdentity.GetCurrent().User ?? throw new AuthorityException("AUTHORITY_SERVICE_IDENTITY_UNAVAILABLE");
+        AssertTrustedDirectoryTreeCore(
+            root,
+            authoritySid,
+            new SecurityIdentifier(requesterSid),
+            ReadEntry,
+            static path => Directory.EnumerateFileSystemEntries(path, "*", SearchOption.TopDirectoryOnly));
+    }
+
+    internal static void AssertTrustedDirectoryTreeForSelfTest(
+        string root,
+        SecurityIdentifier authoritySid,
+        SecurityIdentifier requesterSid,
+        Func<string, AuthorityPathEntry> readEntry,
+        Func<string, IEnumerable<string>> enumerateChildren) =>
+        AssertTrustedDirectoryTreeCore(root, authoritySid, requesterSid, readEntry, enumerateChildren);
+
+    private static void AssertTrustedDirectoryTreeCore(
+        string root,
+        SecurityIdentifier authoritySid,
+        SecurityIdentifier requesterSid,
+        Func<string, AuthorityPathEntry> readEntry,
+        Func<string, IEnumerable<string>> enumerateChildren)
+    {
+        var canonicalRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var pending = new Stack<string>();
+        pending.Push(canonicalRoot);
+        while (pending.Count > 0)
+        {
+            var current = Path.GetFullPath(pending.Pop());
+            if (!IsSameOrChild(current, canonicalRoot))
+                throw new AuthorityException("AUTHORITY_DOCKER_CONFIG_PATH_INVALID");
+            var entry = readEntry(current);
+            if (entry.IsReparse) throw new AuthorityException("AUTHORITY_DOCKER_CONFIG_REPARSE_BLOCKED");
+            AuthorityStoreSecurity.AssertTrustedPayloadDescriptor(entry.Descriptor, authoritySid, requesterSid);
+            if (!entry.IsDirectory) continue;
+            foreach (var child in enumerateChildren(current)) pending.Push(child);
+        }
+    }
+
+    private static AuthorityPathEntry ReadEntry(string path)
+    {
+        var isDirectory = Directory.Exists(path);
+        if (!isDirectory && !File.Exists(path)) throw new AuthorityException("AUTHORITY_PAYLOAD_UNAVAILABLE");
+        var attributes = File.GetAttributes(path);
+        // Reject the link itself before opening its security descriptor.  ACL
+        // access on a junction/symlink path may resolve the target, which
+        // would defeat the no-reparse trust walk even though the caller later
+        // observes the ReparsePoint flag.
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+            throw new AuthorityException("AUTHORITY_PATH_REPARSE_BLOCKED");
+        var descriptor = isDirectory
+            ? (FileSystemSecurity)new DirectoryInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner)
+            : new FileInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+        return new AuthorityPathEntry(isDirectory, false, descriptor);
+    }
+
+    private static bool IsSameOrChild(string path, string root) =>
+        string.Equals(path, root, StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 }

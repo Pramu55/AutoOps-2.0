@@ -12,6 +12,8 @@ internal sealed class AuthorityRuntimeValidator(AuthoritySettings settings, stri
     private readonly string _secretRoot = settings.SecretRoot;
     private readonly string _planRoot = Path.Combine(storeRoot, "plans");
     private readonly string _script = AuthorityPathSecurity.RequireTrustedInstalledFile("scripts", "validate-secret-rotation-runtime.ps1", settings.RequesterSid);
+    private readonly string _dockerConfigRoot = Path.GetFullPath(settings.DockerCliConfigDirectory);
+    private readonly string _requesterSid = settings.RequesterSid;
 
     public bool ValidateRollbackBaseline(CanonicalPlan plan, CancellationToken cancellationToken) => Validate(plan, "Rollback", cancellationToken);
     public bool ValidateCandidateAcceptance(CanonicalPlan plan, CancellationToken cancellationToken) => Validate(plan, "Candidate", cancellationToken);
@@ -20,6 +22,8 @@ internal sealed class AuthorityRuntimeValidator(AuthoritySettings settings, stri
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            AuthorityPathSecurity.AssertTrustedDirectoryTree(_dockerConfigRoot, _requesterSid);
             cancellationToken.ThrowIfCancellationRequested();
             using var dockerProxy = AuthenticatedDockerPipeProxy.StartForAuthority(cancellationToken);
             var powershell = GetWindowsPowerShellPath();

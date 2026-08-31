@@ -5,6 +5,8 @@ namespace AutoOpsRotationAuthority;
 
 internal static class AuthorityStoreSecurity
 {
+    private static readonly SecurityIdentifier TrustedInstallerSid = new("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464");
+
     private const FileSystemRights RequesterWriteRights =
         FileSystemRights.WriteData | FileSystemRights.AppendData | FileSystemRights.WriteAttributes |
         FileSystemRights.WriteExtendedAttributes | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles |
@@ -69,6 +71,15 @@ internal static class AuthorityStoreSecurity
         return owner == authoritySid || owner == administratorsSid || owner == systemSid;
     }
 
+    internal static bool HasTrustedWindowsAncestorOwner(FileSystemSecurity security)
+    {
+        var owner = security.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+        if (owner is null) return false;
+        var administratorsSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var systemSid = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        return owner == administratorsSid || owner == systemSid || owner == TrustedInstallerSid;
+    }
+
     // Installed authority payloads are executable trust boundaries.  Every
     // component in the installed chain is checked against the same owner and
     // dangerous-rights policy as the authority store.  A merely different
@@ -94,6 +105,39 @@ internal static class AuthorityStoreSecurity
 
         if (RequesterHasDangerousRight(security, requesterSid, RequesterWriteRights))
             throw new AuthorityException("AUTHORITY_PAYLOAD_REQUESTER_WRITABLE");
+    }
+
+    // Program Files and its product parent are Windows-managed ancestors, not
+    // authority-owned leaves. They may legitimately be owned by
+    // TrustedInstaller, but no untrusted principal may have effective rights
+    // to replace the AutoOps subtree or rewrite its security descriptor.
+    internal static void AssertTrustedWindowsAncestorDescriptor(FileSystemSecurity security, SecurityIdentifier requesterSid)
+    {
+        if (!HasTrustedWindowsAncestorOwner(security))
+            throw new AuthorityException("AUTHORITY_PAYLOAD_ANCESTOR_OWNER_UNTRUSTED");
+
+        var trusted = new HashSet<string>(StringComparer.Ordinal)
+        {
+            new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null).Value,
+            new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null).Value,
+            TrustedInstallerSid.Value
+        };
+        foreach (var rule in security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+                     .OfType<FileSystemAccessRule>())
+        {
+            // Inherit-only ACEs do not grant replacement authority over this
+            // ancestor itself. Creation on the ancestor is still evaluated by
+            // the effective non-inherit-only ACEs below.
+            if (rule.AccessControlType != AccessControlType.Allow ||
+                (rule.PropagationFlags & PropagationFlags.InheritOnly) != 0 ||
+                (rule.FileSystemRights & RequesterWriteRights) == 0)
+                continue;
+            if (!trusted.Contains(rule.IdentityReference.Value))
+                throw new AuthorityException("AUTHORITY_PAYLOAD_ANCESTOR_ACL_INVALID");
+        }
+
+        if (RequesterHasDangerousRight(security, requesterSid, RequesterWriteRights))
+            throw new AuthorityException("AUTHORITY_PAYLOAD_ANCESTOR_REQUESTER_WRITABLE");
     }
 
     internal static void AssertProvisionedDescriptor(string path, SecurityIdentifier authoritySid, SecurityIdentifier requesterSid)

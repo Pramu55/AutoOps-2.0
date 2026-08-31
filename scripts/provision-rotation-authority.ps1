@@ -33,6 +33,7 @@ $contract = [ordered]@{
   StoreRoot = $storeRoot
   AuthorityParentRoot = $authorityParentRoot
   CanonicalPlanRoot = Join-Path $storeRoot 'plans'
+  CandidateGenerationClaimRoot = Join-Path $storeRoot 'candidate-generation-claims'
   InitializationClaimRoot = Join-Path $storeRoot 'initialization-claims'
   OperationRoot = Join-Path $storeRoot 'operations'
   RequesterSid = $RequesterSid

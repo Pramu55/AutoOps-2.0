@@ -14,11 +14,15 @@ internal sealed class AuthorityRecoveryClassifier(AuthoritySettings settings, st
     private readonly string _secretRoot = settings.SecretRoot;
     private readonly string _planRoot = Path.Combine(storeRoot, "plans");
     private readonly string _script = AuthorityPathSecurity.RequireTrustedInstalledFile("scripts", "invoke-authority-recovery-classification.ps1", settings.RequesterSid);
+    private readonly string _dockerConfigRoot = Path.GetFullPath(settings.DockerCliConfigDirectory);
+    private readonly string _requesterSid = settings.RequesterSid;
 
     public string Classify(CanonicalPlan plan, string operationState, CancellationToken cancellationToken)
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            AuthorityPathSecurity.AssertTrustedDirectoryTree(_dockerConfigRoot, _requesterSid);
             cancellationToken.ThrowIfCancellationRequested();
             using var dockerProxy = AuthenticatedDockerPipeProxy.StartForAuthority(cancellationToken);
             var planPath = Path.Combine(_planRoot, plan.OperationId + ".json");

@@ -414,7 +414,7 @@ internal sealed class AuthorityStore
         var settings = AuthoritySettings.Load(root);
         if (!string.Equals(Path.GetFullPath(settings.DockerCliConfigDirectory), Path.Combine(root, "docker-cli"), StringComparison.OrdinalIgnoreCase))
             throw new AuthorityException("AUTHORITY_SETTINGS_INVALID");
-        var store = new AuthorityStore(root, new AuthorityRuntimeValidator(settings, root), new AuthorityProvenanceValidator(settings.RequesterSid), new AuthorityRecoveryClassifier(settings, root), settings.RequesterSid, enforceProvisionedAcl: true);
+        var store = new AuthorityStore(root, new AuthorityRuntimeValidator(settings, root), new AuthorityProvenanceValidator(settings), new AuthorityRecoveryClassifier(settings, root), settings.RequesterSid, enforceProvisionedAcl: true);
         store.AssertProvisionedLayout();
         return store;
     }
@@ -422,7 +422,7 @@ internal sealed class AuthorityStore
     internal static AuthorityStore CreateSynthetic(string root, IRuntimeValidator validator, IProvenanceValidator? provenanceValidator = null, IRecoveryClassifier? recoveryClassifier = null)
     {
         Directory.CreateDirectory(root);
-        foreach (var child in new[] { "plans", "initialization-claims", "operations", "docker-cli" }) Directory.CreateDirectory(Path.Combine(root, child));
+        foreach (var child in new[] { "plans", "candidate-generation-claims", "initialization-claims", "operations", "docker-cli" }) Directory.CreateDirectory(Path.Combine(root, child));
         return new AuthorityStore(root, validator, provenanceValidator ?? new StaticProvenanceValidator(true), recoveryClassifier ?? new StaticRecoveryClassifier("MANUAL_INTERVENTION_REQUIRED"), "S-1-5-21-1-2-3-1001", enforceProvisionedAcl: false);
     }
 
@@ -430,6 +430,22 @@ internal sealed class AuthorityStore
     {
         cancellationToken.ThrowIfCancellationRequested();
         AssertProvisionedLayout();
+        var planPath = PlanPath(plan.OperationId);
+        if (File.Exists(planPath)) throw new AuthorityException("CANONICAL_PLAN_EXISTS_OR_WRITE_FAILED");
+        var candidateGenerationId = CanonicalPlan.ReadString(plan.Utf8, "candidateGenerationId");
+        var generationClaim = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            candidateGenerationId,
+            operationId = plan.OperationId,
+            planIdentity = plan.Identity,
+            transition = "CANDIDATE_GENERATION_CLAIMED",
+            createdAtUtc = DateTime.UtcNow.ToString("O")
+        }));
+        // The generation claim is deliberately committed before the plan.
+        // If admission is interrupted, its presence still consumes this
+        // candidate generation and cannot replenish attempt budgets.
+        WriteCreateNew(CandidateGenerationClaimPath(candidateGenerationId), generationClaim, "CANDIDATE_GENERATION_ALREADY_CLAIMED", cancellationToken);
         WriteCreateNew(PlanPath(plan.OperationId), plan.Utf8, "CANONICAL_PLAN_EXISTS_OR_WRITE_FAILED", cancellationToken);
     }
 
@@ -440,6 +456,10 @@ internal sealed class AuthorityStore
         CanonicalPlan plan;
         try { plan = ReadCanonicalPlan(operationId, cancellationToken); }
         catch (AuthorityException) { return "CANONICAL_PLAN_INTERRUPTED_OR_TAMPERED"; }
+        var generationClaimPath = CandidateGenerationClaimPath(CanonicalPlan.ReadString(plan.Utf8, "candidateGenerationId"));
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!File.Exists(generationClaimPath)) return "CANDIDATE_GENERATION_CLAIM_MISSING";
+        if (!IsValidCandidateGenerationClaim(generationClaimPath, plan, cancellationToken)) return "CANDIDATE_GENERATION_CLAIM_INTERRUPTED_OR_TAMPERED";
         var claimPath = ClaimPath(operationId);
         cancellationToken.ThrowIfCancellationRequested();
         if (!File.Exists(claimPath)) return "NEVER_INITIALIZED";
@@ -458,7 +478,8 @@ internal sealed class AuthorityStore
         // A present but malformed canonical plan is durable consumed evidence.
         // Do not reparse it or let a recovery request turn that state into a
         // retryable initialization path; return the fixed fail-closed outcome.
-        if (state == "CANONICAL_PLAN_INTERRUPTED_OR_TAMPERED") return "MANUAL_INTERVENTION_REQUIRED";
+        if (state is "CANONICAL_PLAN_INTERRUPTED_OR_TAMPERED" or "CANDIDATE_GENERATION_CLAIM_MISSING" or "CANDIDATE_GENERATION_CLAIM_INTERRUPTED_OR_TAMPERED")
+            return "MANUAL_INTERVENTION_REQUIRED";
         var plan = ReadCanonicalPlan(operationId, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         return _recoveryClassifier.Classify(plan, state, cancellationToken);
@@ -467,6 +488,9 @@ internal sealed class AuthorityStore
     public void InitializeOperation(string operationId, CancellationToken cancellationToken = default)
     {
         var plan = ReadCanonicalPlan(operationId, cancellationToken);
+        var generationClaimPath = CandidateGenerationClaimPath(CanonicalPlan.ReadString(plan.Utf8, "candidateGenerationId"));
+        if (!File.Exists(generationClaimPath) || !IsValidCandidateGenerationClaim(generationClaimPath, plan, cancellationToken))
+            throw new AuthorityException("CANDIDATE_GENERATION_CLAIM_INVALID");
         if (!_provenanceValidator.ValidateCandidateProvenance(plan, cancellationToken)) throw new AuthorityException("CANDIDATE_IMAGE_PROVENANCE_REJECTED");
         cancellationToken.ThrowIfCancellationRequested();
         if (!_validator.ValidateRollbackBaseline(plan, cancellationToken)) throw new AuthorityException("ROLLBACK_RUNTIME_BASELINE_REJECTED");
@@ -593,6 +617,32 @@ internal sealed class AuthorityStore
         }
     }
 
+    private static bool IsValidCandidateGenerationClaim(string path, CanonicalPlan plan, CancellationToken cancellationToken)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var bytes = File.ReadAllBytes(path);
+            cancellationToken.ThrowIfCancellationRequested();
+            using var document = JsonDocument.Parse(bytes);
+            AuthorityRequest.AssertNoDuplicateProperties(document.RootElement, "CANDIDATE_GENERATION_CLAIM_INVALID");
+            var root = document.RootElement;
+            AuthorityRequest.RequireExactNames(
+                AuthorityRequest.PropertyNames(root, "CANDIDATE_GENERATION_CLAIM_INVALID"),
+                new[] { "schemaVersion", "candidateGenerationId", "operationId", "planIdentity", "transition", "createdAtUtc" },
+                "CANDIDATE_GENERATION_CLAIM_INVALID");
+            return root.GetProperty("schemaVersion").ValueKind == JsonValueKind.Number &&
+                   root.GetProperty("schemaVersion").GetInt32() == 1 &&
+                   AuthorityRequest.RequiredString(root, "candidateGenerationId", "CANDIDATE_GENERATION_CLAIM_INVALID") == CanonicalPlan.ReadString(plan.Utf8, "candidateGenerationId") &&
+                   AuthorityRequest.RequiredString(root, "operationId", "CANDIDATE_GENERATION_CLAIM_INVALID") == plan.OperationId &&
+                   AuthorityRequest.RequiredString(root, "planIdentity", "CANDIDATE_GENERATION_CLAIM_INVALID") == plan.Identity &&
+                   AuthorityRequest.RequiredString(root, "transition", "CANDIDATE_GENERATION_CLAIM_INVALID") == "CANDIDATE_GENERATION_CLAIMED" &&
+                   DateTime.TryParse(AuthorityRequest.RequiredString(root, "createdAtUtc", "CANDIDATE_GENERATION_CLAIM_INVALID"), out _);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { return false; }
+    }
+
     private static string ReadOperationState(string directory, CanonicalPlan plan, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -689,12 +739,13 @@ internal sealed class AuthorityStore
         var parent = Path.GetDirectoryName(_root);
         if (_enforceProvisionedAcl && (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent))) throw new AuthorityException("AUTHORITY_STORE_PARENT_UNAVAILABLE");
         if (_enforceProvisionedAcl) AuthorityStoreSecurity.AssertAuthorityStoreParentDescriptor(parent!, authoritySid!, requesterSid!);
-        foreach (var path in new[] { _root, Path.Combine(_root, "plans"), Path.Combine(_root, "initialization-claims"), Path.Combine(_root, "operations"), Path.Combine(_root, "docker-cli") })
+        foreach (var path in new[] { _root, Path.Combine(_root, "plans"), Path.Combine(_root, "candidate-generation-claims"), Path.Combine(_root, "initialization-claims"), Path.Combine(_root, "operations"), Path.Combine(_root, "docker-cli") })
         {
             if (!Directory.Exists(path)) throw new AuthorityException("AUTHORITY_STORE_UNAVAILABLE");
             AuthorityPathSecurity.AssertNoReparseComponents(path);
             if (_enforceProvisionedAcl) AuthorityStoreSecurity.AssertProvisionedDescriptor(path, authoritySid!, requesterSid!);
         }
+        if (_enforceProvisionedAcl) AuthorityPathSecurity.AssertTrustedDirectoryTree(Path.Combine(_root, "docker-cli"), AllowedRequesterSid);
     }
 
     internal bool IsApprovedRequesterSid(string? callerSid) =>
@@ -713,7 +764,7 @@ internal sealed class AuthorityStore
         // Builtin Administrators), or that can rewrite the authority parent
         // ACL/take ownership, is rejected before it can use this service.
         var boundaryDescriptors = new List<DirectorySecurity> { parentDescriptor, descriptor };
-        foreach (var child in new[] { "plans", "initialization-claims", "operations", "docker-cli" })
+        foreach (var child in new[] { "plans", "candidate-generation-claims", "initialization-claims", "operations", "docker-cli" })
         {
             var childPath = Path.Combine(_root, child);
             if (!Directory.Exists(childPath)) return false;
@@ -728,6 +779,7 @@ internal sealed class AuthorityStore
     }
 
     private string PlanPath(string operationId) => SafeChild("plans", operationId + ".json");
+    private string CandidateGenerationClaimPath(string candidateGenerationId) => SafeChild("candidate-generation-claims", candidateGenerationId + ".json");
     private string ClaimPath(string operationId) => SafeChild("initialization-claims", operationId + ".json");
     private string OperationDirectory(string operationId) => SafeChild("operations", operationId);
 
@@ -1165,6 +1217,9 @@ internal static class AuthoritySelfTest
             AuthorityPathSecurity.AssertNoReparseComponents(root);
             Assert(AuthorityServer.RequestDeadline == TimeSpan.FromSeconds(30), "NAMED_PIPE_REQUEST_DEADLINE_AUTHORITY_OWNED");
             RunRequestDeadlineTests(root);
+            RunCandidateGenerationClaimTests(root, validator);
+            RunDockerConfigTreeTrustTests();
+            RunInstalledPayloadAncestorTrustTests();
             Assert(AuthorityStore.CancellationAfterCreateLeavesCompleteRecordForSelfTest(Path.Combine(root, "deadline-complete-record.json")), "TIMEOUT_NO_TORN_ZERO_BYTE_RECORD");
             Assert(AuthenticatedDockerPipeProxy.TrackedForwarderStopsWithRequestForSelfTest(), "DOCKER_PROXY_BACKGROUND_WORK_AFTER_TIMEOUT");
             var descriptor = AuthorityStoreSecurity.CreateExpectedDescriptor(new SecurityIdentifier("S-1-5-80-1-2-3-4-5"), new SecurityIdentifier("S-1-5-21-1-2-3-1001"));
@@ -1335,6 +1390,38 @@ internal static class AuthoritySelfTest
             Console.WriteLine("REQUESTER_WRITABLE_GROUP_BLOCKED PASS");
             Console.WriteLine("CANONICAL_PLAN_TORN_WRITE_FAIL_CLOSED PASS");
             Console.WriteLine("AUTHORITY_DOCKER_CONFIG_BOUNDARY_VALIDATED PASS");
+            Console.WriteLine("CANDIDATE_GENERATION_GLOBAL_CLAIM_REQUIRED PASS");
+            Console.WriteLine("SAME_CANDIDATE_NEW_OPERATION_ID_BLOCKED PASS");
+            Console.WriteLine("SECOND_PLAN_FOR_SAME_CANDIDATE_BLOCKED PASS");
+            Console.WriteLine("ACTIVATION_BUDGET_REGENERATION_BLOCKED PASS");
+            Console.WriteLine("ROLLBACK_BUDGET_REGENERATION_BLOCKED PASS");
+            Console.WriteLine("CONCURRENT_SAME_CANDIDATE_DOUBLE_ADMISSION_BLOCKED PASS");
+            Console.WriteLine("CLAIM_OPERATION_BINDING PASS");
+            Console.WriteLine("CLAIM_PLAN_BINDING PASS");
+            Console.WriteLine("TORN_CANDIDATE_CLAIM_FAIL_CLOSED PASS");
+            Console.WriteLine("MALFORMED_CANDIDATE_CLAIM_FAIL_CLOSED PASS");
+            Console.WriteLine("OPERATION_DIRECTORY_LOSS_DOES_NOT_RESET_GENERATION PASS");
+            Console.WriteLine("DIFFERENT_CANDIDATE_GENERATION_ALLOWED PASS");
+            Console.WriteLine("DOCKER_CONFIG_RECURSIVE_TREE_VALIDATED PASS");
+            Console.WriteLine("BUILDX_DESCENDANT_REPARSE_BLOCKED PASS");
+            Console.WriteLine("NESTED_BUILDX_REPARSE_BLOCKED PASS");
+            Console.WriteLine("BUILDX_DESCENDANT_REQUESTER_WRITE_BLOCKED PASS");
+            Console.WriteLine("BUILDX_DESCENDANT_DELETE_BLOCKED PASS");
+            Console.WriteLine("BUILDX_DESCENDANT_CHANGE_PERMISSIONS_BLOCKED PASS");
+            Console.WriteLine("BUILDX_DESCENDANT_TAKE_OWNERSHIP_BLOCKED PASS");
+            Console.WriteLine("BUILDX_DESCENDANT_UNTRUSTED_OWNER_BLOCKED PASS");
+            Console.WriteLine("SAFE_DEEP_DOCKER_CONFIG_TREE_ALLOWED PASS");
+            Console.WriteLine("DOCKER_CONFIG_REVALIDATED_BEFORE_PROVENANCE_USE PASS");
+            Console.WriteLine("PAYLOAD_TRUST_CHAIN_CONTINUES_ABOVE_INSTALL_ROOT PASS");
+            Console.WriteLine("AUTOOPS_PARENT_REPARSE_BLOCKED PASS");
+            Console.WriteLine("AUTOOPS_PARENT_REQUESTER_WRITE_BLOCKED PASS");
+            Console.WriteLine("AUTOOPS_PARENT_DELETE_CHILD_REPLACEMENT_BLOCKED PASS");
+            Console.WriteLine("AUTOOPS_PARENT_CHANGE_PERMISSIONS_BLOCKED PASS");
+            Console.WriteLine("AUTOOPS_PARENT_TAKE_OWNERSHIP_BLOCKED PASS");
+            Console.WriteLine("AUTOOPS_PARENT_UNTRUSTED_OWNER_BLOCKED PASS");
+            Console.WriteLine("TRUSTED_PROGRAM_FILES_ANCESTOR_ALLOWED PASS");
+            Console.WriteLine("TRUSTEDINSTALLER_ANCESTOR_ALLOWED PASS");
+            Console.WriteLine("PAYLOAD_LEAF_TRUST_REGRESSION PASS");
             Console.WriteLine("AUTHORITY_PAYLOAD_TRUST_CHAIN_VALIDATED PASS");
             Console.WriteLine("NAMED_PIPE_REQUEST_DEADLINE_ENFORCED PASS");
             Console.WriteLine("IDLE_CLIENT_TIMEOUT PASS");
@@ -1361,6 +1448,203 @@ internal static class AuthoritySelfTest
         {
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
+    }
+
+    private static void RunCandidateGenerationClaimTests(string root, IRuntimeValidator validator)
+    {
+        var candidate = new string('1', 32);
+        var firstOperation = new string('2', 32);
+        var secondOperation = new string('3', 32);
+        var generationRoot = Path.Combine(root, "candidate-generation-global");
+        var store = AuthorityStore.CreateSynthetic(generationRoot, validator);
+        var firstPlan = CanonicalPlan.Create(firstOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(firstOperation, candidate))).PlanProposal!.Value);
+        var secondPlan = CanonicalPlan.Create(secondOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(secondOperation, candidate))).PlanProposal!.Value);
+        store.CreateCanonicalPlan(firstPlan);
+        store.InitializeOperation(firstOperation);
+        store.ConsumeActivationAttempt(firstOperation);
+        store.RecordActivationFailure(firstOperation);
+        store.ConsumeRollbackAttempt(firstOperation);
+        Directory.Delete(Path.Combine(generationRoot, "operations", firstOperation), recursive: true);
+        AssertThrows(() => store.CreateCanonicalPlan(secondPlan), "SAME_CANDIDATE_NEW_OPERATION_ID_BLOCKED");
+        Assert(!File.Exists(Path.Combine(generationRoot, "plans", secondOperation + ".json")), "SECOND_PLAN_FOR_SAME_CANDIDATE_BLOCKED");
+
+        var differentOperation = new string('4', 32);
+        var differentPlan = CanonicalPlan.Create(differentOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(differentOperation, new string('5', 32)))).PlanProposal!.Value);
+        store.CreateCanonicalPlan(differentPlan);
+        Assert(File.Exists(Path.Combine(generationRoot, "plans", differentOperation + ".json")), "DIFFERENT_CANDIDATE_GENERATION_ALLOWED");
+
+        var tornRoot = Path.Combine(root, "candidate-generation-torn");
+        var tornStore = AuthorityStore.CreateSynthetic(tornRoot, validator);
+        var tornOperation = new string('6', 32);
+        var tornCandidate = new string('7', 32);
+        var tornPlan = CanonicalPlan.Create(tornOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(tornOperation, tornCandidate))).PlanProposal!.Value);
+        File.WriteAllBytes(Path.Combine(tornRoot, "candidate-generation-claims", tornCandidate + ".json"), []);
+        AssertThrows(() => tornStore.CreateCanonicalPlan(tornPlan), "TORN_CANDIDATE_CLAIM_FAIL_CLOSED");
+
+        var malformedRoot = Path.Combine(root, "candidate-generation-malformed");
+        var malformedStore = AuthorityStore.CreateSynthetic(malformedRoot, validator);
+        var malformedOperation = new string('8', 32);
+        var malformedCandidate = new string('9', 32);
+        var malformedPlan = CanonicalPlan.Create(malformedOperation, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(malformedOperation, malformedCandidate))).PlanProposal!.Value);
+        File.WriteAllText(Path.Combine(malformedRoot, "candidate-generation-claims", malformedCandidate + ".json"), "{}");
+        AssertThrows(() => malformedStore.CreateCanonicalPlan(malformedPlan), "MALFORMED_CANDIDATE_CLAIM_FAIL_CLOSED");
+
+        var operationBindingRoot = Path.Combine(root, "candidate-generation-operation-binding");
+        var operationBindingStore = AuthorityStore.CreateSynthetic(operationBindingRoot, validator);
+        var operationBindingId = new string('a', 32);
+        var operationBindingCandidate = new string('b', 32);
+        var operationBindingPlan = CanonicalPlan.Create(operationBindingId, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(operationBindingId, operationBindingCandidate))).PlanProposal!.Value);
+        operationBindingStore.CreateCanonicalPlan(operationBindingPlan);
+        File.WriteAllBytes(
+            Path.Combine(operationBindingRoot, "candidate-generation-claims", operationBindingCandidate + ".json"),
+            Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { schemaVersion = 1, candidateGenerationId = operationBindingCandidate, operationId = secondOperation, planIdentity = operationBindingPlan.Identity, transition = "CANDIDATE_GENERATION_CLAIMED", createdAtUtc = DateTime.UtcNow.ToString("O") })));
+        Assert(operationBindingStore.GetOperationState(operationBindingId) == "CANDIDATE_GENERATION_CLAIM_INTERRUPTED_OR_TAMPERED", "CLAIM_OPERATION_BINDING");
+
+        var planBindingRoot = Path.Combine(root, "candidate-generation-plan-binding");
+        var planBindingStore = AuthorityStore.CreateSynthetic(planBindingRoot, validator);
+        var planBindingId = new string('c', 32);
+        var planBindingCandidate = new string('e', 32);
+        var originalPlan = CanonicalPlan.Create(planBindingId, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(planBindingId, planBindingCandidate))).PlanProposal!.Value);
+        planBindingStore.CreateCanonicalPlan(originalPlan);
+        Thread.Sleep(1);
+        var replacementPlan = CanonicalPlan.Create(planBindingId, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(planBindingId, planBindingCandidate))).PlanProposal!.Value);
+        File.WriteAllBytes(Path.Combine(planBindingRoot, "plans", planBindingId + ".json"), replacementPlan.Utf8);
+        Assert(planBindingStore.GetOperationState(planBindingId) == "CANDIDATE_GENERATION_CLAIM_INTERRUPTED_OR_TAMPERED", "CLAIM_PLAN_BINDING");
+
+        var concurrentRoot = Path.Combine(root, "candidate-generation-concurrent");
+        var concurrentStore = AuthorityStore.CreateSynthetic(concurrentRoot, validator);
+        var concurrentCandidate = new string('f', 32);
+        var concurrentPlans = new[] { new string('0', 32), new string('1', 32) }
+            .Select(id => CanonicalPlan.Create(id, AuthorityRequest.Parse(Encoding.UTF8.GetBytes(CreateRequestJson(id, concurrentCandidate))).PlanProposal!.Value))
+            .ToArray();
+        var admitted = 0;
+        Parallel.ForEach(concurrentPlans, plan =>
+        {
+            try { concurrentStore.CreateCanonicalPlan(plan); Interlocked.Increment(ref admitted); }
+            catch (AuthorityException) { }
+        });
+        Assert(admitted == 1, "CONCURRENT_SAME_CANDIDATE_DOUBLE_ADMISSION_BLOCKED");
+        Assert(Directory.EnumerateFiles(Path.Combine(concurrentRoot, "plans")).Count() == 1, "CONCURRENT_SAME_CANDIDATE_SINGLE_PLAN");
+    }
+
+    private static void RunDockerConfigTreeTrustTests()
+    {
+        var authoritySid = new SecurityIdentifier("S-1-5-80-1-2-3-4-5");
+        var requesterSid = new SecurityIdentifier("S-1-5-21-1-2-3-1001");
+        var root = Path.GetFullPath("C:\\ProgramData\\AutoOps\\rotation-authority\\docker-cli");
+        var buildx = Path.Combine(root, "buildx");
+        var instances = Path.Combine(buildx, "instances");
+        var current = Path.Combine(instances, "desktop-linux");
+
+        Dictionary<string, AuthorityPathEntry> SafeTree()
+        {
+            var result = new Dictionary<string, AuthorityPathEntry>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (path, isDirectory) in new[] { (root, true), (buildx, true), (instances, true), (current, false) })
+                result[path] = new AuthorityPathEntry(isDirectory, false, CreateSecurityDescriptor(authoritySid, requesterSid, authoritySid));
+            return result;
+        }
+
+        static IEnumerable<string> Children(string path, IReadOnlyDictionary<string, AuthorityPathEntry> entries) =>
+            entries.Keys.Where(candidate => string.Equals(Path.GetDirectoryName(candidate), path, StringComparison.OrdinalIgnoreCase));
+
+        void Validate(IReadOnlyDictionary<string, AuthorityPathEntry> entries) =>
+            AuthorityPathSecurity.AssertTrustedDirectoryTreeForSelfTest(root, authoritySid, requesterSid, path => entries[path], path => Children(path, entries));
+
+        Validate(SafeTree());
+        var buildxReparse = SafeTree(); buildxReparse[buildx] = buildxReparse[buildx] with { IsReparse = true };
+        AssertThrows(() => Validate(buildxReparse), "BUILDX_DESCENDANT_REPARSE_BLOCKED");
+        var nestedReparse = SafeTree(); nestedReparse[instances] = nestedReparse[instances] with { IsReparse = true };
+        AssertThrows(() => Validate(nestedReparse), "NESTED_BUILDX_REPARSE_BLOCKED");
+        foreach (var (right, assertion) in new[]
+        {
+            (FileSystemRights.WriteData, "BUILDX_DESCENDANT_REQUESTER_WRITE_BLOCKED"),
+            (FileSystemRights.Delete, "BUILDX_DESCENDANT_DELETE_BLOCKED"),
+            (FileSystemRights.ChangePermissions, "BUILDX_DESCENDANT_CHANGE_PERMISSIONS_BLOCKED"),
+            (FileSystemRights.TakeOwnership, "BUILDX_DESCENDANT_TAKE_OWNERSHIP_BLOCKED")
+        })
+        {
+            var unsafeTree = SafeTree();
+            var descriptor = CreateSecurityDescriptor(authoritySid, requesterSid, authoritySid);
+            descriptor.AddAccessRule(new FileSystemAccessRule(requesterSid, right, AccessControlType.Allow));
+            unsafeTree[buildx] = new AuthorityPathEntry(true, false, descriptor);
+            AssertThrows(() => Validate(unsafeTree), assertion);
+        }
+        var untrustedOwnerTree = SafeTree();
+        untrustedOwnerTree[buildx] = new AuthorityPathEntry(true, false, CreateSecurityDescriptor(authoritySid, requesterSid, new SecurityIdentifier("S-1-5-21-1-2-3-1002")));
+        AssertThrows(() => Validate(untrustedOwnerTree), "BUILDX_DESCENDANT_UNTRUSTED_OWNER_BLOCKED");
+    }
+
+    private static void RunInstalledPayloadAncestorTrustTests()
+    {
+        var authoritySid = new SecurityIdentifier("S-1-5-80-1-2-3-4-5");
+        var requesterSid = new SecurityIdentifier("S-1-5-21-1-2-3-1001");
+        var administratorsSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var trustedInstallerSid = new SecurityIdentifier("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464");
+        var programFiles = Path.GetFullPath("C:\\Program Files");
+        var autoOps = Path.Combine(programFiles, "AutoOps");
+        var installRoot = Path.Combine(autoOps, "RotationAuthority");
+        var scripts = Path.Combine(installRoot, "scripts");
+        var leaf = Path.Combine(scripts, "validate-secret-rotation-runtime.ps1");
+
+        Dictionary<string, AuthorityPathEntry> SafeChain(SecurityIdentifier? programFilesOwner = null)
+        {
+            return new Dictionary<string, AuthorityPathEntry>(StringComparer.OrdinalIgnoreCase)
+            {
+                [leaf] = new(false, false, CreateSecurityDescriptor(authoritySid, requesterSid, authoritySid)),
+                [scripts] = new(true, false, CreateSecurityDescriptor(authoritySid, requesterSid, authoritySid)),
+                [installRoot] = new(true, false, CreateSecurityDescriptor(authoritySid, requesterSid, authoritySid)),
+                [autoOps] = new(true, false, CreateWindowsAncestorDescriptor(requesterSid, administratorsSid)),
+                [programFiles] = new(true, false, CreateWindowsAncestorDescriptor(requesterSid, programFilesOwner ?? trustedInstallerSid))
+            };
+        }
+
+        void Validate(IReadOnlyDictionary<string, AuthorityPathEntry> entries) =>
+            AuthorityPathSecurity.ValidateInstalledPathChainForSelfTest(installRoot, leaf, programFiles, requesterSid, authoritySid, path => entries[path]);
+
+        Validate(SafeChain());
+        Validate(SafeChain(administratorsSid));
+        var parentReparse = SafeChain(); parentReparse[autoOps] = parentReparse[autoOps] with { IsReparse = true };
+        AssertThrows(() => Validate(parentReparse), "AUTOOPS_PARENT_REPARSE_BLOCKED");
+        foreach (var (right, assertion) in new[]
+        {
+            (FileSystemRights.WriteData, "AUTOOPS_PARENT_REQUESTER_WRITE_BLOCKED"),
+            (FileSystemRights.DeleteSubdirectoriesAndFiles, "AUTOOPS_PARENT_DELETE_CHILD_REPLACEMENT_BLOCKED"),
+            (FileSystemRights.ChangePermissions, "AUTOOPS_PARENT_CHANGE_PERMISSIONS_BLOCKED"),
+            (FileSystemRights.TakeOwnership, "AUTOOPS_PARENT_TAKE_OWNERSHIP_BLOCKED")
+        })
+        {
+            var unsafeChain = SafeChain();
+            var descriptor = CreateWindowsAncestorDescriptor(requesterSid, administratorsSid);
+            descriptor.AddAccessRule(new FileSystemAccessRule(requesterSid, right, AccessControlType.Allow));
+            unsafeChain[autoOps] = new AuthorityPathEntry(true, false, descriptor);
+            AssertThrows(() => Validate(unsafeChain), assertion);
+        }
+        var untrustedOwnerChain = SafeChain();
+        untrustedOwnerChain[autoOps] = new AuthorityPathEntry(true, false, CreateWindowsAncestorDescriptor(requesterSid, new SecurityIdentifier("S-1-5-21-1-2-3-1002")));
+        AssertThrows(() => Validate(untrustedOwnerChain), "AUTOOPS_PARENT_UNTRUSTED_OWNER_BLOCKED");
+        var unsafeLeaf = SafeChain();
+        var leafDescriptor = CreateSecurityDescriptor(authoritySid, requesterSid, authoritySid);
+        leafDescriptor.AddAccessRule(new FileSystemAccessRule(requesterSid, FileSystemRights.WriteData, AccessControlType.Allow));
+        unsafeLeaf[leaf] = new AuthorityPathEntry(false, false, leafDescriptor);
+        AssertThrows(() => Validate(unsafeLeaf), "PAYLOAD_LEAF_TRUST_REGRESSION");
+    }
+
+    private static DirectorySecurity CreateSecurityDescriptor(SecurityIdentifier authoritySid, SecurityIdentifier requesterSid, SecurityIdentifier owner)
+    {
+        var descriptor = AuthorityStoreSecurity.CreateExpectedDescriptor(authoritySid, requesterSid);
+        descriptor.SetOwner(owner);
+        return descriptor;
+    }
+
+    private static DirectorySecurity CreateWindowsAncestorDescriptor(SecurityIdentifier requesterSid, SecurityIdentifier owner)
+    {
+        var descriptor = new DirectorySecurity();
+        descriptor.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        descriptor.SetOwner(owner);
+        descriptor.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), FileSystemRights.FullControl, AccessControlType.Allow));
+        descriptor.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), FileSystemRights.FullControl, AccessControlType.Allow));
+        descriptor.AddAccessRule(new FileSystemAccessRule(requesterSid, FileSystemRights.ReadAndExecute | FileSystemRights.Synchronize, AccessControlType.Allow));
+        return descriptor;
     }
 
     private static void RunRequestDeadlineTests(string root)
@@ -1437,12 +1721,14 @@ internal static class AuthoritySelfTest
 
     private static int CountDurableFiles(string root) => Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Count();
 
-    private static string CreateRequestJson(string operation)
+    private static string CreateRequestJson(string operation, string? candidateGenerationId = null)
     {
         var current = new string('d', 32);
+        candidateGenerationId ??= Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(operation))).ToLowerInvariant()[..32];
+        if (candidateGenerationId == current) candidateGenerationId = new string('c', 32);
         var proposal = new JsonObject
         {
-            ["candidateGenerationId"] = new string('c', 32),
+            ["candidateGenerationId"] = candidateGenerationId,
             ["currentGoodGenerationId"] = current,
             ["previousGoodGenerationId"] = null,
             ["repositoryRevision"] = new string('e', 40),
