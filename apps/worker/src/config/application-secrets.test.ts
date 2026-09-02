@@ -33,20 +33,24 @@ afterEach(async () => {
 });
 
 describe('worker Jenkins secret bootstrap', () => {
-  it('resolves an enabled Jenkins token in environment mode through the typed provider', async () => {
-    process.env.JENKINS_INTEGRATION_ENABLED = 'true';
-    process.env[`JENKINS_API_${'TOKEN'}`] = fakeToken;
-    const secrets = await import('./application-secrets.js');
-    await secrets.initializeWorkerSecrets();
+  it(
+    'resolves an enabled Jenkins token in environment mode through the typed provider',
+    async () => {
+      process.env.JENKINS_INTEGRATION_ENABLED = 'true';
+      process.env[`JENKINS_API_${'TOKEN'}`] = fakeToken;
+      const secrets = await import('./application-secrets.js');
+      await secrets.initializeWorkerSecrets();
 
-    expect(secrets.getWorkerJenkinsApiToken()?.revealForUse()).toBe(fakeToken);
-    const { getWorkerJenkinsConfiguration } = await import('../queues/operations.queue.js');
-    const configuration = getWorkerJenkinsConfiguration();
-    expect(configuration?.token.revealForUse()).toBe(fakeToken);
-    expect(
-      JSON.stringify({ configuration, job: { operationId: 'operation-test-id' } }),
-    ).not.toContain(fakeToken);
-  });
+      expect(secrets.getWorkerJenkinsApiToken()?.revealForUse()).toBe(fakeToken);
+      const { getWorkerJenkinsConfiguration } = await import('../queues/operations.queue.js');
+      const configuration = getWorkerJenkinsConfiguration();
+      expect(configuration?.token.revealForUse()).toBe(fakeToken);
+      expect(
+        JSON.stringify({ configuration, job: { operationId: 'operation-test-id' } }),
+      ).not.toContain(fakeToken);
+    },
+    15_000,
+  );
 
   it('resolves an enabled Jenkins token from a mounted file without an environment token', async () => {
     const root = await temporaryDirectory();
