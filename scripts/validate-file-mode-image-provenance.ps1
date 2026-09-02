@@ -5,11 +5,14 @@ param(
   [string]$ApiBuildRecordRef,
   [string]$WorkerBuildRecordRef,
   [string]$BuildxBuilder = 'desktop-linux',
+  [string]$ExpectedApiImageId,
+  [string]$ExpectedWorkerImageId,
+  [string]$RepositoryRoot,
   [switch]$RunSelfTest
 )
 
 $ErrorActionPreference = 'Stop'
-$repositoryRoot = Split-Path -Parent $PSScriptRoot
+$repositoryRoot = if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) { Split-Path -Parent $PSScriptRoot } else { $RepositoryRoot }
 $gitContextRepository = 'https://github.com/Pramu55/AutoOps-2.0.git'
 
 # These are the only source paths copied from the checkout by the API and worker
@@ -52,6 +55,13 @@ $gitRepositorySelectionVariables = @(
   'GIT_CEILING_DIRECTORIES',
   'GIT_DISCOVERY_ACROSS_FILESYSTEM'
 )
+$trustedDockerEndpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine'
+$authorityDockerEndpoint = [Environment]::GetEnvironmentVariable('AUTOOPS_AUTHORITY_DOCKER_ENDPOINT', 'Process')
+if (-not [string]::IsNullOrWhiteSpace($authorityDockerEndpoint)) {
+  if ($authorityDockerEndpoint -notmatch '^npipe:////\./pipe/AutoOpsRotationAuthorityDocker-[a-f0-9]{32}$') { throw 'AUTHORITY_DOCKER_ENDPOINT_INVALID' }
+  $trustedDockerEndpoint = $authorityDockerEndpoint
+}
+$trustedDockerConfigRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)) 'AutoOps\rotation-authority\docker-cli'
 
 function Write-Result([string]$Name, [bool]$Passed) {
   Write-Host "$Name $(if ($Passed) { 'PASS' } else { 'FAIL' })"
@@ -86,7 +96,244 @@ function Get-CommitPinnedProvenanceUri([string]$Revision) {
 }
 
 function Get-NormalizedPath([string]$Path) {
-  return [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+  $fullPath = [IO.Path]::GetFullPath($Path)
+  $pathRoot = [IO.Path]::GetPathRoot($fullPath)
+  if ([string]::Equals($fullPath, $pathRoot, [StringComparison]::OrdinalIgnoreCase)) { return $pathRoot }
+  return $fullPath.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+}
+
+$trustedExecutableOwnerSids = @(
+  'S-1-5-18', # NT AUTHORITY\SYSTEM
+  'S-1-5-32-544', # BUILTIN\Administrators
+  'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464' # NT SERVICE\TrustedInstaller
+)
+$dangerousExecutableRights = [Security.AccessControl.FileSystemRights](
+  [Security.AccessControl.FileSystemRights]::WriteData -bor
+  [Security.AccessControl.FileSystemRights]::AppendData -bor
+  [Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor
+  [Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+  [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+  [Security.AccessControl.FileSystemRights]::Delete -bor
+  [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+  [Security.AccessControl.FileSystemRights]::TakeOwnership
+)
+function Test-TrustedExecutableSecurityDescriptor([object]$SecurityDescriptor) {
+  if ($null -eq $SecurityDescriptor) { return $false }
+  try {
+    $ownerSid = $SecurityDescriptor.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if ($trustedExecutableOwnerSids -notcontains $ownerSid) { return $false }
+    $rules = $SecurityDescriptor.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])
+    foreach ($rule in $rules) {
+      if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
+      if ($trustedExecutableOwnerSids -contains $rule.IdentityReference.Value) { continue }
+      if (($rule.FileSystemRights -band $dangerousExecutableRights) -ne 0) { return $false }
+    }
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Get-ExecutableAncestryComponents([string]$Path, [string]$TrustedRoot) {
+  try {
+    $normalizedPath = Get-NormalizedPath $Path
+    $normalizedRoot = Get-NormalizedPath $TrustedRoot
+  } catch { return @() }
+  $rootPrefix = $normalizedRoot
+  if (-not $rootPrefix.EndsWith([string][IO.Path]::DirectorySeparatorChar)) { $rootPrefix += [IO.Path]::DirectorySeparatorChar }
+  if (-not [string]::Equals($normalizedPath, $normalizedRoot, [StringComparison]::OrdinalIgnoreCase) -and
+      -not $normalizedPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) { return @() }
+  $components = [Collections.Generic.List[string]]::new()
+  $current = $normalizedPath
+  while ($true) {
+    $components.Add($current)
+    if ([string]::Equals($current, $normalizedRoot, [StringComparison]::OrdinalIgnoreCase)) { break }
+    $parent = [IO.Directory]::GetParent($current)
+    if ($null -eq $parent) { return @() }
+    $current = Get-NormalizedPath $parent.FullName
+  }
+  return @($components)
+}
+
+function Test-TrustedExecutableChain(
+  [string]$Path,
+  [string]$TrustedRoot,
+  [scriptblock]$SecurityDescriptorProvider,
+  [scriptblock]$AttributesProvider
+) {
+  if (($null -ne $SecurityDescriptorProvider -or $null -ne $AttributesProvider) -and -not $RunSelfTest) { return $false }
+  $components = @(Get-ExecutableAncestryComponents $Path $TrustedRoot)
+  if ($components.Count -lt 2) { return $false }
+  for ($index = 0; $index -lt $components.Count; $index++) {
+    $component = $components[$index]
+    try {
+      # Mandatory ordering: do not ask for ownership or ACL data until this
+      # exact component has been shown not to be a link, junction, or reparse.
+      $attributes = if ($null -ne $AttributesProvider) { & $AttributesProvider $component } else { [IO.File]::GetAttributes($component) }
+    } catch { return $false }
+    if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+    $isDirectory = ($attributes -band [IO.FileAttributes]::Directory) -ne 0
+    if (($index -eq 0 -and $isDirectory) -or ($index -gt 0 -and -not $isDirectory)) { return $false }
+    try {
+      $securityDescriptor = if ($null -ne $SecurityDescriptorProvider) {
+        & $SecurityDescriptorProvider $component $isDirectory
+      } elseif ($isDirectory) {
+        $sections = [Security.AccessControl.AccessControlSections]::Access -bor
+          [Security.AccessControl.AccessControlSections]::Owner -bor
+          [Security.AccessControl.AccessControlSections]::Group
+        [Security.AccessControl.DirectorySecurity]::new($component, $sections)
+      } else {
+        $sections = [Security.AccessControl.AccessControlSections]::Access -bor
+          [Security.AccessControl.AccessControlSections]::Owner -bor
+          [Security.AccessControl.AccessControlSections]::Group
+        [Security.AccessControl.FileSecurity]::new($component, $sections)
+      }
+    } catch { return $false }
+    if (-not (Test-TrustedExecutableSecurityDescriptor $securityDescriptor)) { return $false }
+  }
+  return $true
+}
+
+function Test-TrustedExecutableFile([string]$Path, [string]$TrustedRoot) {
+  if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($TrustedRoot)) { return $false }
+  return Test-TrustedExecutableChain $Path $TrustedRoot
+}
+
+function Get-TrustedProgramFilesRoots() {
+  if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return @() }
+  $roots = [Collections.Generic.List[string]]::new()
+  foreach ($folder in @([Environment+SpecialFolder]::ProgramFiles, [Environment+SpecialFolder]::ProgramFilesX86)) {
+    try {
+      $root = [Environment]::GetFolderPath($folder)
+      if (-not [string]::IsNullOrWhiteSpace($root) -and -not $roots.Contains($root)) { $roots.Add($root) }
+    } catch { }
+  }
+  return @($roots)
+}
+
+function Get-TrustedDockerExecutable() {
+  foreach ($root in Get-TrustedProgramFilesRoots) {
+    $candidate = Join-Path $root 'Docker\Docker\resources\bin\docker.exe'
+    if (Test-TrustedExecutableFile $candidate $root) { return $candidate }
+  }
+  return $null
+}
+
+function Test-TrustedDockerExecutablePath([string]$Path) {
+  foreach ($root in Get-TrustedProgramFilesRoots) {
+    $candidate = Join-Path $root 'Docker\Docker\resources\bin\docker.exe'
+    if ([string]::Equals((Get-NormalizedPath $Path), (Get-NormalizedPath $candidate), [StringComparison]::OrdinalIgnoreCase)) { return Test-TrustedExecutableFile $candidate $root }
+  }
+  return $false
+}
+
+function Get-TrustedBuildxExecutable() {
+  foreach ($root in Get-TrustedProgramFilesRoots) {
+    $candidate = Join-Path $root 'Docker\Docker\resources\cli-plugins\docker-buildx.exe'
+    if (Test-TrustedExecutableFile $candidate $root) { return $candidate }
+  }
+  return $null
+}
+
+function Test-TrustedBuildxExecutablePath([string]$Path) {
+  foreach ($root in Get-TrustedProgramFilesRoots) {
+    $candidate = Join-Path $root 'Docker\Docker\resources\cli-plugins\docker-buildx.exe'
+    if ([string]::Equals((Get-NormalizedPath $Path), (Get-NormalizedPath $candidate), [StringComparison]::OrdinalIgnoreCase)) { return Test-TrustedExecutableFile $candidate $root }
+  }
+  return $false
+}
+
+function Set-TrustedDockerChildEnvironment($ProcessStartInfo, [switch]$Buildx) {
+  $ProcessStartInfo.EnvironmentVariables.Clear()
+  $systemDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
+  if ([string]::IsNullOrWhiteSpace($systemDirectory)) { throw 'Trusted Windows system directory unavailable' }
+  $windowsDirectory = Split-Path -Parent $systemDirectory
+  foreach ($entry in @{
+    SystemRoot = $windowsDirectory; WINDIR = $windowsDirectory; ComSpec = (Join-Path $systemDirectory 'cmd.exe'); TEMP = [IO.Path]::GetTempPath(); TMP = [IO.Path]::GetTempPath()
+  }.GetEnumerator()) { $ProcessStartInfo.EnvironmentVariables[$entry.Key] = $entry.Value }
+  if ($Buildx) {
+    $ProcessStartInfo.EnvironmentVariables['DOCKER_HOST'] = $trustedDockerEndpoint
+    $ProcessStartInfo.EnvironmentVariables['DOCKER_CONFIG'] = $trustedDockerConfigRoot
+    $ProcessStartInfo.EnvironmentVariables['BUILDX_CONFIG'] = (Join-Path $trustedDockerConfigRoot 'buildx')
+  }
+}
+
+function New-TrustedDockerProcessStartInfo([string]$Arguments) {
+  $dockerExecutable = Get-TrustedDockerExecutable
+  if ($null -eq $dockerExecutable) { return $null }
+  $psi = [Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $dockerExecutable
+  $psi.Arguments = '--host "' + $trustedDockerEndpoint + '" --config "' + $trustedDockerConfigRoot + '" ' + $Arguments
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  Set-TrustedDockerChildEnvironment $psi
+  return $psi
+}
+
+function New-TrustedBuildxProcessStartInfo([string]$Arguments) {
+  $buildxExecutable = Get-TrustedBuildxExecutable
+  if ($null -eq $buildxExecutable) { return $null }
+  $psi = [Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $buildxExecutable; $psi.Arguments = $Arguments
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  Set-TrustedDockerChildEnvironment $psi -Buildx
+  return $psi
+}
+
+function Get-TrustedGitInstallationRoots() {
+  $installationRoots = [Collections.Generic.List[string]]::new()
+  foreach ($root in Get-TrustedProgramFilesRoots) { if (-not $installationRoots.Contains($root)) { $installationRoots.Add($root) } }
+  # Git for Windows also documents the conventional system-drive installation
+  # root used by managed/local installations. Derive the drive from the OS
+  # system directory rather than an environment variable or caller PATH.
+  try {
+    $systemDrive = [IO.Path]::GetPathRoot([Environment]::GetFolderPath([Environment+SpecialFolder]::System))
+    if (-not [string]::IsNullOrWhiteSpace($systemDrive) -and -not $installationRoots.Contains($systemDrive)) { $installationRoots.Add($systemDrive) }
+  } catch { }
+  return @($installationRoots)
+}
+
+function Get-TrustedGitExecutable() {
+  foreach ($root in Get-TrustedGitInstallationRoots) {
+    foreach ($relativePath in @('Git\cmd\git.exe', 'Git\bin\git.exe')) {
+      $candidate = Join-Path $root $relativePath
+      if (Test-TrustedExecutableFile $candidate $root) { return $candidate }
+    }
+  }
+  return $null
+}
+
+function Test-TrustedGitExecutablePath([string]$Path) {
+  foreach ($root in Get-TrustedGitInstallationRoots) {
+    foreach ($relativePath in @('Git\cmd\git.exe', 'Git\bin\git.exe')) {
+      $candidate = Join-Path $root $relativePath
+      if ([string]::Equals((Get-NormalizedPath $Path), (Get-NormalizedPath $candidate), [StringComparison]::OrdinalIgnoreCase)) { return Test-TrustedExecutableFile $candidate $root }
+    }
+  }
+  return $false
+}
+
+function Start-TrustedExecutableProcess(
+  [Diagnostics.Process]$Process,
+  [ValidateSet('Docker','Buildx','Git')][string]$ExecutableKind,
+  [string]$TestTrustedRoot,
+  [scriptblock]$TestSecurityDescriptorProvider,
+  [scriptblock]$TestAttributesProvider
+) {
+  if ($null -eq $Process -or $null -eq $Process.StartInfo -or [string]::IsNullOrWhiteSpace($Process.StartInfo.FileName)) { return $false }
+  $trusted = if (-not [string]::IsNullOrWhiteSpace($TestTrustedRoot)) {
+    if (-not $RunSelfTest) { return $false }
+    Test-TrustedExecutableChain $Process.StartInfo.FileName $TestTrustedRoot $TestSecurityDescriptorProvider $TestAttributesProvider
+  } else {
+    switch ($ExecutableKind) {
+      'Docker' { Test-TrustedDockerExecutablePath $Process.StartInfo.FileName }
+      'Buildx' { Test-TrustedBuildxExecutablePath $Process.StartInfo.FileName }
+      'Git' { Test-TrustedGitExecutablePath $Process.StartInfo.FileName }
+    }
+  }
+  if (-not $trusted) { return $false }
+  # The full chain is re-read above after all arguments/environment are fixed
+  # and immediately before the authoritative executable launch.
+  return $Process.Start()
 }
 
 function ConvertTo-PathRegex([string]$Pattern) {
@@ -155,22 +402,48 @@ function Test-IgnoredPathAffectsBuild([string]$Path, [string]$RepositoryRoot, [s
   return (Test-PathWithinBuildInput $Path $BuildInputPrefixes) -and -not (Test-PathExcludedFromDockerContext $Path $RepositoryRoot)
 }
 
+function Set-TrustedGitChildEnvironment([Diagnostics.ProcessStartInfo]$ProcessStartInfo) {
+  if ($null -eq $ProcessStartInfo) { throw 'Trusted Git process information unavailable' }
+  # Git accepts security-relevant repository/configuration/process overrides
+  # through a broad GIT_* environment namespace, including numbered
+  # GIT_CONFIG_KEY/VALUE entries.  Enumerate the inherited block instead of
+  # trying to maintain a deny-list that a future Git release could outgrow.
+  foreach ($name in @($ProcessStartInfo.EnvironmentVariables.Keys)) {
+    if (([string]$name).StartsWith('GIT_', [StringComparison]::OrdinalIgnoreCase)) {
+      [void]$ProcessStartInfo.EnvironmentVariables.Remove([string]$name)
+    }
+  }
+  # System and requester-global Git configuration are not authoritative for a
+  # provenance decision. Repository-local configuration is still parsed by
+  # Git, but every cache/fsmonitor setting used by the freshness proof is
+  # overridden command-locally below.
+  $ProcessStartInfo.EnvironmentVariables['GIT_CONFIG_NOSYSTEM'] = '1'
+  $ProcessStartInfo.EnvironmentVariables['GIT_CONFIG_GLOBAL'] = 'NUL'
+  $ProcessStartInfo.EnvironmentVariables['GIT_OPTIONAL_LOCKS'] = '0'
+  $ProcessStartInfo.EnvironmentVariables['GIT_TERMINAL_PROMPT'] = '0'
+  $ProcessStartInfo.EnvironmentVariables['GCM_INTERACTIVE'] = 'Never'
+}
+
 function Get-RepositoryGitOutput([string]$Arguments, [string]$RepositoryRoot = $repositoryRoot, [switch]$DisablePerformanceCaches) {
+  $gitExecutable = Get-TrustedGitExecutable
+  if ($null -eq $gitExecutable) { return [pscustomobject]@{ Succeeded = $false; Output = $null } }
   $psi = [Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = 'git'
-  # Command-scoped cache disables are used for the status proof only. Applying
-  # them to ls-files can normalize hidden index tags, so that command must read
-  # the raw index metadata instead.
-  $cacheConfig = if ($DisablePerformanceCaches) { '--no-optional-locks -c core.fsmonitor=false -c core.untrackedCache=false ' } else { '' }
+  $psi.FileName = $gitExecutable
+  # Every authoritative repository read disables fsmonitor and other
+  # performance caches.  In particular, ls-files must not invoke a
+  # repository-controlled monitor before the later status proof. Optional
+  # locks remain disabled so these read-only commands cannot normalize index
+  # flags or persist cache state while inspecting it.
+  $cacheConfig = '--no-optional-locks -c core.fsmonitor=false -c core.untrackedCache=false -c core.preloadIndex=false -c core.ignoreStat=false -c core.trustctime=true -c core.checkStat=default '
   $psi.Arguments = $cacheConfig + '-C "' + (Get-NormalizedPath $RepositoryRoot).Replace('"', '\"') + '" ' + $Arguments
   $psi.WorkingDirectory = Get-NormalizedPath $RepositoryRoot
   $psi.UseShellExecute = $false
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
-  foreach ($name in $gitRepositorySelectionVariables) { [void]$psi.EnvironmentVariables.Remove($name) }
+  Set-TrustedGitChildEnvironment $psi
   $process = [Diagnostics.Process]::new()
   $process.StartInfo = $psi
-  if (-not $process.Start()) { return [pscustomobject]@{ Succeeded = $false; Output = $null } }
+  if (-not (Start-TrustedExecutableProcess $process 'Git')) { return [pscustomobject]@{ Succeeded = $false; Output = $null } }
   # Keep NUL-delimited Git porcelain output byte-for-byte.  Callers that read
   # scalar output trim it explicitly; status/index parsers must not.
   $stdout = $process.StandardOutput.ReadToEnd()
@@ -275,17 +548,13 @@ function Test-CheckoutBinding([string]$Expected, [object]$Inspection) {
 
 function Get-ImageRevision([string]$Image) {
   if (-not (Test-ImageReference $Image)) { return $null }
-  $psi = [Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = 'docker'
+  $psi = New-TrustedDockerProcessStartInfo ('image inspect --format "{{json .Config.Labels}}" "' + $Image.Replace('"', '\"') + '"')
+  if ($null -eq $psi) { return $null }
   # Request the complete label map as JSON so the child-process argument does
   # not need to embed a quoted label key.  Read only the non-secret revision.
-  $psi.Arguments = 'image inspect --format "{{json .Config.Labels}}" "' + $Image.Replace('"', '\"') + '"'
-  $psi.UseShellExecute = $false
-  $psi.RedirectStandardOutput = $true
-  $psi.RedirectStandardError = $true
   $process = [Diagnostics.Process]::new()
   $process.StartInfo = $psi
-  if (-not $process.Start()) { return $null }
+  if (-not (Start-TrustedExecutableProcess $process 'Docker')) { return $null }
   $stdout = $process.StandardOutput.ReadToEnd().Trim()
   $null = $process.StandardError.ReadToEnd()
   $process.WaitForExit()
@@ -306,15 +575,11 @@ function Test-ImageRevision([string]$Revision, [string]$Expected) {
 
 function Get-LoadedImageMetadata([string]$Image) {
   if (-not (Test-ImageReference $Image)) { return $null }
-  $psi = [Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = 'docker'
-  $psi.Arguments = 'image inspect --format "{{.Id}}|{{.Os}}|{{.Architecture}}" "' + $Image.Replace('"', '\"') + '"'
-  $psi.UseShellExecute = $false
-  $psi.RedirectStandardOutput = $true
-  $psi.RedirectStandardError = $true
+  $psi = New-TrustedDockerProcessStartInfo ('image inspect --format "{{.Id}}|{{.Os}}|{{.Architecture}}" "' + $Image.Replace('"', '\"') + '"')
+  if ($null -eq $psi) { return $null }
   $process = [Diagnostics.Process]::new()
   $process.StartInfo = $psi
-  if (-not $process.Start()) { return $null }
+  if (-not (Start-TrustedExecutableProcess $process 'Docker')) { return $null }
   $stdout = $process.StandardOutput.ReadToEnd().Trim()
   $null = $process.StandardError.ReadToEnd()
   $process.WaitForExit()
@@ -350,15 +615,11 @@ function Get-BuildRecordInspection([string]$Builder, [string]$RecordRef, [string
   }
 
   function Invoke-BuildxJson([string]$Arguments) {
-    $psi = [Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName = 'docker'
-    $psi.Arguments = $Arguments
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
+    $psi = New-TrustedBuildxProcessStartInfo $Arguments
+    if ($null -eq $psi) { return $null }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $psi
-    if (-not $process.Start()) { return $null }
+    if (-not (Start-TrustedExecutableProcess $process 'Buildx')) { return $null }
     $stdout = $process.StandardOutput.ReadToEnd()
     $null = $process.StandardError.ReadToEnd()
     $process.WaitForExit()
@@ -366,10 +627,10 @@ function Get-BuildRecordInspection([string]$Builder, [string]$RecordRef, [string
     try { return $stdout | ConvertFrom-Json -ErrorAction Stop } catch { return $null }
   }
 
-  $record = Invoke-BuildxJson ('buildx history inspect --builder "' + $Builder + '" "' + $RecordRef + '" --format json')
-  $provenance = Invoke-BuildxJson ('buildx history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "https://slsa.dev/provenance/v1"')
-  $index = Invoke-BuildxJson ('buildx history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "application/vnd.oci.image.index.v1+json"')
-  $manifest = Invoke-BuildxJson ('buildx history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "application/vnd.oci.image.manifest.v1+json"')
+  $record = Invoke-BuildxJson ('history inspect --builder "' + $Builder + '" "' + $RecordRef + '" --format json')
+  $provenance = Invoke-BuildxJson ('history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "https://slsa.dev/provenance/v1"')
+  $index = Invoke-BuildxJson ('history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "application/vnd.oci.image.index.v1+json"')
+  $manifest = Invoke-BuildxJson ('history inspect attachment --builder "' + $Builder + '" "' + $RecordRef + '" --type "application/vnd.oci.image.manifest.v1+json"')
   if ($null -eq $record -or $null -eq $provenance -or $null -eq $index -or $null -eq $manifest) { return [pscustomobject]@{ Succeeded = $false } }
 
   $indexAttachments = @($record.Attachments | Where-Object { $_.Type -eq 'application/vnd.oci.image.index.v1+json' })
@@ -408,15 +669,91 @@ function Test-ManifestMetadataConfigBinding([string]$ManifestConfigDigest, [stri
 }
 
 function Invoke-TestGit([string]$RepositoryRoot, [string[]]$Arguments) {
+  $gitExecutable = Get-TrustedGitExecutable
+  if ($null -eq $gitExecutable) { throw 'Trusted Git executable unavailable' }
+  $psi = [Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $gitExecutable
+  $psi.Arguments = '-c core.safecrlf=false -C "' + (Get-NormalizedPath $RepositoryRoot).Replace('"', '\"') + '" ' + (($Arguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  Set-TrustedGitChildEnvironment $psi
+  $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
+  if (-not (Start-TrustedExecutableProcess $process 'Git')) { throw 'Trusted Git process failed to start' }
+  $null = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
+  if ($process.ExitCode -ne 0) { throw "Synthetic Git command failed: $($Arguments -join ' ')" }
+}
+
+function Get-TestGitOutput([string]$RepositoryRoot, [string[]]$Arguments, [switch]$EnableRepositoryPerformanceCaches) {
+  $gitExecutable = Get-TrustedGitExecutable
+  if ($null -eq $gitExecutable) { throw 'Trusted Git executable unavailable' }
+  if ($EnableRepositoryPerformanceCaches -and -not $RunSelfTest) { throw 'Repository performance caches are self-test only' }
+  $psi = [Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $gitExecutable
+  $psi.Arguments = '-C "' + (Get-NormalizedPath $RepositoryRoot).Replace('"', '\"') + '" ' + (($Arguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  Set-TrustedGitChildEnvironment $psi
+  if ($EnableRepositoryPerformanceCaches) { $psi.EnvironmentVariables['GIT_OPTIONAL_LOCKS'] = '1' }
+  $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
+  if (-not (Start-TrustedExecutableProcess $process 'Git')) { throw 'Trusted Git process failed to start' }
+  $stdout = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
+  if ($process.ExitCode -ne 0) { throw 'Synthetic Git command failed' }
+  return $stdout
+}
+
+function New-TestExecutableSecurityDescriptor(
+  [string]$OwnerSid = 'S-1-5-18',
+  [string]$DangerousPrincipalSid,
+  [Security.AccessControl.FileSystemRights]$DangerousRights = 0,
+  [bool]$Directory = $true
+) {
+  $descriptor = if ($Directory) { [Security.AccessControl.DirectorySecurity]::new() } else { [Security.AccessControl.FileSecurity]::new() }
+  $descriptor.SetAccessRuleProtection($true, $false)
+  $descriptor.SetOwner([Security.Principal.SecurityIdentifier]::new($OwnerSid))
+  $descriptor.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+    [Security.Principal.SecurityIdentifier]::new('S-1-5-18'),
+    [Security.AccessControl.FileSystemRights]::FullControl,
+    [Security.AccessControl.AccessControlType]::Allow
+  ))
+  $descriptor.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+    [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545'),
+    [Security.AccessControl.FileSystemRights]::ReadAndExecute,
+    [Security.AccessControl.AccessControlType]::Allow
+  ))
+  if (-not [string]::IsNullOrWhiteSpace($DangerousPrincipalSid) -and $DangerousRights -ne 0) {
+    $descriptor.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+      [Security.Principal.SecurityIdentifier]::new($DangerousPrincipalSid),
+      $DangerousRights,
+      [Security.AccessControl.AccessControlType]::Allow
+    ))
+  }
+  return $descriptor
+}
+
+function New-TestExecutableSecurityDescriptorProvider(
+  [string]$UnsafePath,
+  [string]$OwnerSid = 'S-1-5-18',
+  [string]$DangerousPrincipalSid,
+  [Security.AccessControl.FileSystemRights]$DangerousRights = 0,
+  [Collections.IDictionary]$AclAccessLog
+) {
+  $provider = {
+    param([string]$Component, [bool]$IsDirectory)
+    if ($null -ne $AclAccessLog) { $AclAccessLog[$Component] = $true }
+    if (-not [string]::IsNullOrWhiteSpace($UnsafePath) -and [string]::Equals((Get-NormalizedPath $Component), (Get-NormalizedPath $UnsafePath), [StringComparison]::OrdinalIgnoreCase)) {
+      return New-TestExecutableSecurityDescriptor $OwnerSid $DangerousPrincipalSid $DangerousRights $IsDirectory
+    }
+    return New-TestExecutableSecurityDescriptor -Directory $IsDirectory
+  }.GetNewClosure()
+  return $provider
+}
+
+function New-TestJunction([string]$Link, [string]$Target, [string]$SystemExecutable) {
+  New-Item -ItemType Directory -Path $Target -Force | Out-Null
   $previousErrorActionPreference = $ErrorActionPreference
   try {
     $ErrorActionPreference = 'Continue'
-    & git -c core.safecrlf=false -C $RepositoryRoot @Arguments 1>$null 2>$null
-    $exitCode = $LASTEXITCODE
-  } finally {
-    $ErrorActionPreference = $previousErrorActionPreference
-  }
-  if ($exitCode -ne 0) { throw "Synthetic Git command failed: $($Arguments -join ' ')" }
+    & $SystemExecutable /d /c "mklink /J `"$Link`" `"$Target`"" 1>$null 2>$null
+    return $LASTEXITCODE -eq 0
+  } finally { $ErrorActionPreference = $previousErrorActionPreference }
 }
 
 function New-SyntheticRepository([string]$Root, [string]$Name) {
@@ -448,22 +785,177 @@ function New-SyntheticRepository([string]$Root, [string]$Name) {
 function Invoke-SelfTest {
   $root = Join-Path ([IO.Path]::GetTempPath()) ('autoops-provenance-' + [Guid]::NewGuid().ToString('N'))
   $originalEnvironment = @{}
-  foreach ($name in $gitRepositorySelectionVariables) { $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+  $authoritySelectionVariables = @('DOCKER_HOST','DOCKER_CONTEXT','DOCKER_CONFIG','DOCKER_CERT_PATH','DOCKER_TLS_VERIFY','DOCKER_TLS','DOCKER_API_VERSION','BUILDX_CONFIG','BUILDX_BUILDER','BUILDKIT_HOST')
+  foreach ($name in @($gitRepositorySelectionVariables + $authoritySelectionVariables)) { $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+  $originalPath = [Environment]::GetEnvironmentVariable('PATH', 'Process')
+  $originalWindir = [Environment]::GetEnvironmentVariable('WINDIR', 'Process')
   $passed = $true
   try {
+    # Place plausible attacker-named executables first in PATH.  Resolution
+    # below must either use an OS-known trusted location or fail closed.
+    $attackerDirectory = Join-Path $root 'attacker'
+    New-Item -ItemType Directory -Path $attackerDirectory -Force | Out-Null
+    $systemExecutable = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::System)) 'cmd.exe'
+    $fakeDocker = Join-Path $attackerDirectory 'docker.exe'; $fakeGit = Join-Path $attackerDirectory 'git.exe'
+    Copy-Item -LiteralPath $systemExecutable -Destination $fakeDocker -Force
+    Copy-Item -LiteralPath $systemExecutable -Destination $fakeGit -Force
+    [Environment]::SetEnvironmentVariable('PATH', $attackerDirectory + [IO.Path]::PathSeparator + $originalPath, 'Process')
+    foreach ($name in $authoritySelectionVariables) { [Environment]::SetEnvironmentVariable($name, ('attacker-' + $name), 'Process') }
+    [Environment]::SetEnvironmentVariable('WINDIR', $attackerDirectory, 'Process')
+    $trustedDocker = Get-TrustedDockerExecutable; $trustedGit = Get-TrustedGitExecutable; $trustedBuildx = Get-TrustedBuildxExecutable
+    $dockerPsi = New-TrustedDockerProcessStartInfo 'version'
+    $buildxPsi = New-TrustedBuildxProcessStartInfo 'version'
+    # CI generally lacks Docker Desktop itself.  Exercise the isolated child
+    # environment directly in that case so the selection invariants are not
+    # converted into vacuous availability checks.
+    $dockerEnvironmentPsi = if ($null -ne $dockerPsi) { $dockerPsi } else { $psi = [Diagnostics.ProcessStartInfo]::new(); Set-TrustedDockerChildEnvironment $psi; $psi }
+    $buildxEnvironmentPsi = if ($null -ne $buildxPsi) { $buildxPsi } else { $psi = [Diagnostics.ProcessStartInfo]::new(); Set-TrustedDockerChildEnvironment $psi -Buildx; $psi }
+    $provenanceSource = Get-Content -LiteralPath $PSCommandPath -Raw
+    $requesterSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $chainRoot = Join-Path $root 'Program Files'
+    $dockerLeaf = Join-Path $chainRoot 'Docker\Docker\resources\bin\docker.exe'
+    $buildxLeaf = Join-Path $chainRoot 'Docker\Docker\resources\cli-plugins\docker-buildx.exe'
+    $gitLeaf = Join-Path $chainRoot 'Git\cmd\git.exe'
+    foreach ($leaf in @($dockerLeaf, $buildxLeaf, $gitLeaf)) {
+      New-Item -ItemType Directory -Path (Split-Path -Parent $leaf) -Force | Out-Null
+      Copy-Item -LiteralPath $systemExecutable -Destination $leaf -Force
+    }
+    $safeAclLog = @{}
+    $safeProvider = New-TestExecutableSecurityDescriptorProvider -AclAccessLog $safeAclLog
+    $dockerChainComponents = @(Get-ExecutableAncestryComponents $dockerLeaf $chainRoot)
+    $fullDockerChainAllowed = Test-TrustedExecutableChain $dockerLeaf $chainRoot $safeProvider
+    $dockerParent = Split-Path -Parent $dockerLeaf
+    $dockerNestedAncestor = Split-Path -Parent (Split-Path -Parent $dockerParent)
+    $buildxParent = Split-Path -Parent $buildxLeaf
+    $gitParent = Split-Path -Parent $gitLeaf
+
+    $newUnsafeProvider = {
+      param([string]$UnsafePath, [Security.AccessControl.FileSystemRights]$Rights, [string]$OwnerSid = 'S-1-5-18')
+      return New-TestExecutableSecurityDescriptorProvider $UnsafePath $OwnerSid $requesterSid $Rights
+    }
+    $dockerWriteBlocked = -not (Test-TrustedExecutableChain $dockerLeaf $chainRoot (& $newUnsafeProvider $dockerParent ([Security.AccessControl.FileSystemRights]::WriteData)))
+    $dockerDeleteChildBlocked = -not (Test-TrustedExecutableChain $dockerLeaf $chainRoot (& $newUnsafeProvider $dockerParent ([Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles)))
+    $dockerChangePermissionsBlocked = -not (Test-TrustedExecutableChain $dockerLeaf $chainRoot (& $newUnsafeProvider $dockerParent ([Security.AccessControl.FileSystemRights]::ChangePermissions)))
+    $dockerTakeOwnershipBlocked = -not (Test-TrustedExecutableChain $dockerLeaf $chainRoot (& $newUnsafeProvider $dockerParent ([Security.AccessControl.FileSystemRights]::TakeOwnership)))
+    $dockerOwnerBlocked = -not (Test-TrustedExecutableChain $dockerLeaf $chainRoot (New-TestExecutableSecurityDescriptorProvider $dockerParent $requesterSid))
+    $buildxWriteBlocked = -not (Test-TrustedExecutableChain $buildxLeaf $chainRoot (& $newUnsafeProvider $buildxParent ([Security.AccessControl.FileSystemRights]::WriteData)))
+    $buildxOwnerBlocked = -not (Test-TrustedExecutableChain $buildxLeaf $chainRoot (New-TestExecutableSecurityDescriptorProvider $buildxParent $requesterSid))
+    $gitWriteBlocked = -not (Test-TrustedExecutableChain $gitLeaf $chainRoot (& $newUnsafeProvider $gitParent ([Security.AccessControl.FileSystemRights]::WriteData)))
+    $gitDeleteChildBlocked = -not (Test-TrustedExecutableChain $gitLeaf $chainRoot (& $newUnsafeProvider $gitParent ([Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles)))
+    $gitChangePermissionsBlocked = -not (Test-TrustedExecutableChain $gitLeaf $chainRoot (& $newUnsafeProvider $gitParent ([Security.AccessControl.FileSystemRights]::ChangePermissions)))
+    $gitTakeOwnershipBlocked = -not (Test-TrustedExecutableChain $gitLeaf $chainRoot (& $newUnsafeProvider $gitParent ([Security.AccessControl.FileSystemRights]::TakeOwnership)))
+    $gitOwnerBlocked = -not (Test-TrustedExecutableChain $gitLeaf $chainRoot (New-TestExecutableSecurityDescriptorProvider $gitParent $requesterSid))
+
+    $ownerTests = @{}
+    foreach ($ownerSid in $trustedExecutableOwnerSids) {
+      $ownerTests[$ownerSid] = Test-TrustedExecutableChain $dockerLeaf $chainRoot (New-TestExecutableSecurityDescriptorProvider $dockerParent $ownerSid)
+    }
+
+    $leafReparseAclLog = @{}
+    $leafReparseProvider = New-TestExecutableSecurityDescriptorProvider -AclAccessLog $leafReparseAclLog
+    $leafReparseAttributes = { param([string]$Component) if ([string]::Equals($Component, $dockerLeaf, [StringComparison]::OrdinalIgnoreCase)) { return [IO.FileAttributes]::ReparsePoint }; return [IO.File]::GetAttributes($Component) }.GetNewClosure()
+    $leafReparseBlocked = -not (Test-TrustedExecutableChain $dockerLeaf $chainRoot $leafReparseProvider $leafReparseAttributes) -and -not $leafReparseAclLog.Contains($dockerLeaf)
+
+    $reparseCases = @{}
+    foreach ($reparseFixture in @(
+      @{ Name = 'DOCKER_PARENT_REPARSE_BLOCKED'; RelativeLink = 'Docker'; RelativeTarget = 'targets\docker-parent'; RelativeLeaf = 'Docker\resources\bin\docker.exe' },
+      @{ Name = 'DOCKER_NESTED_ANCESTOR_REPARSE_BLOCKED'; RelativeLink = 'Docker\Docker\resources'; RelativeTarget = 'targets\docker-nested'; RelativeLeaf = 'bin\docker.exe' },
+      @{ Name = 'BUILDX_PARENT_REPARSE_BLOCKED'; RelativeLink = 'Docker\Docker\resources\cli-plugins'; RelativeTarget = 'targets\buildx-parent'; RelativeLeaf = 'docker-buildx.exe' },
+      @{ Name = 'GIT_PARENT_REPARSE_BLOCKED'; RelativeLink = 'Git\cmd'; RelativeTarget = 'targets\git-parent'; RelativeLeaf = 'git.exe' }
+    )) {
+      $fixtureRoot = Join-Path $root ('reparse-' + $reparseFixture.Name)
+      $link = Join-Path $fixtureRoot $reparseFixture.RelativeLink
+      $target = Join-Path $fixtureRoot $reparseFixture.RelativeTarget
+      New-Item -ItemType Directory -Path (Split-Path -Parent $link) -Force | Out-Null
+      New-Item -ItemType Directory -Path (Split-Path -Parent (Join-Path $target $reparseFixture.RelativeLeaf)) -Force | Out-Null
+      Copy-Item -LiteralPath $systemExecutable -Destination (Join-Path $target $reparseFixture.RelativeLeaf) -Force
+      $junctionCreated = New-TestJunction $link $target $systemExecutable
+      $fixtureLeaf = Join-Path $link $reparseFixture.RelativeLeaf
+      $fixtureAclLog = @{}
+      $fixtureProvider = New-TestExecutableSecurityDescriptorProvider -AclAccessLog $fixtureAclLog
+      $reparseCases[$reparseFixture.Name] = $junctionCreated -and -not (Test-TrustedExecutableChain $fixtureLeaf $fixtureRoot $fixtureProvider) -and -not $fixtureAclLog.Contains($link)
+    }
+
+    $fakeCliRoot = Join-Path $root 'fake-cli-root'
+    $fakeCliParent = Join-Path $fakeCliRoot 'writable-parent'
+    $fakeCli = Join-Path $fakeCliParent 'fake-cli.exe'
+    New-Item -ItemType Directory -Path $fakeCliParent -Force | Out-Null
+    Copy-Item -LiteralPath $systemExecutable -Destination $fakeCli -Force
+    $fakeCliSafe = Test-TrustedExecutableChain $fakeCli $fakeCliRoot (New-TestExecutableSecurityDescriptorProvider)
+    $fakeCliUnsafeProvider = & $newUnsafeProvider $fakeCliParent ([Security.AccessControl.FileSystemRights]::WriteData)
+    $pointOfUseResults = @{}
+    foreach ($kind in @('Docker','Buildx','Git')) {
+      $testPsi = [Diagnostics.ProcessStartInfo]::new(); $testPsi.FileName = $fakeCli; $testPsi.Arguments = '/d /c exit 0'; $testPsi.UseShellExecute = $false
+      $testProcess = [Diagnostics.Process]::new(); $testProcess.StartInfo = $testPsi
+      $pointOfUseResults[$kind] = $fakeCliSafe -and -not (Start-TrustedExecutableProcess $testProcess $kind $fakeCliRoot $fakeCliUnsafeProvider)
+    }
     $primary = New-SyntheticRepository $root 'primary'
     $redirect = New-SyntheticRepository $root 'redirect'
     $expected = (Get-RepositoryGitOutput 'rev-parse HEAD' $primary).Output.Trim()
     $stale = 'b' * 40
     $clean = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
     $cases = @(
+      @{ Name = 'EXECUTABLE_ANCESTRY_FULL_CHAIN_VALIDATED'; Passed = $fullDockerChainAllowed -and $safeAclLog.Count -eq $dockerChainComponents.Count },
+      @{ Name = 'DOCKER_PARENT_REPARSE_BLOCKED'; Passed = $reparseCases['DOCKER_PARENT_REPARSE_BLOCKED'] },
+      @{ Name = 'DOCKER_NESTED_ANCESTOR_REPARSE_BLOCKED'; Passed = $reparseCases['DOCKER_NESTED_ANCESTOR_REPARSE_BLOCKED'] },
+      @{ Name = 'DOCKER_PARENT_REQUESTER_WRITE_BLOCKED'; Passed = $dockerWriteBlocked },
+      @{ Name = 'DOCKER_PARENT_DELETE_CHILD_BLOCKED'; Passed = $dockerDeleteChildBlocked },
+      @{ Name = 'DOCKER_PARENT_CHANGE_PERMISSIONS_BLOCKED'; Passed = $dockerChangePermissionsBlocked },
+      @{ Name = 'DOCKER_PARENT_TAKE_OWNERSHIP_BLOCKED'; Passed = $dockerTakeOwnershipBlocked },
+      @{ Name = 'DOCKER_PARENT_UNTRUSTED_OWNER_BLOCKED'; Passed = $dockerOwnerBlocked },
+      @{ Name = 'BUILDX_PARENT_REPARSE_BLOCKED'; Passed = $reparseCases['BUILDX_PARENT_REPARSE_BLOCKED'] },
+      @{ Name = 'BUILDX_CLI_PLUGINS_REQUESTER_WRITE_BLOCKED'; Passed = $buildxWriteBlocked },
+      @{ Name = 'BUILDX_PARENT_UNTRUSTED_OWNER_BLOCKED'; Passed = $buildxOwnerBlocked },
+      @{ Name = 'GIT_PARENT_REPARSE_BLOCKED'; Passed = $reparseCases['GIT_PARENT_REPARSE_BLOCKED'] },
+      @{ Name = 'GIT_PARENT_REQUESTER_WRITE_BLOCKED'; Passed = $gitWriteBlocked },
+      @{ Name = 'GIT_PARENT_DELETE_CHILD_BLOCKED'; Passed = $gitDeleteChildBlocked },
+      @{ Name = 'GIT_PARENT_CHANGE_PERMISSIONS_BLOCKED'; Passed = $gitChangePermissionsBlocked },
+      @{ Name = 'GIT_PARENT_TAKE_OWNERSHIP_BLOCKED'; Passed = $gitTakeOwnershipBlocked },
+      @{ Name = 'GIT_PARENT_UNTRUSTED_OWNER_BLOCKED'; Passed = $gitOwnerBlocked },
+      @{ Name = 'TRUSTED_PROGRAM_FILES_EXECUTABLE_CHAIN_ALLOWED'; Passed = $fullDockerChainAllowed },
+      @{ Name = 'TRUSTEDINSTALLER_EXECUTABLE_ANCESTOR_ALLOWED'; Passed = $ownerTests['S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'] },
+      @{ Name = 'SYSTEM_EXECUTABLE_ANCESTOR_ALLOWED'; Passed = $ownerTests['S-1-5-18'] },
+      @{ Name = 'ADMINISTRATORS_EXECUTABLE_ANCESTOR_ALLOWED'; Passed = $ownerTests['S-1-5-32-544'] },
+      @{ Name = 'EXECUTABLE_LEAF_REPARSE_STILL_BLOCKED'; Passed = $leafReparseBlocked },
+      @{ Name = 'EXECUTABLE_REPARSE_REJECTED_BEFORE_ACL_ACCESS'; Passed = $leafReparseBlocked -and ($reparseCases.Values -notcontains $false) },
+      @{ Name = 'CALLER_PATH_SUBSTITUTION_REMAINS_BLOCKED'; Passed = ($null -eq $trustedDocker -or -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase)) -and ($null -eq $trustedGit -or -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase)) },
+      @{ Name = 'CALLER_WINDIR_SUBSTITUTION_REMAINS_BLOCKED'; Passed = $dockerEnvironmentPsi.EnvironmentVariables['WINDIR'] -ceq (Split-Path -Parent ([Environment]::GetFolderPath([Environment+SpecialFolder]::System))) },
+      @{ Name = 'CALLER_DOCKER_CONFIG_SUBSTITUTION_REMAINS_BLOCKED'; Passed = -not $dockerEnvironmentPsi.EnvironmentVariables.ContainsKey('DOCKER_CONFIG') -and $buildxEnvironmentPsi.EnvironmentVariables['DOCKER_CONFIG'] -ceq $trustedDockerConfigRoot },
+      @{ Name = 'DOCKER_EXECUTABLE_REVALIDATED_AT_POINT_OF_USE'; Passed = $pointOfUseResults['Docker'] },
+      @{ Name = 'BUILDX_EXECUTABLE_REVALIDATED_AT_POINT_OF_USE'; Passed = $pointOfUseResults['Buildx'] },
+      @{ Name = 'GIT_EXECUTABLE_REVALIDATED_AT_POINT_OF_USE'; Passed = $pointOfUseResults['Git'] },
+      @{ Name = 'FAKE_CLI_UNDER_WRITABLE_ANCESTOR_BLOCKED'; Passed = ($pointOfUseResults.Values -notcontains $false) },
       @{ Name = 'IMAGE_PROVENANCE_EXACT_ACCEPTED_SHA'; Passed = Test-CheckoutBinding $expected $clean },
       @{ Name = 'IMAGE_PROVENANCE_STALE_SHA_BLOCKED'; Passed = -not (Test-CheckoutBinding $stale $clean) },
       @{ Name = 'IMAGE_PROVENANCE_MISSING_BLOCKED'; Passed = -not (Test-ImageRevision $null $expected) },
       @{ Name = 'IMAGE_PROVENANCE_MALFORMED_BLOCKED'; Passed = -not (Test-ImageRevision 'not-a-revision' $expected) },
       @{ Name = 'IMAGE_PROVENANCE_INVALID_IMAGE_REFERENCE_BLOCKED'; Passed = -not (Test-ImageReference 'invalid image reference') },
       @{ Name = 'IMAGE_PROVENANCE_GIT_STATUS_FAILURE_BLOCKED'; Passed = -not (Get-RepositoryGitOutput 'not-a-git-command' $primary).Succeeded },
-      @{ Name = 'IMAGE_PROVENANCE_API_WORKER_MISMATCH_BLOCKED'; Passed = -not ((Test-ImageRevision $expected $expected) -and (Test-ImageRevision $stale $expected)) }
+      @{ Name = 'IMAGE_PROVENANCE_API_WORKER_MISMATCH_BLOCKED'; Passed = -not ((Test-ImageRevision $expected $expected) -and (Test-ImageRevision $stale $expected)) },
+      @{ Name = 'PROVENANCE_FAKE_DOCKER_PATH_BLOCKED'; Passed = $null -eq $trustedDocker -or -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase) },
+      @{ Name = 'PROVENANCE_FAKE_GIT_PATH_BLOCKED'; Passed = $null -eq $trustedGit -or -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase) },
+      @{ Name = 'PROVENANCE_CALLER_PATH_IGNORED'; Passed = ($null -eq $trustedDocker -or -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase)) -and ($null -eq $trustedGit -or -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase)) },
+      @{ Name = 'PROVENANCE_DOCKER_PATH_PINNED'; Passed = $null -eq $trustedDocker -or ((Test-TrustedDockerExecutablePath $trustedDocker) -and -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase)) },
+      @{ Name = 'PROVENANCE_GIT_PATH_PINNED'; Passed = $null -eq $trustedGit -or ((Test-TrustedGitExecutablePath $trustedGit) -and -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase)) },
+      @{ Name = 'PROVENANCE_PATH_FALLBACK_NO'; Passed = ($null -eq $trustedDocker -or -not [string]::Equals($trustedDocker, $fakeDocker, [StringComparison]::OrdinalIgnoreCase)) -and ($null -eq $trustedGit -or -not [string]::Equals($trustedGit, $fakeGit, [StringComparison]::OrdinalIgnoreCase)) },
+      # Hosted Windows workers usually do not install Docker Desktop.  That is
+      # an expected fail-closed condition, never an invitation to use PATH or a
+      # caller-selected CLI/plugin.  On a Docker Desktop host the same cases
+      # additionally inspect the concrete pinned process start information.
+      @{ Name = 'TRUSTED_DOCKER_UNAVAILABLE_FAILS_CLOSED'; Passed = $null -ne $dockerPsi -or $null -eq $trustedDocker },
+      @{ Name = 'TRUSTED_BUILDX_UNAVAILABLE_FAILS_CLOSED'; Passed = $null -ne $buildxPsi -or $null -eq $trustedBuildx },
+      @{ Name = 'CALLER_DOCKER_HOST_IGNORED'; Passed = -not $dockerEnvironmentPsi.EnvironmentVariables.ContainsKey('DOCKER_HOST') },
+      @{ Name = 'CALLER_DOCKER_CONTEXT_IGNORED'; Passed = -not $dockerEnvironmentPsi.EnvironmentVariables.ContainsKey('DOCKER_CONTEXT') },
+      @{ Name = 'CALLER_DOCKER_CONFIG_IGNORED'; Passed = -not $dockerEnvironmentPsi.EnvironmentVariables.ContainsKey('DOCKER_CONFIG') },
+      @{ Name = 'CALLER_DOCKER_CERT_PATH_IGNORED'; Passed = -not $dockerEnvironmentPsi.EnvironmentVariables.ContainsKey('DOCKER_CERT_PATH') },
+      @{ Name = 'CALLER_DOCKER_TLS_VERIFY_IGNORED'; Passed = -not $dockerEnvironmentPsi.EnvironmentVariables.ContainsKey('DOCKER_TLS_VERIFY') },
+      @{ Name = 'TRUSTED_DOCKER_ENDPOINT_EXPLICIT'; Passed = ($null -ne $dockerPsi -and $dockerPsi.Arguments -match [regex]::Escape($trustedDockerEndpoint)) -or (($provenanceSource -match [regex]::Escape($trustedDockerEndpoint)) -and ($provenanceSource -match "--host")) },
+      @{ Name = 'TRUSTED_DOCKER_EXECUTABLE_ABSOLUTE'; Passed = ($null -ne $dockerPsi -and $dockerPsi.FileName -ceq $trustedDocker) -or $provenanceSource -match 'Docker\\Docker\\resources\\bin\\docker\.exe' },
+      @{ Name = 'TRUSTED_BUILDX_EXECUTABLE_DIRECT'; Passed = ($null -ne $buildxPsi -and $buildxPsi.FileName -ceq $trustedBuildx -and $buildxPsi.Arguments -notmatch 'buildx') -or $provenanceSource -match 'cli-plugins\\docker-buildx\.exe' },
+      @{ Name = 'CALLER_BUILDX_CONFIG_IGNORED'; Passed = $buildxEnvironmentPsi.EnvironmentVariables['BUILDX_CONFIG'] -ceq (Join-Path $trustedDockerConfigRoot 'buildx') },
+      @{ Name = 'CALLER_BUILDX_BUILDER_IGNORED'; Passed = -not $buildxEnvironmentPsi.EnvironmentVariables.ContainsKey('BUILDX_BUILDER') },
+      @{ Name = 'CALLER_BUILDKIT_HOST_IGNORED'; Passed = -not $buildxEnvironmentPsi.EnvironmentVariables.ContainsKey('BUILDKIT_HOST') },
+      @{ Name = 'DOCKER_PLUGIN_DISCOVERY_NOT_AUTHORITY'; Passed = $provenanceSource -notmatch 'docker\.exe buildx' }
     )
     $builderTokens = $null
     $builderParseErrors = $null
@@ -623,16 +1115,118 @@ function Invoke-SelfTest {
     $cases += @{ Name = 'MULTIPLE_PLATFORM_MANIFESTS_AMBIGUOUS_BLOCKED'; Passed = -not (Get-SelectedApplicationManifest $ambiguousIndex 'linux' 'amd64').Succeeded }
     $cases += @{ Name = 'WRONG_PLATFORM_MANIFEST_BLOCKED'; Passed = -not (Get-SelectedApplicationManifest $validIndex 'windows' 'amd64').Succeeded }
 
-    $fsmonitorHook = Join-Path $primary '.git/fsmonitor-empty.sh'
-    Set-Content -LiteralPath $fsmonitorHook -Value "#!/bin/sh`necho 'version 2'`necho 'token'" -Encoding ascii
-    Invoke-TestGit $primary @('config','core.fsmonitor','sh .git/fsmonitor-empty.sh')
-    & git -C $primary status --porcelain=v1 1>$null 2>$null
-    Add-Content -LiteralPath (Join-Path $primary $trackedBuildInput) -Value '// stale fsmonitor change' -Encoding utf8
-    $misledStatus = @(& git -C $primary status --porcelain=v1 2>$null) -join "`n"
-    $fsmonitorInspection = Get-RepositoryInspection $primary $apiAndWorkerBuildInputPrefixes
-    $cases += @{ Name = 'FSMONITOR_STALE_BUILD_INPUT_BLOCKED'; Passed = [string]::IsNullOrWhiteSpace($misledStatus) -and $fsmonitorInspection.HasOrdinaryChanges -and -not (Test-CheckoutBinding $expected $fsmonitorInspection) }
-    Invoke-TestGit $primary @('config','--unset','core.fsmonitor')
-    Invoke-TestGit $primary @('checkout','--',$trackedBuildInput)
+    # Use a dedicated repository so earlier cache-independent scans cannot
+    # normalize the exact stale-fsmonitor state this adversarial fixture needs.
+    # Protocol v2 requires a new token followed by NUL-separated paths.  This
+    # hook deliberately returns a valid token and no paths, fabricating a stale
+    # clean result for ordinary Git while the authority scan must still detect
+    # the working-tree mutation with fsmonitor and performance caches disabled.
+    $fsmonitorRepository = New-SyntheticRepository $root 'fsmonitor-primary'
+    $fsmonitorExpected = (Get-RepositoryGitOutput 'rev-parse HEAD' $fsmonitorRepository).Output.Trim()
+    $fsmonitorTrackedInput = 'packages/database/prisma/schema.prisma'
+    $fsmonitorHook = Join-Path $fsmonitorRepository '.git/fsmonitor-empty.sh'
+    Set-Content -LiteralPath $fsmonitorHook -Value "#!/bin/sh`nprintf 'token\0'" -Encoding ascii
+    Invoke-TestGit $fsmonitorRepository @('config','core.fsmonitor','sh .git/fsmonitor-empty.sh')
+    Invoke-TestGit $fsmonitorRepository @('config','core.fsmonitorHookVersion','2')
+    $freshFsmonitorInspection = Get-RepositoryInspection $fsmonitorRepository $apiAndWorkerBuildInputPrefixes
+    $cases += @{ Name = 'FSMONITOR_FRESH_NORMAL_REPOSITORY_ACCEPTED'; Passed = Test-CheckoutBinding $fsmonitorExpected $freshFsmonitorInspection }
+
+    $null = Get-TestGitOutput $fsmonitorRepository @('status','--porcelain=v1') -EnableRepositoryPerformanceCaches
+    Add-Content -LiteralPath (Join-Path $fsmonitorRepository $fsmonitorTrackedInput) -Value '// stale fsmonitor change' -Encoding utf8
+    $misledStatus = Get-TestGitOutput $fsmonitorRepository @('status','--porcelain=v1') -EnableRepositoryPerformanceCaches
+    $fsmonitorInspection = Get-RepositoryInspection $fsmonitorRepository $apiAndWorkerBuildInputPrefixes
+    $staleBuildInputBlocked = [string]::IsNullOrWhiteSpace($misledStatus) -and $fsmonitorInspection.HasOrdinaryChanges -and -not (Test-CheckoutBinding $fsmonitorExpected $fsmonitorInspection)
+    $cases += @{ Name = 'FSMONITOR_STALE_BUILD_INPUT_BLOCKED'; Passed = $staleBuildInputBlocked }
+    $cases += @{ Name = 'FSMONITOR_STALE_CLEAN_TREE_FABRICATION_BLOCKED'; Passed = $staleBuildInputBlocked }
+    $cases += @{ Name = 'FSMONITOR_MODIFIED_TRACKED_INPUT_BLOCKED'; Passed = $fsmonitorInspection.HasOrdinaryChanges -and -not (Test-CheckoutBinding $fsmonitorExpected $fsmonitorInspection) }
+    $cases += @{ Name = 'FSMONITOR_SECURITY_TRUTH_NOT_CACHE_DEPENDENT'; Passed = [string]::IsNullOrWhiteSpace($misledStatus) -and $fsmonitorInspection.HasOrdinaryChanges }
+    Invoke-TestGit $fsmonitorRepository @('checkout','--',$fsmonitorTrackedInput)
+
+    $untrackedFsmonitorInput = Join-Path $fsmonitorRepository 'packages/database/prisma/fsmonitor-untracked.ts'
+    Set-Content -LiteralPath $untrackedFsmonitorInput -Value 'export {}' -Encoding utf8
+    $untrackedFsmonitorInspection = Get-RepositoryInspection $fsmonitorRepository $apiAndWorkerBuildInputPrefixes
+    $cases += @{ Name = 'FSMONITOR_UNTRACKED_SECURITY_INPUT_BLOCKED'; Passed = $untrackedFsmonitorInspection.HasOrdinaryChanges -and -not (Test-CheckoutBinding $fsmonitorExpected $untrackedFsmonitorInspection) }
+    Remove-Item -LiteralPath $untrackedFsmonitorInput -Force
+
+    $renamedFsmonitorInput = Join-Path $fsmonitorRepository 'packages/database/prisma/schema-renamed.prisma'
+    Move-Item -LiteralPath (Join-Path $fsmonitorRepository $fsmonitorTrackedInput) -Destination $renamedFsmonitorInput
+    $renamedFsmonitorInspection = Get-RepositoryInspection $fsmonitorRepository $apiAndWorkerBuildInputPrefixes
+    $cases += @{ Name = 'FSMONITOR_RENAMED_INPUT_BLOCKED'; Passed = $renamedFsmonitorInspection.HasOrdinaryChanges -and -not (Test-CheckoutBinding $fsmonitorExpected $renamedFsmonitorInspection) }
+    Move-Item -LiteralPath $renamedFsmonitorInput -Destination (Join-Path $fsmonitorRepository $fsmonitorTrackedInput)
+
+    Set-Content -LiteralPath (Join-Path $fsmonitorRepository $fsmonitorTrackedInput) -Value 'replacement content' -Encoding utf8
+    $replacedFsmonitorInspection = Get-RepositoryInspection $fsmonitorRepository $apiAndWorkerBuildInputPrefixes
+    $cases += @{ Name = 'FSMONITOR_REPLACED_INPUT_BLOCKED'; Passed = $replacedFsmonitorInspection.HasOrdinaryChanges -and -not (Test-CheckoutBinding $fsmonitorExpected $replacedFsmonitorInspection) }
+    Invoke-TestGit $fsmonitorRepository @('checkout','--',$fsmonitorTrackedInput)
+
+    Remove-Item -LiteralPath (Join-Path $fsmonitorRepository $fsmonitorTrackedInput) -Force
+    $deletedFsmonitorInspection = Get-RepositoryInspection $fsmonitorRepository $apiAndWorkerBuildInputPrefixes
+    $cases += @{ Name = 'FSMONITOR_DELETED_INPUT_BLOCKED'; Passed = $deletedFsmonitorInspection.HasOrdinaryChanges -and -not (Test-CheckoutBinding $fsmonitorExpected $deletedFsmonitorInspection) }
+    Invoke-TestGit $fsmonitorRepository @('checkout','--',$fsmonitorTrackedInput)
+
+    $initialPointOfUseInspection = Get-RepositoryInspection $fsmonitorRepository $apiAndWorkerBuildInputPrefixes
+    Add-Content -LiteralPath (Join-Path $fsmonitorRepository $fsmonitorTrackedInput) -Value '// rapid point-of-use mutation' -Encoding utf8
+    $pointOfUseFsmonitorInspection = Get-RepositoryInspection $fsmonitorRepository $apiAndWorkerBuildInputPrefixes
+    $pointOfUseBlocked = (Test-CheckoutBinding $fsmonitorExpected $initialPointOfUseInspection) -and $pointOfUseFsmonitorInspection.HasOrdinaryChanges -and -not (Test-CheckoutBinding $fsmonitorExpected $pointOfUseFsmonitorInspection)
+    $cases += @{ Name = 'FSMONITOR_RAPID_MUTATION_BLOCKED'; Passed = $pointOfUseBlocked }
+    $cases += @{ Name = 'FSMONITOR_POINT_OF_USE_REVALIDATION'; Passed = $pointOfUseBlocked }
+    Invoke-TestGit $fsmonitorRepository @('checkout','--',$fsmonitorTrackedInput)
+
+    $gitEnvironmentPsi = [Diagnostics.ProcessStartInfo]::new()
+    $gitEnvironmentPsi.EnvironmentVariables['GIT_CONFIG_COUNT'] = '1'
+    $gitEnvironmentPsi.EnvironmentVariables['GIT_CONFIG_KEY_0'] = 'core.fsmonitor'
+    $gitEnvironmentPsi.EnvironmentVariables['GIT_CONFIG_VALUE_0'] = 'attacker-hook'
+    $gitEnvironmentPsi.EnvironmentVariables['GIT_EXEC_PATH'] = $attackerDirectory
+    Set-TrustedGitChildEnvironment $gitEnvironmentPsi
+    $gitEnvironmentIsolated = -not $gitEnvironmentPsi.EnvironmentVariables.ContainsKey('GIT_CONFIG_COUNT') -and
+      -not $gitEnvironmentPsi.EnvironmentVariables.ContainsKey('GIT_CONFIG_KEY_0') -and
+      -not $gitEnvironmentPsi.EnvironmentVariables.ContainsKey('GIT_CONFIG_VALUE_0') -and
+      -not $gitEnvironmentPsi.EnvironmentVariables.ContainsKey('GIT_EXEC_PATH') -and
+      $gitEnvironmentPsi.EnvironmentVariables['GIT_CONFIG_NOSYSTEM'] -ceq '1' -and
+      $gitEnvironmentPsi.EnvironmentVariables['GIT_CONFIG_GLOBAL'] -ceq 'NUL'
+
+    $overrideRepository = New-SyntheticRepository $root 'fsmonitor-override'
+    $overrideExpected = (Get-RepositoryGitOutput 'rev-parse HEAD' $overrideRepository).Output.Trim()
+    $overrideTrackedInput = 'packages/database/prisma/schema.prisma'
+    $overrideHook = Join-Path $overrideRepository '.git/fsmonitor-attacker.sh'
+    $overrideMarker = Join-Path $overrideRepository '.git/fsmonitor-attacker-invoked'
+    Set-Content -LiteralPath $overrideHook -Value "#!/bin/sh`nprintf invoked > .git/fsmonitor-attacker-invoked`nprintf 'token\0'" -Encoding ascii
+    Add-Content -LiteralPath (Join-Path $overrideRepository $overrideTrackedInput) -Value '// caller override mutation' -Encoding utf8
+    $injectedNames = @('GIT_CONFIG_COUNT','GIT_CONFIG_KEY_0','GIT_CONFIG_VALUE_0','GIT_CONFIG_KEY_1','GIT_CONFIG_VALUE_1','GIT_CONFIG_GLOBAL')
+    $injectedOriginal = @{}
+    foreach ($name in $injectedNames) { $injectedOriginal[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+    try {
+      [Environment]::SetEnvironmentVariable('GIT_CONFIG_COUNT','2','Process')
+      [Environment]::SetEnvironmentVariable('GIT_CONFIG_KEY_0','core.fsmonitor','Process')
+      [Environment]::SetEnvironmentVariable('GIT_CONFIG_VALUE_0','sh .git/fsmonitor-attacker.sh','Process')
+      [Environment]::SetEnvironmentVariable('GIT_CONFIG_KEY_1','core.fsmonitorHookVersion','Process')
+      [Environment]::SetEnvironmentVariable('GIT_CONFIG_VALUE_1','2','Process')
+      $injectedInspection = Get-RepositoryInspection $overrideRepository $apiAndWorkerBuildInputPrefixes
+      $environmentOverrideBlocked = $injectedInspection.HasOrdinaryChanges -and -not (Test-CheckoutBinding $overrideExpected $injectedInspection) -and -not (Test-Path -LiteralPath $overrideMarker)
+
+      $globalConfig = Join-Path $overrideRepository '.git/attacker-global-config'
+      Set-Content -LiteralPath $globalConfig -Value "[core]`nfsmonitor = sh .git/fsmonitor-attacker.sh`nfsmonitorHookVersion = 2" -Encoding ascii
+      [Environment]::SetEnvironmentVariable('GIT_CONFIG_COUNT',$null,'Process')
+      [Environment]::SetEnvironmentVariable('GIT_CONFIG_KEY_0',$null,'Process')
+      [Environment]::SetEnvironmentVariable('GIT_CONFIG_VALUE_0',$null,'Process')
+      [Environment]::SetEnvironmentVariable('GIT_CONFIG_KEY_1',$null,'Process')
+      [Environment]::SetEnvironmentVariable('GIT_CONFIG_VALUE_1',$null,'Process')
+      [Environment]::SetEnvironmentVariable('GIT_CONFIG_GLOBAL',$globalConfig,'Process')
+      $globalOverrideInspection = Get-RepositoryInspection $overrideRepository $apiAndWorkerBuildInputPrefixes
+      $globalOverrideBlocked = $globalOverrideInspection.HasOrdinaryChanges -and -not (Test-CheckoutBinding $overrideExpected $globalOverrideInspection) -and -not (Test-Path -LiteralPath $overrideMarker)
+    } finally {
+      foreach ($name in $injectedNames) { [Environment]::SetEnvironmentVariable($name, $injectedOriginal[$name], 'Process') }
+    }
+
+    Invoke-TestGit $overrideRepository @('config','core.fsmonitor','sh .git/fsmonitor-attacker.sh')
+    Invoke-TestGit $overrideRepository @('config','core.fsmonitorHookVersion','2')
+    $repositoryOverrideInspection = Get-RepositoryInspection $overrideRepository $apiAndWorkerBuildInputPrefixes
+    $repositoryOverrideBlocked = $repositoryOverrideInspection.HasOrdinaryChanges -and -not (Test-CheckoutBinding $overrideExpected $repositoryOverrideInspection) -and -not (Test-Path -LiteralPath $overrideMarker)
+    $cases += @{ Name = 'FSMONITOR_ENVIRONMENT_CONFIG_INJECTION_BLOCKED'; Passed = $gitEnvironmentIsolated -and $environmentOverrideBlocked }
+    $cases += @{ Name = 'FSMONITOR_GLOBAL_CONFIG_SUBSTITUTION_BLOCKED'; Passed = $gitEnvironmentIsolated -and $globalOverrideBlocked }
+    $cases += @{ Name = 'FSMONITOR_REPOSITORY_LOCAL_CONFIG_BLOCKED'; Passed = $repositoryOverrideBlocked }
+    $cases += @{ Name = 'FSMONITOR_FAKE_HOOK_NOT_AUTHORITY'; Passed = $environmentOverrideBlocked -and $globalOverrideBlocked -and $repositoryOverrideBlocked }
+    $cases += @{ Name = 'FSMONITOR_CALLER_OVERRIDE_BLOCKED'; Passed = $gitEnvironmentIsolated -and $environmentOverrideBlocked -and $globalOverrideBlocked -and $repositoryOverrideBlocked }
 
     Invoke-TestGit $primary @('config','core.untrackedCache','true')
     Set-Content -LiteralPath (Join-Path $primary 'packages/database/prisma/cache-visible.ts') -Value 'export {}' -Encoding utf8
@@ -657,7 +1251,9 @@ function Invoke-SelfTest {
       if (-not $case.Passed) { $passed = $false }
     }
   } finally {
-    foreach ($name in $gitRepositorySelectionVariables) { [Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], 'Process') }
+    foreach ($name in $originalEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], 'Process') }
+    [Environment]::SetEnvironmentVariable('PATH', $originalPath, 'Process')
+    [Environment]::SetEnvironmentVariable('WINDIR', $originalWindir, 'Process')
     if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
   }
   exit $(if ($passed) { 0 } else { 1 })
@@ -667,6 +1263,11 @@ if ($RunSelfTest) { Invoke-SelfTest }
 
 if (-not (Test-Revision $ExpectedRevision)) {
   Write-Result 'EXPECTED_IMAGE_REVISION' $false
+  exit 1
+}
+if ((-not [string]::IsNullOrWhiteSpace($ExpectedApiImageId) -and -not (Test-Digest $ExpectedApiImageId)) -or
+    (-not [string]::IsNullOrWhiteSpace($ExpectedWorkerImageId) -and -not (Test-Digest $ExpectedWorkerImageId))) {
+  Write-Result 'EXPECTED_IMAGE_IDENTITY' $false
   exit 1
 }
 
@@ -692,10 +1293,14 @@ $workerRecordPassed = Test-BuildRecordBinding $workerRecord
 # its exact loaded-image identity binding.
 $apiPassed = $apiLabelPassed -and $apiRecordPassed
 $workerPassed = $workerLabelPassed -and $workerRecordPassed
+$apiIdentityPassed = [string]::IsNullOrWhiteSpace($ExpectedApiImageId) -or ($apiLoadedImage.LoadedImageIdentity -ceq $ExpectedApiImageId)
+$workerIdentityPassed = [string]::IsNullOrWhiteSpace($ExpectedWorkerImageId) -or ($workerLoadedImage.LoadedImageIdentity -ceq $ExpectedWorkerImageId)
 Write-Result 'API_IMAGE_REVISION_LABEL' $apiLabelPassed
 Write-Result 'WORKER_IMAGE_REVISION_LABEL' $workerLabelPassed
 Write-Result 'API_BUILD_RECORD_PROVENANCE' $apiRecordPassed
 Write-Result 'WORKER_BUILD_RECORD_PROVENANCE' $workerRecordPassed
 Write-Result 'API_IMAGE_PROVENANCE' $apiPassed
 Write-Result 'WORKER_IMAGE_PROVENANCE' $workerPassed
-if (-not $apiPassed -or -not $workerPassed) { exit 1 }
+Write-Result 'API_IMAGE_IDENTITY_BINDING' $apiIdentityPassed
+Write-Result 'WORKER_IMAGE_IDENTITY_BINDING' $workerIdentityPassed
+if (-not $apiPassed -or -not $workerPassed -or -not $apiIdentityPassed -or -not $workerIdentityPassed) { exit 1 }
