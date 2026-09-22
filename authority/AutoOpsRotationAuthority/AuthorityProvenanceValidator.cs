@@ -9,14 +9,15 @@ namespace AutoOpsRotationAuthority;
 internal sealed class AuthorityProvenanceValidator : IProvenanceValidator
 {
     private const string Builder = "desktop-linux";
-    private readonly string _script;
+    private readonly AuthorityInstalledPayloadSet _payloads;
     private readonly string _repositoryRoot;
     private readonly string _dockerConfigRoot;
     private readonly string _requesterSid;
 
     internal AuthorityProvenanceValidator(AuthoritySettings settings)
     {
-        _script = AuthorityPathSecurity.RequireTrustedInstalledFile("scripts", "validate-file-mode-image-provenance.ps1", settings.RequesterSid);
+        _payloads = AuthorityPathSecurity.RequireTrustedInstalledPayloadSet(
+            "scripts", "validate-file-mode-image-provenance.ps1", ProvenancePayloadContract(), settings.RequesterSid);
         _repositoryRoot = AuthorityPathSecurity.RequireTrustedInstalledDirectory("provenance-repository", settings.RequesterSid);
         _dockerConfigRoot = Path.GetFullPath(settings.DockerCliConfigDirectory);
         _requesterSid = settings.RequesterSid;
@@ -33,7 +34,7 @@ internal sealed class AuthorityProvenanceValidator : IProvenanceValidator
             AuthorityPathSecurity.AssertTrustedDirectoryTree(_dockerConfigRoot, _requesterSid);
             cancellationToken.ThrowIfCancellationRequested();
             using var dockerProxy = AuthenticatedDockerPipeProxy.StartForAuthority(cancellationToken);
-            var powershell = GetWindowsPowerShellPath();
+            var powershell = AuthorityPathSecurity.RequireTrustedWindowsPowerShell(_requesterSid);
             var psi = new ProcessStartInfo(powershell)
             {
                 UseShellExecute = false,
@@ -47,7 +48,7 @@ internal sealed class AuthorityProvenanceValidator : IProvenanceValidator
             psi.ArgumentList.Add("-ExecutionPolicy");
             psi.ArgumentList.Add("Bypass");
             psi.ArgumentList.Add("-File");
-            psi.ArgumentList.Add(_script);
+            psi.ArgumentList.Add(_payloads.EntryPoint);
             AddPlanArgument(psi, "-ExpectedRevision", plan, "repositoryRevision");
             AddPlanArgument(psi, "-ApiImage", plan, "candidateApiImage");
             AddPlanArgument(psi, "-WorkerImage", plan, "candidateWorkerImage");
@@ -59,11 +60,24 @@ internal sealed class AuthorityProvenanceValidator : IProvenanceValidator
             AddPlanArgument(psi, "-ExpectedWorkerImageId", plan, "workerImageId");
             psi.ArgumentList.Add("-RepositoryRoot");
             psi.ArgumentList.Add(_repositoryRoot);
-            return AuthorityProcessRunner.Run(psi, cancellationToken).ExitCode == 0;
+            return AuthorityProcessRunner.Run(psi, cancellationToken, () =>
+            {
+                AuthorityPathSecurity.RequireTrustedInstalledPayloadSet(
+                    "scripts", "validate-file-mode-image-provenance.ps1", ProvenancePayloadContract(), _requesterSid);
+                var currentPowerShell = AuthorityPathSecurity.RequireTrustedWindowsPowerShell(_requesterSid);
+                if (!string.Equals(currentPowerShell, powershell, StringComparison.OrdinalIgnoreCase))
+                    throw new AuthorityException("AUTHORITY_POWERSHELL_IDENTITY_CHANGED");
+            }).ExitCode == 0;
         }
         catch (OperationCanceledException) { throw; }
         catch { return false; }
     }
+
+    private static IReadOnlyDictionary<string, IReadOnlyCollection<string>> ProvenancePayloadContract() =>
+        new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["validate-file-mode-image-provenance.ps1"] = Array.Empty<string>()
+        };
 
     private static void AddPlanArgument(ProcessStartInfo psi, string name, CanonicalPlan plan, string property)
     {
@@ -85,12 +99,4 @@ internal sealed class AuthorityProvenanceValidator : IProvenanceValidator
         psi.Environment["AUTOOPS_AUTHORITY_DOCKER_ENDPOINT"] = dockerEndpoint;
     }
 
-    private static string GetWindowsPowerShellPath()
-    {
-        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        var path = Path.Combine(windows, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-        if (string.IsNullOrWhiteSpace(windows) || !File.Exists(path)) throw new AuthorityException("AUTHORITY_POWERSHELL_UNAVAILABLE");
-        AuthorityPathSecurity.AssertNoReparseComponents(path);
-        return Path.GetFullPath(path);
-    }
 }

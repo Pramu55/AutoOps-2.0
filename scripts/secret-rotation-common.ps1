@@ -47,15 +47,90 @@ function ConvertTo-RotationProcessArgument([string]$Value) {
   $null = $builder.Append('"'); return $builder.ToString()
 }
 
-function Start-RotationProcess([string]$FileName, [string[]]$Arguments, [string]$FailureCode, [hashtable]$Environment = @{}, [switch]$ClearInheritedEnvironment) {
+function Start-RotationProcess([string]$FileName, [string[]]$Arguments, [string]$FailureCode, [hashtable]$Environment = @{}, [switch]$ClearInheritedEnvironment, [ValidateSet('None','Docker','WindowsSystem')][string]$ExecutableTrust = 'None') {
   if ([string]::IsNullOrWhiteSpace($FileName)) { Stop-Rotation $FailureCode }
   $psi = [Diagnostics.ProcessStartInfo]::new(); $psi.FileName = $FileName; $psi.Arguments = (($Arguments | ForEach-Object { ConvertTo-RotationProcessArgument $_ }) -join ' ')
   $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
   if ($ClearInheritedEnvironment) { $psi.EnvironmentVariables.Clear() }
   foreach ($entry in $Environment.GetEnumerator()) { $psi.EnvironmentVariables[$entry.Key] = [string]$entry.Value }
   $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
+  # This validation is intentionally adjacent to Process.Start. Discovery-time
+  # trust is not cached because the leaf or any replacement-capable ancestor
+  # could otherwise change between resolution and authoritative execution.
+  if ($ExecutableTrust -eq 'Docker') {
+    $programFiles = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+    Assert-RotationTrustedExecutableChain $FileName $programFiles $FailureCode
+  } elseif ($ExecutableTrust -eq 'WindowsSystem') {
+    $windows = [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)
+    Assert-RotationTrustedExecutableChain $FileName $windows $FailureCode
+  }
   if (-not $process.Start()) { Stop-Rotation $FailureCode }
   return $process
+}
+
+$script:RotationTrustedOwnerSids = @(
+  'S-1-5-18',
+  'S-1-5-32-544',
+  'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+)
+$script:RotationDangerousRights = [int64](
+  [Security.AccessControl.FileSystemRights]::WriteData -bor
+  [Security.AccessControl.FileSystemRights]::AppendData -bor
+  [Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+  [Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor
+  [Security.AccessControl.FileSystemRights]::Delete -bor
+  [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+  [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+  [Security.AccessControl.FileSystemRights]::TakeOwnership
+)
+
+function Get-RotationExecutableTrustEntry([string]$Path, [ValidateSet('Attributes','Acl')][string]$Phase) {
+  if (-not (Test-Path -LiteralPath $Path)) { return [pscustomobject]@{ Exists = $false } }
+  if ($Phase -eq 'Attributes') {
+    $attributes = [IO.File]::GetAttributes($Path)
+    return [pscustomobject]@{ Exists = $true; IsReparse = (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) }
+  }
+  # Use the .NET ACL API directly so security validation does not depend on
+  # PowerShell module auto-loading or a caller-controlled PSModulePath.
+  $acl = if ([IO.Directory]::Exists($Path)) {
+    [IO.DirectoryInfo]::new($Path).GetAccessControl([Security.AccessControl.AccessControlSections]::Access -bor [Security.AccessControl.AccessControlSections]::Owner)
+  } else {
+    [IO.FileInfo]::new($Path).GetAccessControl([Security.AccessControl.AccessControlSections]::Access -bor [Security.AccessControl.AccessControlSections]::Owner)
+  }
+  $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+  $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object {
+    [pscustomobject]@{
+      IdentitySid = $_.IdentityReference.Value
+      AccessType = [string]$_.AccessControlType
+      Rights = [int64]$_.FileSystemRights
+      InheritOnly = (($_.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0)
+    }
+  })
+  return [pscustomobject]@{ OwnerSid = $owner; Rules = $rules }
+}
+
+function Assert-RotationTrustedExecutableChain([string]$Path, [string]$Boundary, [string]$FailureCode, [scriptblock]$EntryReader = $null) {
+  if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($Boundary)) { Stop-Rotation $FailureCode }
+  $canonical = Get-RotationFullPath $Path $FailureCode
+  $root = (Get-RotationFullPath $Boundary $FailureCode).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+  if (-not [string]::Equals($canonical, $root, [StringComparison]::OrdinalIgnoreCase) -and -not $canonical.StartsWith(($root + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) { Stop-Rotation $FailureCode }
+  if ($null -eq $EntryReader) { $EntryReader = ${function:Get-RotationExecutableTrustEntry} }
+  $current = $canonical
+  while ($true) {
+    # Reparse state is fetched and rejected before the ACL phase is invoked.
+    $attributes = & $EntryReader $current 'Attributes'
+    if ($null -eq $attributes -or -not $attributes.Exists -or $attributes.IsReparse) { Stop-Rotation $FailureCode }
+    $security = & $EntryReader $current 'Acl'
+    if ($null -eq $security -or $security.OwnerSid -notin $script:RotationTrustedOwnerSids) { Stop-Rotation $FailureCode }
+    foreach ($rule in @($security.Rules)) {
+      if ($rule.AccessType -cne 'Allow' -or $rule.InheritOnly -or (([int64]$rule.Rights -band $script:RotationDangerousRights) -eq 0)) { continue }
+      if ($rule.IdentitySid -notin $script:RotationTrustedOwnerSids) { Stop-Rotation $FailureCode }
+    }
+    if ([string]::Equals($current, $root, [StringComparison]::OrdinalIgnoreCase)) { break }
+    $parent = Split-Path -Parent $current
+    if ([string]::IsNullOrWhiteSpace($parent) -or $parent -ceq $current) { Stop-Rotation $FailureCode }
+    $current = Get-RotationFullPath $parent $FailureCode
+  }
 }
 
 function Get-RotationWindowsSystemExecutable([string]$Name) {
@@ -65,7 +140,10 @@ function Get-RotationWindowsSystemExecutable([string]$Name) {
   if ([string]::IsNullOrWhiteSpace($systemDirectory)) { Stop-Rotation 'TRUSTED_EXECUTABLE_UNAVAILABLE' }
   $path = Join-Path $systemDirectory $Name
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Stop-Rotation 'TRUSTED_EXECUTABLE_UNAVAILABLE' }
-  return Get-RotationFullPath $path 'TRUSTED_EXECUTABLE_UNAVAILABLE'
+  $canonical = Get-RotationFullPath $path 'TRUSTED_EXECUTABLE_UNAVAILABLE'
+  $windows = [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)
+  Assert-RotationTrustedExecutableChain $canonical $windows 'TRUSTED_EXECUTABLE_UNAVAILABLE'
+  return $canonical
 }
 
 function Get-RotationDockerExecutable() {
@@ -77,8 +155,9 @@ function Get-RotationDockerExecutable() {
   if ([string]::IsNullOrWhiteSpace($programFiles)) { Stop-Rotation 'TRUSTED_DOCKER_UNAVAILABLE' }
   $path = Join-Path $programFiles 'Docker\Docker\resources\bin\docker.exe'
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Stop-Rotation 'TRUSTED_DOCKER_UNAVAILABLE' }
-  Assert-RotationNoReparse $path 'TRUSTED_DOCKER_UNAVAILABLE'
-  return Get-RotationFullPath $path 'TRUSTED_DOCKER_UNAVAILABLE'
+  $canonical = Get-RotationFullPath $path 'TRUSTED_DOCKER_UNAVAILABLE'
+  Assert-RotationTrustedExecutableChain $canonical $programFiles 'TRUSTED_DOCKER_UNAVAILABLE'
+  return $canonical
 }
 
 $script:RotationDockerEndpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine'
@@ -102,13 +181,23 @@ function Get-RotationAuthorityChildEnvironment {
   }
 }
 
+function New-RotationTrustedDockerInvocation([string[]]$Arguments) {
+  return [pscustomobject]@{
+    FileName = Get-RotationDockerExecutable
+    Arguments = @('--host', $script:RotationDockerEndpoint, '--config', $script:RotationAuthorityDockerConfig) + $Arguments
+    Environment = Get-RotationAuthorityChildEnvironment
+    ClearInheritedEnvironment = $true
+    ExecutableTrust = 'Docker'
+  }
+}
+
 function Start-RotationTrustedDockerProcess([string[]]$Arguments, [string]$FailureCode) {
   # Every security-authoritative Docker command binds the maintained Docker
   # Desktop Linux endpoint and an authority-owned CLI config. The child starts
   # from a minimal environment, so caller DOCKER_*/BUILDX_* selectors cannot
   # redirect endpoint, context, TLS, configuration, or plugin state.
-  $fullArguments = @('--host', $script:RotationDockerEndpoint, '--config', $script:RotationAuthorityDockerConfig) + $Arguments
-  return Start-RotationProcess (Get-RotationDockerExecutable) $fullArguments $FailureCode (Get-RotationAuthorityChildEnvironment) -ClearInheritedEnvironment
+  $invocation = New-RotationTrustedDockerInvocation $Arguments
+  return Start-RotationProcess $invocation.FileName $invocation.Arguments $FailureCode $invocation.Environment -ClearInheritedEnvironment:([bool]$invocation.ClearInheritedEnvironment) -ExecutableTrust $invocation.ExecutableTrust
 }
 
 function Test-RotationGenerationId([string]$Value) {
@@ -816,7 +905,7 @@ function Test-RotationProtectedFileLinkIntegrity([string]$TargetRoot) {
       # deliberately metadata-only: stdout is counted internally and never
       # surfaced, so neither protected paths nor file content leave this gate.
       $fsutil = Get-RotationWindowsSystemExecutable 'fsutil.exe'
-      $process = Start-RotationProcess $fsutil @('hardlink','list',$file.FullName) 'PROTECTED_FILE_LINK_METADATA_UNAVAILABLE'
+      $process = Start-RotationProcess $fsutil @('hardlink','list',$file.FullName) 'PROTECTED_FILE_LINK_METADATA_UNAVAILABLE' -ExecutableTrust WindowsSystem
       $output = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()
       if ($process.ExitCode -ne 0 -or @($output -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 }).Count -ne 1) { return $false }
     } catch { return $false }
@@ -924,8 +1013,11 @@ function Invoke-RotationRuntimeAcceptanceValidator([string]$TargetRoot, [string]
   $plan = Read-RotationPlan $TargetRoot $OperationId
   $ApiContainer = $plan.runtimeServices.api; $WorkerContainer = $plan.runtimeServices.worker
   $validator = Join-Path $script:RotationModuleRoot 'validate-secret-rotation-runtime.ps1'
-  $powershellExe = Join-Path $PSHOME 'powershell.exe'
-  try { $process = Start-RotationProcess $powershellExe @('-NoProfile','-ExecutionPolicy','Bypass','-File',$validator,'-TargetRoot',$TargetRoot,'-OperationId',$OperationId,'-Mode',$Mode) 'ROTATION_ACCEPTANCE_VALIDATOR_START_FAILED' } catch { return $false }
+  $powershellExe = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::System)) 'WindowsPowerShell\v1.0\powershell.exe'
+  try {
+    Assert-RotationTrustedExecutableChain $powershellExe ([Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)) 'ROTATION_ACCEPTANCE_VALIDATOR_START_FAILED'
+    $process = Start-RotationProcess $powershellExe @('-NoProfile','-ExecutionPolicy','Bypass','-File',$validator,'-TargetRoot',$TargetRoot,'-OperationId',$OperationId,'-Mode',$Mode) 'ROTATION_ACCEPTANCE_VALIDATOR_START_FAILED' -ExecutableTrust WindowsSystem
+  } catch { return $false }
   # Validation is a named gate only. Its output is intentionally discarded so
   # recovery classification never relays container or secret-adjacent details.
   $null = $process.StandardOutput.ReadToEnd(); $null = $process.StandardError.ReadToEnd(); $process.WaitForExit()

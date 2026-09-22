@@ -11,7 +11,8 @@ internal sealed class AuthorityRuntimeValidator(AuthoritySettings settings, stri
 {
     private readonly string _secretRoot = settings.SecretRoot;
     private readonly string _planRoot = Path.Combine(storeRoot, "plans");
-    private readonly string _script = AuthorityPathSecurity.RequireTrustedInstalledFile("scripts", "validate-secret-rotation-runtime.ps1", settings.RequesterSid);
+    private readonly AuthorityInstalledPayloadSet _payloads = AuthorityPathSecurity.RequireTrustedInstalledPayloadSet(
+        "scripts", "validate-secret-rotation-runtime.ps1", RuntimePayloadContract(), settings.RequesterSid);
     private readonly string _dockerConfigRoot = Path.GetFullPath(settings.DockerCliConfigDirectory);
     private readonly string _requesterSid = settings.RequesterSid;
 
@@ -26,7 +27,7 @@ internal sealed class AuthorityRuntimeValidator(AuthoritySettings settings, stri
             AuthorityPathSecurity.AssertTrustedDirectoryTree(_dockerConfigRoot, _requesterSid);
             cancellationToken.ThrowIfCancellationRequested();
             using var dockerProxy = AuthenticatedDockerPipeProxy.StartForAuthority(cancellationToken);
-            var powershell = GetWindowsPowerShellPath();
+            var powershell = AuthorityPathSecurity.RequireTrustedWindowsPowerShell(_requesterSid);
             var planPath = Path.Combine(_planRoot, plan.OperationId + ".json");
             if (!File.Exists(planPath) || (File.GetAttributes(planPath) & FileAttributes.ReparsePoint) != 0) return false;
             var psi = new ProcessStartInfo(powershell)
@@ -35,7 +36,7 @@ internal sealed class AuthorityRuntimeValidator(AuthoritySettings settings, stri
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true,
-                WorkingDirectory = Path.GetDirectoryName(_script)!
+                WorkingDirectory = Path.GetDirectoryName(_payloads.EntryPoint)!
             };
             psi.Environment.Clear();
             var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
@@ -51,7 +52,7 @@ internal sealed class AuthorityRuntimeValidator(AuthoritySettings settings, stri
             psi.ArgumentList.Add("-ExecutionPolicy");
             psi.ArgumentList.Add("Bypass");
             psi.ArgumentList.Add("-File");
-            psi.ArgumentList.Add(_script);
+            psi.ArgumentList.Add(_payloads.EntryPoint);
             psi.ArgumentList.Add("-TargetRoot");
             psi.ArgumentList.Add(_secretRoot);
             psi.ArgumentList.Add("-OperationId");
@@ -60,18 +61,24 @@ internal sealed class AuthorityRuntimeValidator(AuthoritySettings settings, stri
             psi.ArgumentList.Add(mode);
             psi.ArgumentList.Add("-AuthorityPlanPath");
             psi.ArgumentList.Add(planPath);
-            return AuthorityProcessRunner.Run(psi, cancellationToken).ExitCode == 0;
+            return AuthorityProcessRunner.Run(psi, cancellationToken, () =>
+            {
+                AuthorityPathSecurity.RequireTrustedInstalledPayloadSet(
+                    "scripts", "validate-secret-rotation-runtime.ps1", RuntimePayloadContract(), _requesterSid);
+                var currentPowerShell = AuthorityPathSecurity.RequireTrustedWindowsPowerShell(_requesterSid);
+                if (!string.Equals(currentPowerShell, powershell, StringComparison.OrdinalIgnoreCase))
+                    throw new AuthorityException("AUTHORITY_POWERSHELL_IDENTITY_CHANGED");
+            }).ExitCode == 0;
         }
         catch (OperationCanceledException) { throw; }
         catch { return false; }
     }
 
-    private static string GetWindowsPowerShellPath()
-    {
-        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        var path = Path.Combine(windows, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-        if (string.IsNullOrWhiteSpace(windows) || !File.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-            throw new AuthorityException("AUTHORITY_POWERSHELL_UNAVAILABLE");
-        return Path.GetFullPath(path);
-    }
+    private static IReadOnlyDictionary<string, IReadOnlyCollection<string>> RuntimePayloadContract() =>
+        new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["validate-secret-rotation-runtime.ps1"] = new[] { "secret-rotation-common.ps1" },
+            ["secret-rotation-common.ps1"] = Array.Empty<string>()
+        };
+
 }

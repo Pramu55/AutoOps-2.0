@@ -155,6 +155,76 @@ function Test-RotationRuntimeSelfTest {
   $validatorSource = Get-Content -LiteralPath $PSCommandPath -Raw
   $hostEndpointPattern = ('local' + 'host:4000|local' + 'host:4001')
   if ($validatorSource -match $hostEndpointPattern) { Stop-Rotation 'HOST_PORT_HTTP_PROBE_SELF_TEST_FAILED' }
+  $programFiles = 'C:\Program Files'
+  $docker = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
+  $paths = @($docker, 'C:\Program Files\Docker\Docker\resources\bin', 'C:\Program Files\Docker\Docker\resources', 'C:\Program Files\Docker\Docker', 'C:\Program Files\Docker', $programFiles)
+  $trustedRules = @(
+    [pscustomobject]@{ IdentitySid = 'S-1-5-32-544'; AccessType = 'Allow'; Rights = [int64][Security.AccessControl.FileSystemRights]::FullControl; InheritOnly = $false },
+    [pscustomobject]@{ IdentitySid = 'S-1-5-18'; AccessType = 'Allow'; Rights = [int64][Security.AccessControl.FileSystemRights]::FullControl; InheritOnly = $false }
+  )
+  function New-RotationSyntheticTrustMap {
+    $map = @{}
+    foreach ($path in $paths) { $map[$path] = [pscustomobject]@{ Exists = $true; IsReparse = $false; OwnerSid = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'; Rules = $trustedRules } }
+    return $map
+  }
+  $map = New-RotationSyntheticTrustMap
+  $script:RotationSyntheticTrustMap = $map; $script:RotationSyntheticTrustReads = @()
+  $reader = {
+    param($Path, $Phase)
+    $script:RotationSyntheticTrustReads += ($Path + '|' + $Phase)
+    $entry = $script:RotationSyntheticTrustMap[$Path]
+    if ($Phase -eq 'Attributes') { return [pscustomobject]@{ Exists = $entry.Exists; IsReparse = $entry.IsReparse } }
+    return [pscustomobject]@{ OwnerSid = $entry.OwnerSid; Rules = $entry.Rules }
+  }
+  Assert-RotationTrustedExecutableChain $docker $programFiles 'SYNTHETIC_DOCKER_TRUST_FAILED' $reader
+  foreach ($target in $paths) {
+    $script:RotationSyntheticTrustMap = New-RotationSyntheticTrustMap; $script:RotationSyntheticTrustMap[$target].IsReparse = $true; $script:RotationSyntheticTrustReads = @()
+    $blocked = $false; try { Assert-RotationTrustedExecutableChain $docker $programFiles 'SYNTHETIC_REPARSE_BLOCKED' $reader } catch { $blocked = $true }
+    if (-not $blocked -or @($script:RotationSyntheticTrustReads | Where-Object { $_ -ceq ($target + '|Acl') }).Count -ne 0) { Stop-Rotation 'DOCKER_REPARSE_BEFORE_ACL_SELF_TEST_FAILED' }
+  }
+  foreach ($right in @('WriteData','AppendData','WriteAttributes','WriteExtendedAttributes','Delete','DeleteSubdirectoriesAndFiles','ChangePermissions','TakeOwnership','Modify','FullControl')) {
+    $script:RotationSyntheticTrustMap = New-RotationSyntheticTrustMap
+    $dangerousRight = [Security.AccessControl.FileSystemRights][Enum]::Parse([Security.AccessControl.FileSystemRights], $right)
+    $script:RotationSyntheticTrustMap[$paths[1]].Rules = @($trustedRules + [pscustomobject]@{ IdentitySid = 'S-1-5-21-1-2-3-1001'; AccessType = 'Allow'; Rights = [int64]$dangerousRight; InheritOnly = $false })
+    $blocked = $false; try { Assert-RotationTrustedExecutableChain $docker $programFiles 'SYNTHETIC_ACL_BLOCKED' $reader } catch { $blocked = $true }
+    if (-not $blocked) { Stop-Rotation 'DOCKER_REQUESTER_REPLACEMENT_SELF_TEST_FAILED' }
+  }
+  $script:RotationSyntheticTrustMap = New-RotationSyntheticTrustMap; $script:RotationSyntheticTrustMap[$docker].OwnerSid = 'S-1-5-21-1-2-3-1002'
+  $blocked = $false; try { Assert-RotationTrustedExecutableChain $docker $programFiles 'SYNTHETIC_OWNER_BLOCKED' $reader } catch { $blocked = $true }
+  if (-not $blocked) { Stop-Rotation 'DOCKER_UNTRUSTED_OWNER_SELF_TEST_FAILED' }
+  foreach ($trustedOwner in @('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')) {
+    $script:RotationSyntheticTrustMap = New-RotationSyntheticTrustMap; $script:RotationSyntheticTrustMap[$docker].OwnerSid = $trustedOwner
+    Assert-RotationTrustedExecutableChain $docker $programFiles 'SYNTHETIC_TRUSTED_OWNER_FAILED' $reader
+  }
+  $script:RotationSyntheticTrustMap = New-RotationSyntheticTrustMap
+  Assert-RotationTrustedExecutableChain $docker $programFiles 'SYNTHETIC_DISCOVERY_FAILED' $reader
+  $script:RotationSyntheticTrustMap[$paths[3]].IsReparse = $true
+  $blocked = $false; try { Assert-RotationTrustedExecutableChain $docker $programFiles 'SYNTHETIC_POINT_OF_USE_BLOCKED' $reader } catch { $blocked = $true }
+  if (-not $blocked) { Stop-Rotation 'DOCKER_POINT_OF_USE_SELF_TEST_FAILED' }
+  $selectorNames = @('DOCKER_HOST','DOCKER_CONTEXT','DOCKER_CONFIG','DOCKER_CERT_PATH','DOCKER_TLS_VERIFY','DOCKER_TLS','DOCKER_API_VERSION','BUILDX_CONFIG','BUILDX_BUILDER','BUILDKIT_HOST')
+  $callerVariableNames = @('PATH') + $selectorNames
+  $savedSelectors = @{}
+  try {
+    foreach ($name in $callerVariableNames) { $savedSelectors[$name] = [Environment]::GetEnvironmentVariable($name, 'Process'); [Environment]::SetEnvironmentVariable($name, 'attacker-controlled', 'Process') }
+    $invocation = New-RotationTrustedDockerInvocation @('inspect','synthetic-container')
+  } finally {
+    foreach ($name in $callerVariableNames) { [Environment]::SetEnvironmentVariable($name, $savedSelectors[$name], 'Process') }
+  }
+  $expectedDocker = [IO.Path]::GetFullPath((Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'Docker\Docker\resources\bin\docker.exe'))
+  $expectedEndpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine'
+  $authorityEndpoint = [Environment]::GetEnvironmentVariable('AUTOOPS_AUTHORITY_DOCKER_ENDPOINT', 'Process')
+  if (-not [string]::IsNullOrWhiteSpace($authorityEndpoint)) {
+    if ($authorityEndpoint -notmatch '^npipe:////\./pipe/AutoOpsRotationAuthorityDocker-[a-f0-9]{32}$') { Stop-Rotation 'DOCKER_CALLER_SUBSTITUTION_SELF_TEST_FAILED' }
+    $expectedEndpoint = $authorityEndpoint
+  }
+  $expectedConfig = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)) 'AutoOps\rotation-authority\docker-cli'
+  if (-not [string]::Equals($invocation.FileName, $expectedDocker, [StringComparison]::OrdinalIgnoreCase) -or
+      -not $invocation.ClearInheritedEnvironment -or $invocation.ExecutableTrust -cne 'Docker' -or
+      $invocation.Arguments.Count -ne 6 -or $invocation.Arguments[0] -cne '--host' -or
+      $invocation.Arguments[1] -cne $expectedEndpoint -or $invocation.Arguments[2] -cne '--config' -or
+      $invocation.Arguments[3] -cne $expectedConfig -or $invocation.Arguments[4] -cne 'inspect' -or
+      $invocation.Arguments[5] -cne 'synthetic-container' -or $invocation.Environment.ContainsKey('PATH')) { Stop-Rotation 'DOCKER_CALLER_SUBSTITUTION_SELF_TEST_FAILED' }
+  foreach ($name in $selectorNames) { if ($invocation.Environment.ContainsKey($name)) { Stop-Rotation 'DOCKER_CALLER_SUBSTITUTION_SELF_TEST_FAILED' } }
   [Console]::WriteLine('CANDIDATE_ACCEPTANCE_SELF_TEST PASS')
   [Console]::WriteLine('ROLLBACK_ACCEPTANCE_SELF_TEST PASS')
   [Console]::WriteLine('MIGRATED_SECRET_PRESENCE_ONLY PASS')
@@ -165,6 +235,12 @@ function Test-RotationRuntimeSelfTest {
   [Console]::WriteLine('NON_TARGET_RUNNING_REQUIRED PASS')
   [Console]::WriteLine('NON_TARGET_STOPPED_BLOCKED PASS')
   [Console]::WriteLine('NON_TARGET_IDENTITY_PRESERVED PASS')
+  [Console]::WriteLine('RUNTIME_DOCKER_FULL_ANCESTRY PASS')
+  [Console]::WriteLine('RUNTIME_DOCKER_REPARSE_BEFORE_ACL PASS')
+  [Console]::WriteLine('RUNTIME_DOCKER_REQUESTER_REPLACEMENT_BLOCKED PASS')
+  [Console]::WriteLine('RUNTIME_DOCKER_UNTRUSTED_OWNER_BLOCKED PASS')
+  [Console]::WriteLine('RUNTIME_DOCKER_POINT_OF_USE_REVALIDATION PASS')
+  [Console]::WriteLine('RUNTIME_DOCKER_CALLER_SUBSTITUTION_BLOCKED PASS')
 }
 
 try {

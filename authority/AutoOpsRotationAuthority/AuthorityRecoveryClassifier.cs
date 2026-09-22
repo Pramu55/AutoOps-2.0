@@ -13,7 +13,8 @@ internal sealed class AuthorityRecoveryClassifier(AuthoritySettings settings, st
     };
     private readonly string _secretRoot = settings.SecretRoot;
     private readonly string _planRoot = Path.Combine(storeRoot, "plans");
-    private readonly string _script = AuthorityPathSecurity.RequireTrustedInstalledFile("scripts", "invoke-authority-recovery-classification.ps1", settings.RequesterSid);
+    private readonly AuthorityInstalledPayloadSet _payloads = AuthorityPathSecurity.RequireTrustedInstalledPayloadSet(
+        "scripts", "invoke-authority-recovery-classification.ps1", RecoveryPayloadContract(), settings.RequesterSid);
     private readonly string _dockerConfigRoot = Path.GetFullPath(settings.DockerCliConfigDirectory);
     private readonly string _requesterSid = settings.RequesterSid;
 
@@ -27,23 +28,30 @@ internal sealed class AuthorityRecoveryClassifier(AuthoritySettings settings, st
             using var dockerProxy = AuthenticatedDockerPipeProxy.StartForAuthority(cancellationToken);
             var planPath = Path.Combine(_planRoot, plan.OperationId + ".json");
             if (!File.Exists(planPath)) return "MANUAL_INTERVENTION_REQUIRED";
-            var powershell = GetWindowsPowerShellPath();
+            var powershell = AuthorityPathSecurity.RequireTrustedWindowsPowerShell(_requesterSid);
             var psi = new ProcessStartInfo(powershell)
             {
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true,
-                WorkingDirectory = Path.GetDirectoryName(_script)!
+                WorkingDirectory = Path.GetDirectoryName(_payloads.EntryPoint)!
             };
             ConfigureMinimalEnvironment(psi, dockerProxy.Endpoint);
             foreach (var argument in new[]
             {
-                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", _script,
+                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", _payloads.EntryPoint,
                 "-TargetRoot", _secretRoot, "-OperationId", plan.OperationId,
                 "-AuthorityPlanPath", planPath, "-AuthorityOperationState", operationState
             }) psi.ArgumentList.Add(argument);
-            var result = AuthorityProcessRunner.Run(psi, cancellationToken);
+            var result = AuthorityProcessRunner.Run(psi, cancellationToken, () =>
+            {
+                AuthorityPathSecurity.RequireTrustedInstalledPayloadSet(
+                    "scripts", "invoke-authority-recovery-classification.ps1", RecoveryPayloadContract(), _requesterSid);
+                var currentPowerShell = AuthorityPathSecurity.RequireTrustedWindowsPowerShell(_requesterSid);
+                if (!string.Equals(currentPowerShell, powershell, StringComparison.OrdinalIgnoreCase))
+                    throw new AuthorityException("AUTHORITY_POWERSHELL_IDENTITY_CHANGED");
+            });
             if (result.ExitCode != 0) return "MANUAL_INTERVENTION_REQUIRED";
             var output = result.StandardOutput;
             var values = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
@@ -55,6 +63,14 @@ internal sealed class AuthorityRecoveryClassifier(AuthoritySettings settings, st
         catch (OperationCanceledException) { throw; }
         catch { return "MANUAL_INTERVENTION_REQUIRED"; }
     }
+
+    private static IReadOnlyDictionary<string, IReadOnlyCollection<string>> RecoveryPayloadContract() =>
+        new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["invoke-authority-recovery-classification.ps1"] = new[] { "secret-rotation-common.ps1" },
+            ["secret-rotation-common.ps1"] = Array.Empty<string>(),
+            ["validate-secret-rotation-runtime.ps1"] = new[] { "secret-rotation-common.ps1" }
+        };
 
     private static void ConfigureMinimalEnvironment(ProcessStartInfo psi, string dockerEndpoint)
     {
@@ -70,12 +86,4 @@ internal sealed class AuthorityRecoveryClassifier(AuthoritySettings settings, st
         psi.Environment["AUTOOPS_AUTHORITY_DOCKER_ENDPOINT"] = dockerEndpoint;
     }
 
-    private static string GetWindowsPowerShellPath()
-    {
-        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        var path = Path.Combine(windows, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-        if (string.IsNullOrWhiteSpace(windows) || !File.Exists(path)) throw new AuthorityException("AUTHORITY_POWERSHELL_UNAVAILABLE");
-        AuthorityPathSecurity.AssertNoReparseComponents(path);
-        return Path.GetFullPath(path);
-    }
 }

@@ -892,8 +892,10 @@ internal readonly record struct AuthorityProcessResult(int ExitCode, string Stan
 
 internal static class AuthorityProcessRunner
 {
-    internal static AuthorityProcessResult Run(ProcessStartInfo startInfo, CancellationToken cancellationToken)
+    internal static AuthorityProcessResult Run(ProcessStartInfo startInfo, CancellationToken cancellationToken, Action? pointOfUseValidation = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        pointOfUseValidation?.Invoke();
         cancellationToken.ThrowIfCancellationRequested();
         using var process = Process.Start(startInfo);
         if (process is null) throw new AuthorityException("AUTHORITY_PROCESS_START_FAILED");
@@ -1220,6 +1222,9 @@ internal static class AuthoritySelfTest
             RunCandidateGenerationClaimTests(root, validator);
             RunDockerConfigTreeTrustTests();
             RunInstalledPayloadAncestorTrustTests();
+            RunAuthorityPayloadSetTests();
+            RunWindowsExecutableAncestorTrustTests();
+            RunProcessPointOfUseValidationTest();
             Assert(AuthorityStore.CancellationAfterCreateLeavesCompleteRecordForSelfTest(Path.Combine(root, "deadline-complete-record.json")), "TIMEOUT_NO_TORN_ZERO_BYTE_RECORD");
             Assert(AuthenticatedDockerPipeProxy.TrackedForwarderStopsWithRequestForSelfTest(), "DOCKER_PROXY_BACKGROUND_WORK_AFTER_TIMEOUT");
             var descriptor = AuthorityStoreSecurity.CreateExpectedDescriptor(new SecurityIdentifier("S-1-5-80-1-2-3-4-5"), new SecurityIdentifier("S-1-5-21-1-2-3-1001"));
@@ -1423,6 +1428,12 @@ internal static class AuthoritySelfTest
             Console.WriteLine("TRUSTEDINSTALLER_ANCESTOR_ALLOWED PASS");
             Console.WriteLine("PAYLOAD_LEAF_TRUST_REGRESSION PASS");
             Console.WriteLine("AUTHORITY_PAYLOAD_TRUST_CHAIN_VALIDATED PASS");
+            Console.WriteLine("TRANSITIVE_AUTHORITY_PAYLOAD_SET_VALIDATED PASS");
+            Console.WriteLine("DOT_SOURCED_COMMON_PAYLOAD_VALIDATED PASS");
+            Console.WriteLine("UNDECLARED_DOT_SOURCE_BLOCKED PASS");
+            Console.WriteLine("PAYLOAD_POINT_OF_USE_REVALIDATION PASS");
+            Console.WriteLine("PAYLOAD_REPARSE_BEFORE_ACL PASS");
+            Console.WriteLine("WINDOWS_POWERSHELL_FULL_ANCESTRY_VALIDATED PASS");
             Console.WriteLine("NAMED_PIPE_REQUEST_DEADLINE_ENFORCED PASS");
             Console.WriteLine("IDLE_CLIENT_TIMEOUT PASS");
             Console.WriteLine("PARTIAL_FRAME_TIMEOUT PASS");
@@ -1585,12 +1596,14 @@ internal static class AuthoritySelfTest
         var installRoot = Path.Combine(autoOps, "RotationAuthority");
         var scripts = Path.Combine(installRoot, "scripts");
         var leaf = Path.Combine(scripts, "validate-secret-rotation-runtime.ps1");
+        var common = Path.Combine(scripts, "secret-rotation-common.ps1");
 
         Dictionary<string, AuthorityPathEntry> SafeChain(SecurityIdentifier? programFilesOwner = null)
         {
             return new Dictionary<string, AuthorityPathEntry>(StringComparer.OrdinalIgnoreCase)
             {
                 [leaf] = new(false, false, CreateSecurityDescriptor(authoritySid, requesterSid, authoritySid)),
+                [common] = new(false, false, CreateSecurityDescriptor(authoritySid, requesterSid, authoritySid)),
                 [scripts] = new(true, false, CreateSecurityDescriptor(authoritySid, requesterSid, authoritySid)),
                 [installRoot] = new(true, false, CreateSecurityDescriptor(authoritySid, requesterSid, authoritySid)),
                 [autoOps] = new(true, false, CreateWindowsAncestorDescriptor(requesterSid, administratorsSid)),
@@ -1600,8 +1613,14 @@ internal static class AuthoritySelfTest
 
         void Validate(IReadOnlyDictionary<string, AuthorityPathEntry> entries) =>
             AuthorityPathSecurity.ValidateInstalledPathChainForSelfTest(installRoot, leaf, programFiles, requesterSid, authoritySid, path => entries[path]);
+        void ValidatePayloadSet(IReadOnlyDictionary<string, AuthorityPathEntry> entries)
+        {
+            Validate(entries);
+            AuthorityPathSecurity.ValidateInstalledPathChainForSelfTest(installRoot, common, programFiles, requesterSid, authoritySid,
+                path => entries.TryGetValue(path, out var entry) ? entry : throw new AuthorityException("AUTHORITY_PAYLOAD_UNAVAILABLE"));
+        }
 
-        Validate(SafeChain());
+        ValidatePayloadSet(SafeChain());
         Validate(SafeChain(administratorsSid));
         var parentReparse = SafeChain(); parentReparse[autoOps] = parentReparse[autoOps] with { IsReparse = true };
         AssertThrows(() => Validate(parentReparse), "AUTOOPS_PARENT_REPARSE_BLOCKED");
@@ -1627,6 +1646,92 @@ internal static class AuthoritySelfTest
         leafDescriptor.AddAccessRule(new FileSystemAccessRule(requesterSid, FileSystemRights.WriteData, AccessControlType.Allow));
         unsafeLeaf[leaf] = new AuthorityPathEntry(false, false, leafDescriptor);
         AssertThrows(() => Validate(unsafeLeaf), "PAYLOAD_LEAF_TRUST_REGRESSION");
+        var commonReparse = SafeChain(); commonReparse[common] = commonReparse[common] with { IsReparse = true };
+        AssertThrows(() => ValidatePayloadSet(commonReparse), "DOT_SOURCED_COMMON_REPARSE_BLOCKED");
+        var commonWritable = SafeChain();
+        var commonDescriptor = CreateSecurityDescriptor(authoritySid, requesterSid, authoritySid);
+        commonDescriptor.AddAccessRule(new FileSystemAccessRule(requesterSid, FileSystemRights.Modify, AccessControlType.Allow));
+        commonWritable[common] = new AuthorityPathEntry(false, false, commonDescriptor);
+        AssertThrows(() => ValidatePayloadSet(commonWritable), "DOT_SOURCED_COMMON_REQUESTER_REPLACEMENT_BLOCKED");
+        var commonOwner = SafeChain();
+        commonOwner[common] = new AuthorityPathEntry(false, false, CreateSecurityDescriptor(authoritySid, requesterSid, new SecurityIdentifier("S-1-5-21-1-2-3-1002")));
+        AssertThrows(() => ValidatePayloadSet(commonOwner), "DOT_SOURCED_COMMON_UNTRUSTED_OWNER_BLOCKED");
+        var deletedAtPointOfUse = SafeChain();
+        ValidatePayloadSet(deletedAtPointOfUse);
+        deletedAtPointOfUse.Remove(common);
+        AssertThrows(() => ValidatePayloadSet(deletedAtPointOfUse), "DOT_SOURCED_COMMON_DELETED_AT_POINT_OF_USE_BLOCKED");
+        var replacedAtPointOfUse = SafeChain();
+        ValidatePayloadSet(replacedAtPointOfUse);
+        var replacementDescriptor = CreateSecurityDescriptor(authoritySid, requesterSid, authoritySid);
+        replacementDescriptor.AddAccessRule(new FileSystemAccessRule(requesterSid, FileSystemRights.WriteData, AccessControlType.Allow));
+        replacedAtPointOfUse[common] = new AuthorityPathEntry(false, false, replacementDescriptor);
+        AssertThrows(() => ValidatePayloadSet(replacedAtPointOfUse), "DOT_SOURCED_COMMON_REPLACED_AT_POINT_OF_USE_BLOCKED");
+    }
+
+    private static void RunAuthorityPayloadSetTests()
+    {
+        const string common = "secret-rotation-common.ps1";
+        var trusted = ". (Join-Path $PSScriptRoot 'secret-rotation-common.ps1')\r\nWrite-Output PASS\r\n";
+        AuthorityPathSecurity.ValidateDeclaredDotSourcesForSelfTest(trusted, new[] { common });
+        AuthorityPathSecurity.ValidateDeclaredDotSourcesForSelfTest("Write-Output PASS\r\n", Array.Empty<string>());
+        AssertThrows(() => AuthorityPathSecurity.ValidateDeclaredDotSourcesForSelfTest(trusted, Array.Empty<string>()), "UNDECLARED_DOT_SOURCE_BLOCKED");
+        AssertThrows(() => AuthorityPathSecurity.ValidateDeclaredDotSourcesForSelfTest(". $env:CALLER_SCRIPT\r\n", new[] { common }), "DYNAMIC_DOT_SOURCE_BLOCKED");
+        AuthorityPathSecurity.ValidateDeclaredDotSourcesForSelfTest("Write-Output PASS; . (Join-Path $PSScriptRoot 'secret-rotation-common.ps1')\r\n", new[] { common });
+        AuthorityPathSecurity.ValidateDeclaredDotSourcesForSelfTest("& { . (Join-Path $PSScriptRoot 'secret-rotation-common.ps1') }\r\n", new[] { common });
+        AssertThrows(() => AuthorityPathSecurity.ValidateDeclaredDotSourcesForSelfTest("$value = $(. (Join-Path $PSScriptRoot 'unexpected.ps1'))\r\n", Array.Empty<string>()), "SUBEXPRESSION_DOT_SOURCE_BLOCKED");
+        AssertThrows(() => AuthorityPathSecurity.ValidateDeclaredDotSourcesForSelfTest(". (Join-Path $PSScriptRoot '..\\outside.ps1')\r\n", new[] { common }), "DOT_SOURCE_OUTSIDE_PAYLOAD_ROOT_BLOCKED");
+        AssertThrows(() => AuthorityPathSecurity.ValidateDeclaredDotSourcesForSelfTest(trusted, new[] { common, "unexpected.ps1" }), "MISSING_DECLARED_DOT_SOURCE_BLOCKED");
+        AssertThrows(() => AuthorityPathSecurity.ValidateDeclaredDotSourcesForSelfTest(trusted, new[] { "..\\prefix-collision\\secret-rotation-common.ps1" }), "PAYLOAD_PREFIX_COLLISION_BLOCKED");
+    }
+
+    private static void RunWindowsExecutableAncestorTrustTests()
+    {
+        var requesterSid = new SecurityIdentifier("S-1-5-21-1-2-3-1001");
+        var administratorsSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var trustedInstallerSid = new SecurityIdentifier("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464");
+        var windows = Path.GetFullPath("C:\\Windows");
+        var system32 = Path.Combine(windows, "System32");
+        var windowsPowerShell = Path.Combine(system32, "WindowsPowerShell");
+        var version = Path.Combine(windowsPowerShell, "v1.0");
+        var leaf = Path.Combine(version, "powershell.exe");
+        Dictionary<string, AuthorityPathEntry> SafeChain() => new(StringComparer.OrdinalIgnoreCase)
+        {
+            [leaf] = new(false, false, CreateWindowsAncestorDescriptor(requesterSid, trustedInstallerSid)),
+            [version] = new(true, false, CreateWindowsAncestorDescriptor(requesterSid, trustedInstallerSid)),
+            [windowsPowerShell] = new(true, false, CreateWindowsAncestorDescriptor(requesterSid, trustedInstallerSid)),
+            [system32] = new(true, false, CreateWindowsAncestorDescriptor(requesterSid, trustedInstallerSid)),
+            [windows] = new(true, false, CreateWindowsAncestorDescriptor(requesterSid, administratorsSid))
+        };
+        void Validate(IReadOnlyDictionary<string, AuthorityPathEntry> entries) =>
+            AuthorityPathSecurity.ValidateWindowsPathChainForSelfTest(leaf, windows, requesterSid, path => entries[path]);
+        Validate(SafeChain());
+        var reparse = SafeChain(); reparse[windowsPowerShell] = reparse[windowsPowerShell] with { IsReparse = true };
+        AssertThrows(() => Validate(reparse), "POWERSHELL_ANCESTOR_REPARSE_BLOCKED");
+        var unsafeAcl = SafeChain();
+        var descriptor = CreateWindowsAncestorDescriptor(requesterSid, trustedInstallerSid);
+        descriptor.AddAccessRule(new FileSystemAccessRule(requesterSid, FileSystemRights.DeleteSubdirectoriesAndFiles, AccessControlType.Allow));
+        unsafeAcl[version] = new AuthorityPathEntry(true, false, descriptor);
+        AssertThrows(() => Validate(unsafeAcl), "POWERSHELL_REQUESTER_REPLACEMENT_BLOCKED");
+        var unsafeOwner = SafeChain();
+        unsafeOwner[leaf] = new AuthorityPathEntry(false, false, CreateWindowsAncestorDescriptor(requesterSid, new SecurityIdentifier("S-1-5-21-1-2-3-1002")));
+        AssertThrows(() => Validate(unsafeOwner), "POWERSHELL_UNTRUSTED_OWNER_BLOCKED");
+    }
+
+    private static void RunProcessPointOfUseValidationTest()
+    {
+        var invoked = false;
+        var startInfo = new ProcessStartInfo("autoops-intentionally-missing-executable.exe")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        AssertThrows(() => AuthorityProcessRunner.Run(startInfo, CancellationToken.None, () =>
+        {
+            invoked = true;
+            throw new AuthorityException("POINT_OF_USE_TRUST_CHANGED");
+        }), "PAYLOAD_POINT_OF_USE_REVALIDATION");
+        Assert(invoked, "PAYLOAD_POINT_OF_USE_REVALIDATION");
     }
 
     private static DirectorySecurity CreateSecurityDescriptor(SecurityIdentifier authoritySid, SecurityIdentifier requesterSid, SecurityIdentifier owner)
