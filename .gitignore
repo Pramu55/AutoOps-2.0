@@ -26,9 +26,20 @@ credentials
 *.credentials
 *token*
 *secret*
+!scripts/initialize-secret-rotation-operation.ps1
 !.env.example
 !scripts/scan-secrets.ps1
 !scripts/scan-secrets.sh
+# Governed M01.4 source and documentation. These are implementation files,
+# not secret artifacts; keep the surrounding broad local-secret boundary.
+!scripts/secret-rotation-common.ps1
+!scripts/prepare-secret-rotation.ps1
+!scripts/validate-secret-rotation-runtime.ps1
+!scripts/inspect-secret-rotation-recovery.ps1
+!scripts/update-secret-rotation-operation-state.ps1
+!scripts/confirm-secret-rotation-runtime.ps1
+!scripts/test-secret-rotation-recovery.ps1
+!docs/security/secret-rotation-and-recovery.md
 
 # prisma
 **/prisma/migrations/dev.db*

@@ -11,7 +11,7 @@
     "dev": "tsx watch src/server.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --cache=false",
+    "test": "vitest run --dir src --cache=false",
     "clean": "rimraf dist .turbo"
   },
   "dependencies": {
@@ -61,8 +61,8 @@
     "@types/ms": "^0.7.34",
     "@types/node": "^20.14.10",
     "rimraf": "^6.0.1",
-    "tsx": "^4.19.1",
+    "tsx": "^4.23.13",
     "typescript": "^5.9.3",
-    "vitest": "^2.1.1"
+    "vitest": "4.1.11"
   }
 }

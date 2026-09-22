@@ -325,3 +325,7 @@ There is no dynamic secret reload: rotation requires a controlled process
 recreation after replacement files have been validated. No real secret file is
 committed by this design. Future Vault or AWS Secrets Manager providers remain
 separate work and are not added here.
+
+The governed M01.4 lifecycle, plan contract, acceptance harness, and
+interrupted-operation recovery rules are documented in
+[secret-rotation-and-recovery.md](secret-rotation-and-recovery.md).

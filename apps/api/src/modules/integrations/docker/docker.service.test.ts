@@ -10,7 +10,9 @@ vi.mock('@autoops/utils', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@autoops/utils')>();
   return {
     ...actual,
-    DockerEngineClient: vi.fn(() => dockerClientState.client),
+    DockerEngineClient: vi.fn(function DockerEngineClientMock() {
+      return dockerClientState.client;
+    }),
   };
 });
 
@@ -44,7 +46,11 @@ const { dockerService } = await import('./docker.service.js');
 
 type DockerServiceInternals = {
   _toContainer(container: DockerContainerSummary): unknown;
-  _ingestContainerSignals(organizationId: string, containers: DockerContainerSummary[], observedAt?: Date): Promise<void>;
+  _ingestContainerSignals(
+    organizationId: string,
+    containers: DockerContainerSummary[],
+    observedAt?: Date,
+  ): Promise<void>;
   _withCompleteDockerObservation<T>(
     organizationId: string | undefined,
     load: () => Promise<{ containers: DockerContainerSummary[]; value: T }>,
@@ -92,7 +98,12 @@ describe('DockerService signal scope and classification', () => {
     resolveSignalsByFingerprints.mockResolvedValue(0);
     resolveSignalsByResourceConditionFamily.mockResolvedValue(0);
     resolveSignalsByTitles.mockResolvedValue(0);
-    reconcileHistoricalSignals.mockResolvedValue({ scanned: 0, observed: 0, resolved: 0, skipped: false });
+    reconcileHistoricalSignals.mockResolvedValue({
+      scanned: 0,
+      observed: 0,
+      resolved: 0,
+      skipped: false,
+    });
     buildSignalFingerprint.mockImplementation((_organizationId, input) => {
       const metadata = input.metadata ?? {};
       return `${metadata.resourceIdentity ?? 'unknown'}:${metadata.condition ?? input.title}:${input.severity}`;
@@ -108,7 +119,10 @@ describe('DockerService signal scope and classification', () => {
       Labels: { 'com.docker.compose.project': 'cloudshield' },
     });
 
-    const dto = service._toContainer(cloudShield) as { monitoringScope: string; monitored: boolean };
+    const dto = service._toContainer(cloudShield) as {
+      monitoringScope: string;
+      monitored: boolean;
+    };
     await service._ingestContainerSignals('org-a', [cloudShield]);
 
     expect(dto.monitoringScope).toBe('unrelated');
@@ -133,7 +147,10 @@ describe('DockerService signal scope and classification', () => {
       Labels: { 'com.docker.compose.project': 'trustfabric' },
     });
 
-    const dto = service._toContainer(trustFabric) as { monitoringScope: string; monitored: boolean };
+    const dto = service._toContainer(trustFabric) as {
+      monitoringScope: string;
+      monitored: boolean;
+    };
     await service._ingestContainerSignals('org-a', [trustFabric]);
 
     expect(dto.monitoringScope).toBe('unrelated');
@@ -386,7 +403,9 @@ describe('DockerService signal scope and classification', () => {
 
   it('keeps managed and monitored reconciliation scopes isolated', async () => {
     ingestSignals.mockImplementation(async (_organizationId, signals) => signals.map(() => ({})));
-    buildSignalFingerprint.mockImplementation((_organizationId, input) => `${input.metadata.monitoringScope}:${input.metadata.name}`);
+    buildSignalFingerprint.mockImplementation(
+      (_organizationId, input) => `${input.metadata.monitoringScope}:${input.metadata.name}`,
+    );
 
     await service._withCompleteDockerObservation('org-a', async () => ({
       containers: [
